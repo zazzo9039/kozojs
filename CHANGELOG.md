@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-05-30
+
+> Consolidation release: CLI test coverage, typecheck CI gate, queue/redis example, docs refresh.
+
+### Added
+- `@kozojs/cli`: 20 new tests (scan, manifest, generate, routes command, scaffold templates) — 30 total
+- `examples/queue-redis` — reference consumer for `@kozojs/redis` + `@kozojs/queue`
+- Root `pnpm typecheck` script and CI step (`tsc --noEmit` on all 7 packages)
+
+### Changed
+- Monorepo `tsconfig.json`: removed source `paths` — packages resolve `@kozojs/core` via workspace `lib/`
+- kozo-docs: all package pages aligned with 0.5.x APIs
+
+### Fixed
+- CLI `route-watcher` tests use current `generateManifest` API (`projectRoot`, `cache`, `contentHash`)
+
 ## [0.5.1] — 2026-05-30
 
 > API cleanup release: remove legacy auth/handler types, align CLI templates, expand `@kozojs/db` tests.

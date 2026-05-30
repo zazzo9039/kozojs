@@ -83,8 +83,9 @@ describe('startRouteWatcher — integration', () => {
 
     const manifest = await generateManifest({
       routesDir,
+      projectRoot: tmpDir,
       outputPath: manifestPath,
-      useCache: false,
+      cache: false,
     });
 
     expect(manifest.routes).toHaveLength(2);
@@ -98,7 +99,7 @@ describe('startRouteWatcher — integration', () => {
   it('updates manifest when a new route file is added', async () => {
     // Seed one route so the manifest exists
     await writeRouteFile(path.join(routesDir, 'health.ts'));
-    await generateManifest({ routesDir, outputPath: manifestPath, useCache: false });
+    await generateManifest({ routesDir, projectRoot: tmpDir, outputPath: manifestPath, cache: false });
 
     // Start watcher (it will write to the default .kozo path inside process.cwd,
     // so we override by monkey-patching the outputPath via env — instead we
@@ -124,8 +125,9 @@ describe('startRouteWatcher — integration', () => {
     // we re-generate manually to assert the scan result is correct.
     const manifest = await generateManifest({
       routesDir,
+      projectRoot: tmpDir,
       outputPath: manifestPath,
-      useCache: false,
+      cache: false,
     });
 
     expect(manifest.routes).toHaveLength(2);
@@ -142,7 +144,7 @@ describe('startRouteWatcher — integration', () => {
 
     await writeRouteFile(routeA);
     await writeRouteFile(routeB);
-    await generateManifest({ routesDir, outputPath: manifestPath, useCache: false });
+    await generateManifest({ routesDir, projectRoot: tmpDir, outputPath: manifestPath, cache: false });
 
     watcher = startRouteWatcher(routesDir);
     await wait(200);
@@ -153,8 +155,9 @@ describe('startRouteWatcher — integration', () => {
 
     const manifest = await generateManifest({
       routesDir,
+      projectRoot: tmpDir,
       outputPath: manifestPath,
-      useCache: false,
+      cache: false,
     });
 
     expect(manifest.routes).toHaveLength(1);
@@ -171,8 +174,9 @@ describe('startRouteWatcher — integration', () => {
 
     const manifest = await generateManifest({
       routesDir,
+      projectRoot: tmpDir,
       outputPath: manifestPath,
-      useCache: false,
+      cache: false,
     });
 
     expect(manifest.routes).toHaveLength(1);
@@ -213,8 +217,9 @@ describe('startRouteWatcher — integration', () => {
 
     const manifest = await generateManifest({
       routesDir,
+      projectRoot: tmpDir,
       outputPath: manifestPath,
-      useCache: false,
+      cache: false,
     });
 
     // Only health.ts should be picked up
@@ -230,7 +235,7 @@ describe('startRouteWatcher — integration', () => {
     const m1 = await generateManifest({
       routesDir,
       outputPath: manifestPath,
-      useCache: false,
+      cache: false,
     });
 
     // Modify file mtime by rewriting
@@ -240,7 +245,7 @@ describe('startRouteWatcher — integration', () => {
     const m2 = await generateManifest({
       routesDir,
       outputPath: manifestPath,
-      useCache: false,
+      cache: false,
     });
 
     // Hashes may differ due to mtime change; at minimum routes are identical
@@ -254,18 +259,20 @@ describe('startRouteWatcher — integration', () => {
 
     const m1 = await generateManifest({
       routesDir,
+      projectRoot: tmpDir,
       outputPath: manifestPath,
-      useCache: true,
+      cache: true,
     });
 
     // Second call with cache enabled — should return identical object
     const m2 = await generateManifest({
       routesDir,
+      projectRoot: tmpDir,
       outputPath: manifestPath,
-      useCache: true,
+      cache: true,
     });
 
-    expect(m1.hash).toBe(m2.hash);
+    expect(m1.contentHash).toBe(m2.contentHash);
     expect(m1.generatedAt).toBe(m2.generatedAt); // same cached timestamp
   });
 });

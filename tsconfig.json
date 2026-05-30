@@ -7,11 +7,6 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "declaration": true,
-    "resolveJsonModule": true,
-    "paths": {
-      "@kozojs/core": ["./packages/core/src/index.ts"],
-      "@kozojs/auth": ["./packages/auth/src/index.ts"],
-      "@kozojs/cli": ["./packages/cli/src/index.ts"]
-    }
+    "resolveJsonModule": true
   }
 }

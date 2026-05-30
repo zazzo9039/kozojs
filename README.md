@@ -2,6 +2,7 @@
 
 **The Structure for the Edge** — high-performance TypeScript backend framework with optional native C++ transport via uWebSockets.js.
 
+[![CI](https://github.com/zazzo9039/kozo/actions/workflows/ci.yml/badge.svg)](https://github.com/zazzo9039/kozo/actions/workflows/ci.yml)
 [![npm version](https://badge.fury.io/js/@kozojs%2Fcore.svg)](https://www.npmjs.com/package/@kozojs/core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Docs](https://img.shields.io/badge/docs-kozo--docs.vercel.app-orange)](https://kozo-docs.vercel.app)

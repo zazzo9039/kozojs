@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/db",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Database utilities for Kozo Framework - Drizzle ORM integration",
   "type": "module",
   "license": "MIT",

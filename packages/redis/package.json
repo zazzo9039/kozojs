@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/redis",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Redis integration for Kozo framework — cache, pub/sub, and distributed rate-limit store",
   "type": "module",
   "main": "./lib/index.js",

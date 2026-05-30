@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/testing",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "In-process test client for Kozo Framework — no HTTP server required",
   "type": "module",
   "main": "./lib/index.js",

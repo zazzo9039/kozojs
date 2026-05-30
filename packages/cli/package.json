@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/cli",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "CLI to scaffold new Kozo Framework projects - The next-gen TypeScript Backend Framework",
   "bin": {
     "create-kozo": "./lib/index.js",
