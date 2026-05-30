@@ -1,0 +1,57 @@
+{
+  "name": "@kozojs/redis",
+  "version": "0.5.0",
+  "description": "Redis integration for Kozo framework — cache, pub/sub, and distributed rate-limit store",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "files": [
+    "lib",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:unit": "vitest run --config vitest.config.ts"
+  },
+  "keywords": [
+    "kozo",
+    "redis",
+    "cache",
+    "pubsub",
+    "rate-limit"
+  ],
+  "author": "Kozo Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zazzo9039/kozo.git",
+    "directory": "packages/redis"
+  },
+  "homepage": "https://github.com/zazzo9039/kozo/tree/main/packages/redis#readme",
+  "bugs": "https://github.com/zazzo9039/kozo/issues",
+  "dependencies": {},
+  "peerDependencies": {
+    "ioredis": ">=5.0.0",
+    "@kozojs/core": "^0.5.0"
+  },
+  "peerDependenciesMeta": {
+    "@kozojs/core": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "ioredis": "^5.6.1",
+    "@kozojs/core": "workspace:*",
+    "vitest": "^2.1.9",
+    "typescript": "^5.9.3",
+    "tsup": "^8.5.1"
+  }
+}

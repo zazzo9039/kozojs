@@ -1,0 +1,11 @@
+packages:
+  - 'packages/core'
+  - 'packages/db'
+  - 'packages/cli'
+  - 'packages/auth'
+  - 'packages/queue'
+  - 'packages/redis'
+  - 'packages/testing'
+  - 'examples/*'
+  - 'benchmarks'
+  - 'benchmarks_req'

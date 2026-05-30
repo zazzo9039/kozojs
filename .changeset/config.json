@@ -1,0 +1,23 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.4/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [
+    [
+      "@kozojs/core",
+      "@kozojs/cli",
+      "@kozojs/auth",
+      "@kozojs/db",
+      "@kozojs/queue",
+      "@kozojs/redis",
+      "@kozojs/testing"
+    ]
+  ],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [
+    "kozo-benchmarks"
+  ]
+}

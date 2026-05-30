@@ -1,0 +1,508 @@
+/**
+ * Kozo Auth - JWT Authentication Middleware
+ * 
+ * Provides JWT authentication middleware for the Kozo framework.
+ * Uses the jose library for fast and secure JWT verification.
+ */
+
+import { jwtVerify, decodeJwt, type JWTVerifyGetKey } from 'jose';
+import type { Context, Next } from 'hono';
+import type { KozoEnv } from '@kozojs/core';
+
+export { KozoError, UnauthorizedError, type KozoUser } from '@kozojs/core';
+
+let setupAuthWarned = false;
+
+/**
+ * Authentication options
+ */
+export interface AuthOptions {
+  /**
+   * URL path prefix to protect. Defaults to '/api'.
+   * Set to empty string '' to protect all routes.
+   */
+  prefix?: string;
+  
+  /**
+   * Custom function to extract the token from the request.
+   * By default, extracts from Authorization header (Bearer token).
+   */
+  getToken?: (c: Context) => string | undefined;
+  
+  /**
+   * Custom key function for JWT verification.
+   * Use this for RS256 or other asymmetric algorithms.
+   */
+  getKey?: JWTVerifyGetKey;
+  
+  /**
+   * Expected JWT payload schema (optional validation).
+   * If provided, the decoded payload will be validated against this schema.
+   */
+  expectedClaims?: Record<string, unknown>;
+  
+  /**
+   * Whether to require the 'alg' header to be in a specific set.
+   * Defaults to ['HS256', 'HS384', 'HS512'] for symmetric algorithms.
+   */
+  allowedAlgorithms?: string[];
+  /**
+   * When true, the middleware will not return 401 if no token is provided.
+   * The user context will be null. Use this as a soft pre-decode step before
+   * a separate enforcement middleware (e.g. via `setupAuth`).
+   */
+  optional?: boolean;
+}
+
+/**
+ * Default token extractor - gets Bearer token from Authorization header
+ */
+function defaultGetToken(c: Context): string | undefined {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader) return undefined;
+  
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0]?.toLowerCase() !== 'bearer') {
+    return undefined;
+  }
+  
+  return parts[1];
+}
+
+/**
+ * Create JWT authentication middleware
+ * 
+ * @param secretOrPublicKey - Secret for HMAC algorithms, or public key for RSA/ECDSA
+ * @param opts - Authentication options
+ * @returns Hono middleware function
+ * 
+ * @example
+ * ```ts
+ * import { Kozo } from '@kozojs/core';
+ * import { authenticateJWT } from '@kozojs/auth';
+ * 
+ * const app = new Kozo();
+ * 
+ * // Protect /api routes with JWT
+ * app.use('/*', authenticateJWT('my-secret-key'));
+ * 
+ * // Use with custom options
+ * app.use('/*', authenticateJWT(publicKey, {
+ *   prefix: '/api',
+ *   getKey: async (header) => getKeyFromJWKS(header.kid)
+ * }));
+ * ```
+ */
+export function authenticateJWT(
+  secretOrPublicKey: string | Uint8Array,
+  opts: AuthOptions = {}
+) {
+  const {
+    prefix = '/api',
+    getToken = defaultGetToken,
+    getKey,
+    expectedClaims,
+    allowedAlgorithms = ['HS256', 'HS384', 'HS512'] as string[],
+    optional = false,
+  } = opts;
+
+  // Convert secret to Uint8Array if it's a string
+  const key = typeof secretOrPublicKey === 'string'
+    ? new TextEncoder().encode(secretOrPublicKey)
+    : secretOrPublicKey;
+
+  return async (c: Context<KozoEnv>, next: Next) => {
+    // Skip non-matching paths if prefix is set
+    if (prefix !== '') {
+      const path = c.req.path;
+      if (!path.startsWith(prefix)) {
+        return next();
+      }
+    }
+
+    // Extract token
+    const token = getToken(c);
+    
+    if (!token) {
+      if (optional) return next();
+      return c.json({ 
+        type: 'about:blank',
+        title: 'Unauthorized',
+        status: 401,
+        detail: 'Missing authentication token'
+      }, 401);
+    }
+
+    try {
+      // Verify the JWT
+      const verifyOpts = { algorithms: allowedAlgorithms };
+      const { payload } = getKey
+        ? await jwtVerify(token, getKey, verifyOpts)
+        : await jwtVerify(token, key, verifyOpts);
+
+      // Validate expected claims if provided
+      if (expectedClaims) {
+        for (const [claim, value] of Object.entries(expectedClaims)) {
+          if (payload[claim] !== value) {
+            return c.json({
+              type: 'about:blank',
+              title: 'Unauthorized',
+              status: 401,
+              detail: `Invalid claim: ${claim}`
+            }, 401);
+          }
+        }
+      }
+
+      // Set the decoded user on the context
+      c.set('user', payload);
+      
+      // Also set on hono's context for direct access
+      (c as any).set('user', payload);
+
+      await next();
+    } catch (error: any) {
+      // Determine error message
+      let detail = 'Invalid or expired token';
+      
+      if (error.code) {
+        switch (error.code) {
+          case 'ERR_JWT_EXPIRED':
+            detail = 'Token has expired';
+            break;
+          case 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED':
+            detail = 'Invalid token signature';
+            break;
+          case 'ERR_JWT_CLAIM_VALIDATION_FAILED':
+            detail = error.message || 'Token claim validation failed';
+            break;
+        }
+      }
+
+      return c.json({
+        type: 'about:blank',
+        title: 'Unauthorized',
+        status: 401,
+        detail
+      }, 401);
+    }
+  };
+}
+
+/**
+ * Utility to create a JWT (for testing or internal use)
+ * Note: This is a simple HMAC-based JWT creator. For production,
+ * consider using a more complete solution.
+ */
+export async function createJWT(
+  payload: Record<string, unknown>,
+  secret: string,
+  options: {
+    expiresIn?: string | number;
+    algorithm?: 'HS256' | 'HS384' | 'HS512';
+  } = {}
+): Promise<string> {
+  const { SignJWT } = await import('jose');
+
+  const key = new TextEncoder().encode(secret);
+
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: options.algorithm || 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime(options.expiresIn || '1h')
+    .sign(key);
+}
+
+/**
+ * Decode JWT without verification (for inspection)
+ */
+export function decodeJWT(token: string): Record<string, unknown> | null {
+  try {
+    return decodeJwt(token) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================
+// USER CONTEXT HELPERS
+// ============================================
+
+import type { KozoUser } from '@kozojs/core';
+
+/**
+ * Get the authenticated user from the Hono context.
+ * Returns null if not authenticated.
+ *
+ * @example
+ * app.get('/me', async (c) => {
+ *   const user = getUser(c);
+ *   if (!user) throw new UnauthorizedError();
+ *   return user;
+ * });
+ */
+export function getUser(c: Context): KozoUser | null {
+  try {
+    return (c as any).get('user') as KozoUser ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================
+// GUARDS (canActivate pattern)
+// ============================================
+
+/**
+ * A guard is a function that receives the Hono context and returns:
+ * - `true`  → allow the request
+ * - `false` → reject with 403 Forbidden
+ * - A `Response` → return that response directly (custom error / redirect)
+ */
+export type Guard = (c: Context<any>) => boolean | Response | Promise<boolean | Response>;
+
+/**
+ * Wrap a Hono middleware handler with one or more guards.
+ * Guards are evaluated in order — first failure stops the chain.
+ *
+ * Use with `app.use()` to protect routes or groups.
+ *
+ * @example
+ * import { canActivate, isAuthenticated, hasRole } from '@kozojs/auth';
+ *
+ * // Protect all /admin routes
+ * app.use('/admin/*', canActivate(isAuthenticated, hasRole('admin')));
+ *
+ * // Protect a single route
+ * app.get('/dashboard', canActivate(isAuthenticated), handler);
+ */
+export function canActivate(...guards: Guard[]) {
+  return async (c: Context<any>, next: Next) => {
+    for (const guard of guards) {
+      const result = await guard(c);
+      if (result === true) continue;
+      if (result === false) {
+        return c.json({
+          type: 'https://kozo-docs.vercel.app/docs/core/errors#forbidden',
+          title: 'Forbidden',
+          status: 403,
+          detail: 'You do not have permission to access this resource',
+        }, 403);
+      }
+      // Custom Response returned by guard
+      return result;
+    }
+    return next();
+  };
+}
+
+// ============================================
+// BUILT-IN GUARDS
+// ============================================
+
+/**
+ * Guard: requires a valid authenticated user in context.
+ * Use after `authenticateJWT` middleware.
+ *
+ * @example
+ * app.use('/api/*', authenticateJWT(secret));
+ * app.use('/api/profile', canActivate(isAuthenticated));
+ */
+export const isAuthenticated: Guard = (c) => {
+  const user = getUser(c);
+  if (!user) {
+    return c.json({
+      type: 'https://kozo-docs.vercel.app/docs/core/errors#unauthorized',
+      title: 'Unauthorized',
+      status: 401,
+      detail: 'Authentication required',
+    }, 401) as Response;
+  }
+  return true;
+};
+
+/**
+ * Guard factory: requires the user to have a specific role (or one of many roles).
+ * Checks `user.role` (string) and `user.roles` (string[]).
+ *
+ * @example
+ * app.use('/admin/*', canActivate(isAuthenticated, hasRole('admin')));
+ * app.use('/content', canActivate(isAuthenticated, hasRole(['editor', 'admin'])));
+ */
+export function hasRole(role: string | string[]): Guard {
+  const allowed = Array.isArray(role) ? role : [role];
+  return (c) => {
+    const user = getUser(c);
+    if (!user) return false;
+
+    const userRole  = typeof user.role  === 'string' ? user.role  : null;
+    const userRoles = Array.isArray(user.roles)       ? user.roles : [];
+
+    const hasMatch = allowed.some(r => r === userRole || userRoles.includes(r));
+    return hasMatch;
+  };
+}
+
+/**
+ * Guard factory: requires the authenticated user's `sub` (or `id`) to match
+ * the `:id` path param. Prevents users from accessing other users' resources.
+ *
+ * @example
+ * app.use('/users/:id/*', canActivate(isAuthenticated, isSelf));
+ * // GET /users/abc123/profile → only user with sub='abc123' can access
+ */
+export const isSelf: Guard = (c) => {
+  const user = getUser(c);
+  if (!user) return false;
+  const paramId = c.req.param('id');
+  return user.sub === paramId || (user as any).id === paramId;
+};
+
+/**
+ * Guard combinator: passes if ANY of the provided guards returns `true`.
+ * Useful for "admin OR self" patterns.
+ *
+ * @example
+ * app.use('/users/:id', canActivate(anyOf(hasRole('admin'), isSelf)));
+ */
+export function anyOf(...guards: Guard[]): Guard {
+  return async (c) => {
+    for (const guard of guards) {
+      const result = await guard(c);
+      if (result === true) return true;
+    }
+    return false;
+  };
+}
+
+/** A minimal structural interface matching what `Kozo` exposes. */
+export interface KozoAppLike {
+  getRoutes(): ReadonlyArray<{ path: string; meta?: { auth?: boolean } }>;
+  middleware(path: string, fn: (c: Context<KozoEnv>, next: Next) => Promise<Response | void>): void;
+}
+
+export interface SetupAuthOptions extends AuthOptions {
+  /**
+   * Additional paths that bypass JWT authentication regardless of `meta.auth`.
+   * @example ['/api/docs', '/api/health']
+   */
+  extraPublicPaths?: string[];
+}
+
+/** Options for {@link registerAuthBeforeLoadRoutes}. */
+export interface RegisterAuthOptions extends SetupAuthOptions {
+  /** Same `routesDir` passed to `createKozo({ routesDir })` — used to scan `meta.auth: false`. */
+  routesDir: string;
+}
+
+function isPublicPath(pathname: string, publicPaths: ReadonlySet<string>): boolean {
+  for (const p of publicPaths) {
+    if (pathname === p || pathname.startsWith(p + '/')) return true;
+  }
+  return false;
+}
+
+async function collectPublicPaths(routesDir: string, extraPublicPaths: string[]): Promise<Set<string>> {
+  const { scanRoutes } = await import('@kozojs/core');
+  const scanned = await scanRoutes({ routesDir, verbose: false });
+  return new Set([
+    ...extraPublicPaths,
+    ...scanned.filter((r) => r.module.meta?.auth === false).map((r) => r.path),
+  ]);
+}
+
+/**
+ * Registers JWT middleware **before** `app.loadRoutes()`.
+ *
+ * Use this when routes (or `_middleware.ts` files) depend on `c.get('user')` /
+ * `ctx.user` — e.g. admin role guards. Middleware registered after `loadRoutes()`
+ * (including {@link setupAuth}) runs **after** directory `_middleware.ts`, so JWT
+ * would not populate the user in time.
+ *
+ * @example
+ * await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
+ *   routesDir: './src/routes',
+ *   prefix: '/api',
+ *   extraPublicPaths: ['/api/docs', '/api/docs.json'],
+ * });
+ * await app.loadRoutes();
+ */
+export async function registerAuthBeforeLoadRoutes(
+  app: KozoAppLike,
+  secretOrPublicKey: string | Uint8Array,
+  options: RegisterAuthOptions,
+): Promise<void> {
+  const { routesDir, extraPublicPaths = [], prefix = '/api', ...authOpts } = options;
+  const publicPaths = await collectPublicPaths(routesDir, extraPublicPaths);
+  const jwtFn = authenticateJWT(secretOrPublicKey, { ...authOpts, prefix: '' });
+
+  app.middleware(`${prefix}/*`, authenticateJWT(secretOrPublicKey, { optional: true, prefix: '', ...authOpts }));
+  app.middleware(`${prefix}/*`, async (c, next) => {
+    const pathname = new URL(c.req.url).pathname;
+    if (isPublicPath(pathname, publicPaths)) return next();
+    return jwtFn(c, next);
+  });
+}
+
+/**
+ * One-call JWT authentication setup that automatically respects `meta: { auth: false }`.
+ *
+ * @deprecated Prefer {@link registerAuthBeforeLoadRoutes} before `loadRoutes()` when
+ * directory `_middleware.ts` files check `user.role`. This API registers JWT **after**
+ * `loadRoutes()` and will be kept for backward compatibility only.
+ *
+ * Call this **after** `app.loadRoutes()`. Safe only when **no** `_middleware.ts` reads
+ * `user` before your handler (no role guards). If you use per-directory admin guards,
+ * prefer {@link registerAuthBeforeLoadRoutes} **before** `loadRoutes()` instead.
+ *
+ * @example
+ * await app.loadRoutes();
+ * setupAuth(app, process.env.JWT_SECRET!, {
+ *   prefix: '/api',
+ *   extraPublicPaths: ['/api/docs', '/api/docs.json'],
+ * });
+ */
+export function setupAuth(
+  app: KozoAppLike,
+  secretOrPublicKey: string | Uint8Array,
+  options: SetupAuthOptions = {},
+): void {
+  if (!setupAuthWarned) {
+    setupAuthWarned = true;
+    console.warn(
+      '[Kozo Auth] setupAuth() runs JWT after loadRoutes(). If _middleware.ts checks user.role, ' +
+      'use registerAuthBeforeLoadRoutes() before loadRoutes() instead. See docs/common-pitfalls.md',
+    );
+  }
+  const { extraPublicPaths = [], prefix = '/api', ...authOpts } = options;
+  const publicPaths = new Set([
+    ...extraPublicPaths,
+    ...app.getRoutes().filter((r) => r.meta?.auth === false).map((r) => r.path),
+  ]);
+  const jwtFn = authenticateJWT(secretOrPublicKey, { ...authOpts, prefix: '' });
+  app.middleware(`${prefix}/*`, async (c, next) => {
+    const pathname = new URL(c.req.url).pathname;
+    if (isPublicPath(pathname, publicPaths)) return next();
+    return jwtFn(c, next);
+  });
+}
+
+/**
+ * Decode a JWT token payload without verifying its signature.
+ * Safe for client-side use to inspect claims (e.g. displaying user info in the UI).
+ * Never use this for authorization — always verify the signature server-side.
+ *
+ * @example
+ * const payload = decodeTokenPayload(token);
+ * console.log(payload?.email, payload?.role);
+ */
+export function decodeTokenPayload<T extends KozoUser = KozoUser>(token: string): T | null {
+  try {
+    const base64Payload = token.split('.')[1];
+    if (!base64Payload) return null;
+    const json = atob(base64Payload.replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(json) as T;
+  } catch {
+    return null;
+  }
+}

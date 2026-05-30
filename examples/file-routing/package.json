@@ -1,0 +1,22 @@
+{
+  "name": "file-routing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Executable file-routing example for the Kozo framework",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@kozojs/auth": "workspace:*",
+    "@kozojs/core": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.6.0"
+  }
+}

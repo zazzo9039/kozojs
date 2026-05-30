@@ -1,0 +1,67 @@
+{
+  "name": "@kozojs/db",
+  "version": "0.5.0",
+  "description": "Database utilities for Kozo Framework - Drizzle ORM integration",
+  "type": "module",
+  "license": "MIT",
+  "author": "Kozo Team",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zazzo9039/kozo.git",
+    "directory": "packages/db"
+  },
+  "homepage": "https://github.com/zazzo9039/kozo/tree/main/packages/db#readme",
+  "bugs": "https://github.com/zazzo9039/kozo/issues",
+  "files": [
+    "lib",
+    "README.md"
+  ],
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./lib/index.js",
+      "types": "./lib/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "echo \"No linting configured\" && exit 0",
+    "clean": "rm -rf lib"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.1",
+    "drizzle-zod": "^0.8.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "better-sqlite3": "^11.0.0",
+    "drizzle-kit": "^0.28.0",
+    "mysql2": "^3.11.0",
+    "postgres": "^3.4.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "peerDependencies": {
+    "better-sqlite3": "^11.0.0",
+    "mysql2": "^3.11.0",
+    "postgres": "^3.4.0",
+    "zod": "^3.25.0 || ^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "postgres": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "better-sqlite3": {
+      "optional": true
+    }
+  }
+}

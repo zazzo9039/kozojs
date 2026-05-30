@@ -1,0 +1,43 @@
+{
+  "name": "kozo-framework",
+  "version": "0.1.0",
+  "private": true,
+  "description": "🔥 The Structure for the Edge - Zero-boilerplate framework on Hono",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zazzo9039/kozo.git"
+  },
+  "homepage": "https://github.com/zazzo9039/kozo#readme",
+  "bugs": "https://github.com/zazzo9039/kozo/issues",
+  "license": "MIT",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --concurrency=20",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "clean": "rm -rf node_modules packages/*/node_modules packages/*/dist"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "turbo": "^2.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "packageManager": "pnpm@9.14.2",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "uWebSockets.js",
+        "@sinclair/typebox",
+        "postgres",
+        "mysql2",
+        "better-sqlite3"
+      ]
+    }
+  }
+}

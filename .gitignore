@@ -1,0 +1,36 @@
+# Dependencies
+node_modules
+
+/.knotic
+# Build outputs
+dist
+*.tsbuildinfo
+*.map
+coverage/
+
+# Turbo
+.turbo
+./publish.sh
+# IDE
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Generated route manifests (CLI dev/build artifacts)
+routes-manifest.json
+
+# Database
+*.db
+.npmrc
+publish.sh

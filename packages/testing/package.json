@@ -1,0 +1,55 @@
+{
+  "name": "@kozojs/testing",
+  "version": "0.5.0",
+  "description": "In-process test client for Kozo Framework — no HTTP server required",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "files": [
+    "lib",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "kozo",
+    "testing",
+    "test",
+    "inject",
+    "supertest",
+    "http",
+    "typescript"
+  ],
+  "author": "Kozo Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zazzo9039/kozo.git",
+    "directory": "packages/testing"
+  },
+  "homepage": "https://github.com/zazzo9039/kozo/tree/main/packages/testing#readme",
+  "bugs": "https://github.com/zazzo9039/kozo/issues",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@kozojs/core": "^0.5.0"
+  },
+  "devDependencies": {
+    "@kozojs/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "name": "@kozojs/queue",
+  "version": "0.5.0",
+  "description": "Multi-backend job queue integration for Kozo framework — Redis (BullMQ) and AMQP (RabbitMQ)",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "files": [
+    "lib",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
+  },
+  "keywords": [
+    "kozo",
+    "queue",
+    "bullmq",
+    "redis",
+    "amqp",
+    "rabbitmq",
+    "jobs",
+    "workers",
+    "background",
+    "typescript"
+  ],
+  "author": "Kozo Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zazzo9039/kozo.git",
+    "directory": "packages/queue"
+  },
+  "homepage": "https://github.com/zazzo9039/kozo/tree/main/packages/queue#readme",
+  "bugs": "https://github.com/zazzo9039/kozo/issues",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@kozojs/core": "^0.5.0",
+    "bullmq": "^5.0.0",
+    "amqplib": "^0.10.0"
+  },
+  "peerDependenciesMeta": {
+    "bullmq": {
+      "optional": true
+    },
+    "amqplib": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@kozojs/core": "workspace:*",
+    "@types/amqplib": "^0.10.8",
+    "@types/node": "^22.0.0",
+    "amqplib": "^0.10.0",
+    "bullmq": "^5.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0"
+  }
+}

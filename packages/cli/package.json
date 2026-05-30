@@ -1,0 +1,63 @@
+{
+  "name": "@kozojs/cli",
+  "version": "0.5.0",
+  "description": "CLI to scaffold new Kozo Framework projects - The next-gen TypeScript Backend Framework",
+  "bin": {
+    "create-kozo": "./lib/index.js",
+    "kozo": "./lib/index.js"
+  },
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "files": [
+    "lib",
+    "templates",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup && node ../../scripts/copy-cli-templates.mjs",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "echo \"No linting configured\" && exit 0"
+  },
+  "keywords": [
+    "kozo",
+    "framework",
+    "backend",
+    "typescript",
+    "hono",
+    "api",
+    "rest",
+    "cli",
+    "scaffold",
+    "generator"
+  ],
+  "author": "Kozo Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zazzo9039/kozo.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/zazzo9039/kozo/tree/main/packages/cli#readme",
+  "bugs": "https://github.com/zazzo9039/kozo/issues",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.8.0",
+    "commander": "^12.0.0",
+    "picocolors": "^1.1.0",
+    "execa": "^9.5.0",
+    "fs-extra": "^11.2.0",
+    "glob": "^11.0.0",
+    "chokidar": "^3.6.0"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
