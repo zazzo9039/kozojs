@@ -6,6 +6,5 @@ export default defineConfig({
     environment: 'node',
     pool: 'forks',
     include: ['__tests__/integration/**/*.test.ts'],
-    testTimeout: 60_000,
   },
 });

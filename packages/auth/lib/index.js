@@ -1,7 +1,6 @@
 // src/index.ts
 import { jwtVerify, decodeJwt } from "jose";
 import { KozoError, UnauthorizedError } from "@kozojs/core";
-var setupAuthWarned = false;
 function defaultGetToken(c) {
   const authHeader = c.req.header("Authorization");
   if (!authHeader) return void 0;
@@ -180,25 +179,6 @@ async function registerAuthBeforeLoadRoutes(app, secretOrPublicKey, options) {
     return jwtFn(c, next);
   });
 }
-function setupAuth(app, secretOrPublicKey, options = {}) {
-  if (!setupAuthWarned) {
-    setupAuthWarned = true;
-    console.warn(
-      "[Kozo Auth] setupAuth() runs JWT after loadRoutes(). If _middleware.ts checks user.role, use registerAuthBeforeLoadRoutes() before loadRoutes() instead. See docs/common-pitfalls.md"
-    );
-  }
-  const { extraPublicPaths = [], prefix = "/api", ...authOpts } = options;
-  const publicPaths = /* @__PURE__ */ new Set([
-    ...extraPublicPaths,
-    ...app.getRoutes().filter((r) => r.meta?.auth === false).map((r) => r.path)
-  ]);
-  const jwtFn = authenticateJWT(secretOrPublicKey, { ...authOpts, prefix: "" });
-  app.middleware(`${prefix}/*`, async (c, next) => {
-    const pathname = new URL(c.req.url).pathname;
-    if (isPublicPath(pathname, publicPaths)) return next();
-    return jwtFn(c, next);
-  });
-}
 function decodeTokenPayload(token) {
   try {
     const base64Payload = token.split(".")[1];
@@ -222,6 +202,5 @@ export {
   hasRole,
   isAuthenticated,
   isSelf,
-  registerAuthBeforeLoadRoutes,
-  setupAuth
+  registerAuthBeforeLoadRoutes
 };

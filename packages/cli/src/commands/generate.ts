@@ -4,26 +4,25 @@ import fs from 'fs-extra';
 import path from 'node:path';
 
 const ROUTE_TEMPLATE = `import { z } from 'zod';
-import type { HandlerContext } from '@kozojs/core';
+import type { KozoContext } from '@kozojs/core';
 
-// Validation schema (optional)
 export const schema = {
   body: z.object({
     // Define your schema here
-  })
+  }),
 };
 
-type Body = z.infer<typeof schema.body>;
-
-export default async ({ body, services }: HandlerContext<Body>) => {
+export default async (ctx: KozoContext<typeof schema>) => {
+  const { body, services } = ctx;
   // TODO: Implement handler
   return { message: 'Not implemented' };
 };
 `;
 
-const GET_ROUTE_TEMPLATE = `import type { HandlerContext } from '@kozojs/core';
+const GET_ROUTE_TEMPLATE = `import type { KozoContext } from '@kozojs/core';
 
-export default async ({ params, services }: HandlerContext) => {
+export default async (ctx: KozoContext) => {
+  const { params, services } = ctx;
   // TODO: Implement handler
   return { message: 'Not implemented' };
 };

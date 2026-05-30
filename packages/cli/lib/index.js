@@ -155,7 +155,7 @@ async function createExampleRoutes(projectDir) {
 `;
   await import_fs_extra.default.writeFile(import_node_path.default.join(projectDir, "src", "routes", "index.ts"), indexRoute);
   await import_fs_extra.default.ensureDir(import_node_path.default.join(projectDir, "src", "routes", "users"));
-  const getUsersRoute = `import type { HandlerContext } from '@kozojs/core';
+  const getUsersRoute = `import type { KozoContext } from '@kozojs/core';
 import { users } from '../../db/schema.js';
 
 export const meta = {
@@ -163,14 +163,14 @@ export const meta = {
   description: 'Returns a list of all users in the database'
 };
 
-export default async ({ services: { db } }: HandlerContext) => {
-  const allUsers = db.select().from(users).all();
+export default async (ctx: KozoContext) => {
+  const allUsers = ctx.services.db.select().from(users).all();
   return { users: allUsers };
 };
 `;
   await import_fs_extra.default.writeFile(import_node_path.default.join(projectDir, "src", "routes", "users", "get.ts"), getUsersRoute);
   const postUsersRoute = `import { z } from 'zod';
-import type { HandlerContext } from '@kozojs/core';
+import type { KozoContext } from '@kozojs/core';
 import { users } from '../../db/schema.js';
 
 export const schema = {
@@ -185,10 +185,9 @@ export const meta = {
   description: 'Creates a new user with name and email'
 };
 
-type Body = z.infer<typeof schema.body>;
-
-export default async ({ body, services: { db } }: HandlerContext<Body>) => {
-  const user = db.insert(users).values({
+export default async (ctx: KozoContext<typeof schema>) => {
+  const { body, services } = ctx;
+  const user = services.db.insert(users).values({
     ...body,
     createdAt: new Date()
   }).returning().get();
@@ -4356,25 +4355,24 @@ var import_picocolors5 = __toESM(require("picocolors"));
 var import_fs_extra8 = __toESM(require("fs-extra"));
 var import_node_path9 = __toESM(require("path"));
 var ROUTE_TEMPLATE = `import { z } from 'zod';
-import type { HandlerContext } from '@kozojs/core';
+import type { KozoContext } from '@kozojs/core';
 
-// Validation schema (optional)
 export const schema = {
   body: z.object({
     // Define your schema here
-  })
+  }),
 };
 
-type Body = z.infer<typeof schema.body>;
-
-export default async ({ body, services }: HandlerContext<Body>) => {
+export default async (ctx: KozoContext<typeof schema>) => {
+  const { body, services } = ctx;
   // TODO: Implement handler
   return { message: 'Not implemented' };
 };
 `;
-var GET_ROUTE_TEMPLATE = `import type { HandlerContext } from '@kozojs/core';
+var GET_ROUTE_TEMPLATE = `import type { KozoContext } from '@kozojs/core';
 
-export default async ({ params, services }: HandlerContext) => {
+export default async (ctx: KozoContext) => {
+  const { params, services } = ctx;
   // TODO: Implement handler
   return { message: 'Not implemented' };
 };
@@ -4815,7 +4813,7 @@ ${import_picocolors8.default.dim("Generate client:")} ${import_picocolors8.defau
 // package.json
 var package_default = {
   name: "@kozojs/cli",
-  version: "0.5.0",
+  version: "0.5.1",
   description: "CLI to scaffold new Kozo Framework projects - The next-gen TypeScript Backend Framework",
   bin: {
     "create-kozo": "./lib/index.js",

@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-05-30
+
+> API cleanup release: remove legacy auth/handler types, align CLI templates, expand `@kozojs/db` tests.
+
+### Added
+- `@kozojs/db`: test suite expanded from 5 to 23 tests (query helpers, drizzle-zod, sqlite CRUD)
+
+### Removed
+- `@kozojs/auth`: `setupAuth()` — use `registerAuthBeforeLoadRoutes()` before `loadRoutes()`, or compose `authenticateJWT` manually (see kozo-app `registerApiSecurity`)
+- `@kozojs/auth`: `SetupAuthOptions` type — use `RegisterAuthOptions`
+- `@kozojs/core`: `HandlerContext`, `RouteHandler` — use `KozoContext`, `KozoHandler`
+- `@kozojs/core`: `RouteModule.middleware` — use `_middleware.ts` or `app.middleware()`
+
+### Changed
+- `@kozojs/core`: `RouteModule.default` typed as `KozoHandler<S>`
+- CLI `kozo generate route` templates use `KozoContext` instead of `HandlerContext`
+- `NativeKozoContext` / `NativeKozoHandler` documented as advanced Node.js API (no longer marked deprecated)
+
+### Migration (0.5.0 → 0.5.1)
+
+**Auth — replace `setupAuth` after `loadRoutes`:**
+
+```typescript
+// Before (removed)
+await app.loadRoutes();
+setupAuth(app, secret, { prefix: '/api' });
+
+// After
+await registerAuthBeforeLoadRoutes(app, secret, {
+  routesDir: './src/routes',
+  prefix: '/api',
+});
+await app.loadRoutes();
+```
+
+**Handlers — replace `HandlerContext`:**
+
+```typescript
+// Before
+import type { HandlerContext } from '@kozojs/core';
+export default async ({ body, services }: HandlerContext<Body>) => { ... };
+
+// After
+import type { KozoContext } from '@kozojs/core';
+export default async (ctx: KozoContext<typeof schema>) => {
+  const { body, services } = ctx;
+  ...
+};
+```
+
+**kozo-app:** no changes required — already uses `registerApiSecurity()` before `loadRoutes()`.
+
 ## [0.5.0] — 2026-05-30
 
 > DX hardening release: route meta, scoped DI, CLI templates, onboarding docs, CI, and test coverage across all packages.

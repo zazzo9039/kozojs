@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { createKozo } from '@kozojs/core';
-import { registerAuthBeforeLoadRoutes, setupAuth, createJWT } from '../src/index.js';
+import { registerAuthBeforeLoadRoutes, createJWT } from '../src/index.js';
 
 const SECRET = 'test-secret-must-be-at-least-32-characters-long';
 
@@ -66,29 +66,20 @@ describe('registerAuthBeforeLoadRoutes', () => {
     expect((await request(app, '/admin/items', userToken)).status).toBe(403);
     expect((await request(app, '/admin/items', adminToken)).status).toBe(200);
   });
-});
 
-describe('setupAuth (after loadRoutes)', () => {
-  it('runs JWT after _middleware — admin guard sees no user (documented footgun)', async () => {
-    await writeModule('admin/_middleware.js', `
-      export default async function (c, next) {
-        const user = c.get('user');
-        if (!user || user.role !== 'admin') {
-          return c.json({ detail: 'Forbidden' }, 403);
-        }
-        await next();
-      }
-    `);
-    await writeModule('admin/items/get.js', `
-      export default function () { return { items: [] }; }
+  it('respects extraPublicPaths in addition to meta.auth === false', async () => {
+    await writeModule('docs/get.js', `
+      export default function () { return { docs: true }; }
     `);
 
     const app = createKozo();
+    await registerAuthBeforeLoadRoutes(app, SECRET, {
+      routesDir: tmpDir,
+      prefix: '',
+      extraPublicPaths: ['/docs'],
+    });
     await app.loadRoutes(tmpDir);
-    setupAuth(app, SECRET, { prefix: '' });
 
-    const adminToken = await createJWT({ role: 'admin' }, SECRET, { expiresIn: '1h' });
-    // JWT never reached before middleware — even valid admin token gets 403
-    expect((await request(app, '/admin/items', adminToken)).status).toBe(403);
+    expect((await request(app, '/docs')).status).toBe(200);
   });
 });

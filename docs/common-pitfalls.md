@@ -8,7 +8,7 @@ Quick reference for mistakes that look like framework bugs but are usually confi
 
 **Symptom:** Admin routes return `403 Forbidden` even with a valid JWT. `user.role` is undefined in `_middleware.ts`.
 
-**Cause:** `setupAuth()` registers JWT **after** `loadRoutes()`. Directory `_middleware.ts` runs in registration order — your role guard executes **before** JWT decodes the token.
+**Cause:** JWT middleware registered **after** `loadRoutes()`. Directory `_middleware.ts` runs in registration order — your role guard executes **before** JWT decodes the token.
 
 **Fix:** Use `registerAuthBeforeLoadRoutes()` **before** `loadRoutes()`:
 
@@ -20,7 +20,9 @@ await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
 await app.loadRoutes();
 ```
 
-**Never:** `loadRoutes()` then `setupAuth()` when `_middleware.ts` checks `user.role`.
+**Never:** register JWT enforcement **after** `loadRoutes()` when `_middleware.ts` checks `user.role`.
+
+**Reference app:** **kozo-app** uses `registerApiSecurity()` (same ordering rule, plus rate limits) before `loadRoutes()`.
 
 See [auth-middleware.md](./auth-middleware.md).
 
@@ -136,7 +138,7 @@ export default (ctx) => ctx.json({ ok: true });
 export default (ctx) => ({ ok: true });
 ```
 
-Avoid relying on `HandlerContext` / raw Node `req/res` unless you target `nativeListen()` only.
+Avoid legacy handler types — use `KozoContext` / `KozoHandler`. Raw Node `req/res` only via `NativeKozoContext` on `nativeListen()`.
 
 ---
 
@@ -192,7 +194,6 @@ node packages/cli/lib/index.js my-app --template file-routing
 | Message | Meaning |
 |---------|---------|
 | `[Kozo] WebSocket routes require nativeListen()` | WS registered but using `listen()` |
-| `[Kozo Auth] setupAuth()` warning | JWT after loadRoutes — role guard risk |
 | `[Kozo] loadRoutes() skipped` | No `routesDir` configured |
 | `Validation Failed` (400) | Zod schema mismatch — check `errors[]` in body |
 

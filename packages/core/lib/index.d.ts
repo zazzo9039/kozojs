@@ -142,11 +142,11 @@ interface KozoEnv {
     };
 }
 /**
- * Context object passed to native route handlers (used with `nativeListen`).
+ * Advanced context for handlers that need direct Node.js `IncomingMessage` / `ServerResponse`.
  *
- * @deprecated Prefer {@link KozoContext} — the same handler shape works on `listen()`
- * and `nativeListen()` when you use return values or `ctx.json()`. This type remains
- * for direct `buildNativeContext()` / low-level Node.js access.
+ * Most apps should use {@link KozoContext} — the same handler shape works on `listen()`
+ * and `nativeListen()` when you use return values or `ctx.json()`. Use this type with
+ * {@link buildNativeContext} when you need raw Node.js I/O or uWS-level control.
  *
  * @typeParam S       - Route schema (body, query, params, response)
  * @typeParam TSvc    - Services type (injected at constructor)
@@ -176,29 +176,15 @@ interface NativeKozoContext<S extends RouteSchema = {}, TSvc extends Services = 
     redirect(url: string, status?: number): void;
 }
 /**
- * Handler function type for native routes (used with `nativeListen`).
+ * Handler for advanced native routes that write directly to `ServerResponse`.
+ *
+ * Prefer {@link KozoHandler} for portable handlers; use this with {@link NativeKozoContext}
+ * when you need void-returning handlers and raw Node.js response control.
  *
  * @typeParam S    - Route schema
  * @typeParam TSvc - Services shape
  */
-/** @deprecated Use {@link KozoHandler} — native routes accept the same handler API. */
 type NativeKozoHandler<S extends RouteSchema = {}, TSvc extends Services = Services> = (ctx: NativeKozoContext<S, TSvc>) => void | Promise<void>;
-/**
- * @deprecated Use {@link KozoContext} and {@link KozoHandler} instead. Legacy file-route
- * typing without schema inference; kept for backward compatibility only.
- */
-interface HandlerContext<TBody = unknown, TParams extends Record<string, string> = Record<string, string>, TQuery extends Record<string, string> = Record<string, string>> {
-    body: TBody;
-    params: TParams;
-    query: TQuery;
-    headers: Record<string, string>;
-    services: Services;
-    /** Authenticated user set by JWT middleware */
-    user: KozoUser | null;
-    c: any;
-}
-/** @deprecated Use {@link KozoHandler} instead. */
-type RouteHandler<TBody = unknown> = (ctx: HandlerContext<TBody>) => Promise<unknown> | unknown;
 interface RouteMeta {
     summary?: string;
     description?: string;
@@ -209,11 +195,10 @@ interface RouteMeta {
         window: number;
     };
 }
-interface RouteModule {
-    default: RouteHandler;
-    schema?: RouteSchema;
+interface RouteModule<S extends RouteSchema = RouteSchema> {
+    default: KozoHandler<S>;
+    schema?: S;
     meta?: RouteMeta;
-    middleware?: Array<(ctx: HandlerContext) => Promise<void> | void>;
 }
 /**
  * A middleware discovered from a `_middleware.ts` file in the routes directory.

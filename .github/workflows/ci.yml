@@ -86,4 +86,4 @@ jobs:
         env:
           REDIS_URL: redis://localhost:6379
           RABBITMQ_URL: amqp://guest:guest@localhost:5672
-        run: pnpm --filter @kozojs/queue exec vitest run __tests__/integration
+        run: pnpm --filter @kozojs/queue exec vitest run --config vitest.integration.config.ts

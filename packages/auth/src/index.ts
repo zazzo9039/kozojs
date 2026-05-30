@@ -11,8 +11,6 @@ import type { KozoEnv } from '@kozojs/core';
 
 export { KozoError, UnauthorizedError, type KozoUser } from '@kozojs/core';
 
-let setupAuthWarned = false;
-
 /**
  * Authentication options
  */
@@ -49,7 +47,7 @@ export interface AuthOptions {
   /**
    * When true, the middleware will not return 401 if no token is provided.
    * The user context will be null. Use this as a soft pre-decode step before
-   * a separate enforcement middleware (e.g. via `setupAuth`).
+   * a separate enforcement middleware (e.g. `registerAuthBeforeLoadRoutes` or a custom enforce step).
    */
   optional?: boolean;
 }
@@ -381,18 +379,15 @@ export interface KozoAppLike {
   middleware(path: string, fn: (c: Context<KozoEnv>, next: Next) => Promise<Response | void>): void;
 }
 
-export interface SetupAuthOptions extends AuthOptions {
+/** Options for {@link registerAuthBeforeLoadRoutes}. */
+export interface RegisterAuthOptions extends AuthOptions {
+  /** Same `routesDir` passed to `createKozo({ routesDir })` — used to scan `meta.auth: false`. */
+  routesDir: string;
   /**
    * Additional paths that bypass JWT authentication regardless of `meta.auth`.
    * @example ['/api/docs', '/api/health']
    */
   extraPublicPaths?: string[];
-}
-
-/** Options for {@link registerAuthBeforeLoadRoutes}. */
-export interface RegisterAuthOptions extends SetupAuthOptions {
-  /** Same `routesDir` passed to `createKozo({ routesDir })` — used to scan `meta.auth: false`. */
-  routesDir: string;
 }
 
 function isPublicPath(pathname: string, publicPaths: ReadonlySet<string>): boolean {
@@ -415,9 +410,8 @@ async function collectPublicPaths(routesDir: string, extraPublicPaths: string[])
  * Registers JWT middleware **before** `app.loadRoutes()`.
  *
  * Use this when routes (or `_middleware.ts` files) depend on `c.get('user')` /
- * `ctx.user` — e.g. admin role guards. Middleware registered after `loadRoutes()`
- * (including {@link setupAuth}) runs **after** directory `_middleware.ts`, so JWT
- * would not populate the user in time.
+ * `ctx.user` — e.g. admin role guards. Middleware registered **after** `loadRoutes()`
+ * runs **after** directory `_middleware.ts`, so JWT would not populate the user in time.
  *
  * @example
  * await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
@@ -437,49 +431,6 @@ export async function registerAuthBeforeLoadRoutes(
   const jwtFn = authenticateJWT(secretOrPublicKey, { ...authOpts, prefix: '' });
 
   app.middleware(`${prefix}/*`, authenticateJWT(secretOrPublicKey, { optional: true, prefix: '', ...authOpts }));
-  app.middleware(`${prefix}/*`, async (c, next) => {
-    const pathname = new URL(c.req.url).pathname;
-    if (isPublicPath(pathname, publicPaths)) return next();
-    return jwtFn(c, next);
-  });
-}
-
-/**
- * One-call JWT authentication setup that automatically respects `meta: { auth: false }`.
- *
- * @deprecated Prefer {@link registerAuthBeforeLoadRoutes} before `loadRoutes()` when
- * directory `_middleware.ts` files check `user.role`. This API registers JWT **after**
- * `loadRoutes()` and will be kept for backward compatibility only.
- *
- * Call this **after** `app.loadRoutes()`. Safe only when **no** `_middleware.ts` reads
- * `user` before your handler (no role guards). If you use per-directory admin guards,
- * prefer {@link registerAuthBeforeLoadRoutes} **before** `loadRoutes()` instead.
- *
- * @example
- * await app.loadRoutes();
- * setupAuth(app, process.env.JWT_SECRET!, {
- *   prefix: '/api',
- *   extraPublicPaths: ['/api/docs', '/api/docs.json'],
- * });
- */
-export function setupAuth(
-  app: KozoAppLike,
-  secretOrPublicKey: string | Uint8Array,
-  options: SetupAuthOptions = {},
-): void {
-  if (!setupAuthWarned) {
-    setupAuthWarned = true;
-    console.warn(
-      '[Kozo Auth] setupAuth() runs JWT after loadRoutes(). If _middleware.ts checks user.role, ' +
-      'use registerAuthBeforeLoadRoutes() before loadRoutes() instead. See docs/common-pitfalls.md',
-    );
-  }
-  const { extraPublicPaths = [], prefix = '/api', ...authOpts } = options;
-  const publicPaths = new Set([
-    ...extraPublicPaths,
-    ...app.getRoutes().filter((r) => r.meta?.auth === false).map((r) => r.path),
-  ]);
-  const jwtFn = authenticateJWT(secretOrPublicKey, { ...authOpts, prefix: '' });
   app.middleware(`${prefix}/*`, async (c, next) => {
     const pathname = new URL(c.req.url).pathname;
     if (isPublicPath(pathname, publicPaths)) return next();

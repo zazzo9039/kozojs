@@ -171,11 +171,11 @@ export interface KozoEnv {
 //
 
 /**
- * Context object passed to native route handlers (used with `nativeListen`).
+ * Advanced context for handlers that need direct Node.js `IncomingMessage` / `ServerResponse`.
  *
- * @deprecated Prefer {@link KozoContext} — the same handler shape works on `listen()`
- * and `nativeListen()` when you use return values or `ctx.json()`. This type remains
- * for direct `buildNativeContext()` / low-level Node.js access.
+ * Most apps should use {@link KozoContext} — the same handler shape works on `listen()`
+ * and `nativeListen()` when you use return values or `ctx.json()`. Use this type with
+ * {@link buildNativeContext} when you need raw Node.js I/O or uWS-level control.
  *
  * @typeParam S       - Route schema (body, query, params, response)
  * @typeParam TSvc    - Services type (injected at constructor)
@@ -213,44 +213,18 @@ export interface NativeKozoContext<
 }
 
 /**
- * Handler function type for native routes (used with `nativeListen`).
+ * Handler for advanced native routes that write directly to `ServerResponse`.
+ *
+ * Prefer {@link KozoHandler} for portable handlers; use this with {@link NativeKozoContext}
+ * when you need void-returning handlers and raw Node.js response control.
  *
  * @typeParam S    - Route schema
  * @typeParam TSvc - Services shape
  */
-/** @deprecated Use {@link KozoHandler} — native routes accept the same handler API. */
 export type NativeKozoHandler<
   S extends RouteSchema = {},
   TSvc extends Services = Services,
 > = (ctx: NativeKozoContext<S, TSvc>) => void | Promise<void>;
-
-// ============================================
-// ROUTE HANDLER TYPES
-// ============================================
-
-/**
- * @deprecated Use {@link KozoContext} and {@link KozoHandler} instead. Legacy file-route
- * typing without schema inference; kept for backward compatibility only.
- */
-export interface HandlerContext<
-  TBody = unknown,
-  TParams extends Record<string, string> = Record<string, string>,
-  TQuery extends Record<string, string> = Record<string, string>
-> {
-  body: TBody;
-  params: TParams;
-  query: TQuery;
-  headers: Record<string, string>;
-  services: Services;
-  /** Authenticated user set by JWT middleware */
-  user: KozoUser | null;
-  c: any; // Raw Hono Context for advanced use cases
-}
-
-/** @deprecated Use {@link KozoHandler} instead. */
-export type RouteHandler<TBody = unknown> = (
-  ctx: HandlerContext<TBody>
-) => Promise<unknown> | unknown;
 
 // ============================================
 // ROUTE MODULE TYPES
@@ -267,11 +241,10 @@ export interface RouteMeta {
   };
 }
 
-export interface RouteModule {
-  default: RouteHandler;
-  schema?: RouteSchema;
+export interface RouteModule<S extends RouteSchema = RouteSchema> {
+  default: KozoHandler<S>;
+  schema?: S;
   meta?: RouteMeta;
-  middleware?: Array<(ctx: HandlerContext) => Promise<void> | void>;
 }
 
 // ============================================
@@ -394,20 +367,18 @@ export interface KozoConfig<
 // DEFINE ROUTE HELPER
 // ============================================
 
-export interface RouteDefinitionOptions<TBody = unknown> {
-  schema?: RouteSchema;
+export interface RouteDefinitionOptions<S extends RouteSchema = RouteSchema> {
+  schema?: S;
   meta?: RouteMeta;
-  middleware?: Array<(ctx: HandlerContext) => Promise<void> | void>;
-  handler: RouteHandler<TBody>;
+  handler: KozoHandler<S>;
 }
 
-export function defineRoute<TBody = unknown>(
-  options: RouteDefinitionOptions<TBody>
-): RouteModule {
+export function defineRoute<S extends RouteSchema = RouteSchema>(
+  options: RouteDefinitionOptions<S>,
+): RouteModule<S> {
   return {
-    default: options.handler as RouteHandler,
+    default: options.handler,
     schema: options.schema,
     meta: options.meta,
-    middleware: options.middleware
   };
 }

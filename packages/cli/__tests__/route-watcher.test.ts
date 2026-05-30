@@ -177,7 +177,7 @@ describe('startRouteWatcher — integration', () => {
 
     expect(manifest.routes).toHaveLength(1);
     expect(manifest.routes[0].path).toBe('/users/:id?');
-    expect(manifest.routes[0].params).toContain('id');
+    expect(manifest.routes[0].params).toContain('id?');
   });
 
   // -------------------------------------------------------------------------

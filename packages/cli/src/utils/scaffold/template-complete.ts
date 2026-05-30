@@ -132,7 +132,7 @@ export async function createExampleRoutes(projectDir: string): Promise<void> {
   // GET /users
   await fs.ensureDir(path.join(projectDir, 'src', 'routes', 'users'));
   
-  const getUsersRoute = `import type { HandlerContext } from '@kozojs/core';
+  const getUsersRoute = `import type { KozoContext } from '@kozojs/core';
 import { users } from '../../db/schema.js';
 
 export const meta = {
@@ -140,8 +140,8 @@ export const meta = {
   description: 'Returns a list of all users in the database'
 };
 
-export default async ({ services: { db } }: HandlerContext) => {
-  const allUsers = db.select().from(users).all();
+export default async (ctx: KozoContext) => {
+  const allUsers = ctx.services.db.select().from(users).all();
   return { users: allUsers };
 };
 `;
@@ -149,7 +149,7 @@ export default async ({ services: { db } }: HandlerContext) => {
 
   // POST /users
   const postUsersRoute = `import { z } from 'zod';
-import type { HandlerContext } from '@kozojs/core';
+import type { KozoContext } from '@kozojs/core';
 import { users } from '../../db/schema.js';
 
 export const schema = {
@@ -164,10 +164,9 @@ export const meta = {
   description: 'Creates a new user with name and email'
 };
 
-type Body = z.infer<typeof schema.body>;
-
-export default async ({ body, services: { db } }: HandlerContext<Body>) => {
-  const user = db.insert(users).values({
+export default async (ctx: KozoContext<typeof schema>) => {
+  const { body, services } = ctx;
+  const user = services.db.insert(users).values({
     ...body,
     createdAt: new Date()
   }).returning().get();

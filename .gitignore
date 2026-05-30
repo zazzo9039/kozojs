@@ -32,5 +32,4 @@ routes-manifest.json
 
 # Database
 *.db
-.npmrc
 publish.sh

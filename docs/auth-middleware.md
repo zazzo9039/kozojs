@@ -27,13 +27,17 @@ await app.loadRoutes();
 export const meta = { auth: false };
 ```
 
-Scanned automatically by `registerAuthBeforeLoadRoutes` / `setupAuth`.
+Scanned automatically by `registerAuthBeforeLoadRoutes`.
 
 ## Manual middleware
 
+Use when you need custom composition (e.g. rate limits before JWT enforcement, as in **kozo-app** `registerApiSecurity`):
+
 ```typescript
+import { scanRoutes } from '@kozojs/core';
 import { authenticateJWT } from '@kozojs/auth';
 
+// Still register **before** loadRoutes()
 app.middleware('/api/*', authenticateJWT(process.env.JWT_SECRET!, { optional: true }));
 app.middleware('/api/*', authenticateJWT(process.env.JWT_SECRET!));
 ```
@@ -46,11 +50,7 @@ import { canActivate, isAuthenticated, hasRole } from '@kozojs/auth';
 export default canActivate(isAuthenticated, hasRole('admin'));
 ```
 
-Requires `registerAuthBeforeLoadRoutes` **before** `loadRoutes()`.
-
-## Legacy: `setupAuth` after `loadRoutes`
-
-Safe only when **no** `_middleware.ts` reads `user` before handlers. See `@kozojs/auth` README.
+Requires JWT registration **before** `loadRoutes()`.
 
 ## Handler access
 
@@ -62,3 +62,4 @@ app.get('/api/me', {}, (ctx) => ctx.user);
 
 - [`packages/auth/README.md`](../packages/auth/README.md)
 - [Getting started](./getting-started.md)
+- [Common pitfalls](./common-pitfalls.md) — auth ordering

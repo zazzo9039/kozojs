@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/core",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "High-performance TypeScript framework with type-safe client generation",
   "type": "module",
   "main": "./lib/index.js",

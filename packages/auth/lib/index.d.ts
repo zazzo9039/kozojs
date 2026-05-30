@@ -36,7 +36,7 @@ interface AuthOptions {
     /**
      * When true, the middleware will not return 401 if no token is provided.
      * The user context will be null. Use this as a soft pre-decode step before
-     * a separate enforcement middleware (e.g. via `setupAuth`).
+     * a separate enforcement middleware (e.g. `registerAuthBeforeLoadRoutes` or a custom enforce step).
      */
     optional?: boolean;
 }
@@ -164,25 +164,22 @@ interface KozoAppLike {
     }>;
     middleware(path: string, fn: (c: Context<KozoEnv>, next: Next) => Promise<Response | void>): void;
 }
-interface SetupAuthOptions extends AuthOptions {
+/** Options for {@link registerAuthBeforeLoadRoutes}. */
+interface RegisterAuthOptions extends AuthOptions {
+    /** Same `routesDir` passed to `createKozo({ routesDir })` — used to scan `meta.auth: false`. */
+    routesDir: string;
     /**
      * Additional paths that bypass JWT authentication regardless of `meta.auth`.
      * @example ['/api/docs', '/api/health']
      */
     extraPublicPaths?: string[];
 }
-/** Options for {@link registerAuthBeforeLoadRoutes}. */
-interface RegisterAuthOptions extends SetupAuthOptions {
-    /** Same `routesDir` passed to `createKozo({ routesDir })` — used to scan `meta.auth: false`. */
-    routesDir: string;
-}
 /**
  * Registers JWT middleware **before** `app.loadRoutes()`.
  *
  * Use this when routes (or `_middleware.ts` files) depend on `c.get('user')` /
- * `ctx.user` — e.g. admin role guards. Middleware registered after `loadRoutes()`
- * (including {@link setupAuth}) runs **after** directory `_middleware.ts`, so JWT
- * would not populate the user in time.
+ * `ctx.user` — e.g. admin role guards. Middleware registered **after** `loadRoutes()`
+ * runs **after** directory `_middleware.ts`, so JWT would not populate the user in time.
  *
  * @example
  * await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
@@ -194,25 +191,6 @@ interface RegisterAuthOptions extends SetupAuthOptions {
  */
 declare function registerAuthBeforeLoadRoutes(app: KozoAppLike, secretOrPublicKey: string | Uint8Array, options: RegisterAuthOptions): Promise<void>;
 /**
- * One-call JWT authentication setup that automatically respects `meta: { auth: false }`.
- *
- * @deprecated Prefer {@link registerAuthBeforeLoadRoutes} before `loadRoutes()` when
- * directory `_middleware.ts` files check `user.role`. This API registers JWT **after**
- * `loadRoutes()` and will be kept for backward compatibility only.
- *
- * Call this **after** `app.loadRoutes()`. Safe only when **no** `_middleware.ts` reads
- * `user` before your handler (no role guards). If you use per-directory admin guards,
- * prefer {@link registerAuthBeforeLoadRoutes} **before** `loadRoutes()` instead.
- *
- * @example
- * await app.loadRoutes();
- * setupAuth(app, process.env.JWT_SECRET!, {
- *   prefix: '/api',
- *   extraPublicPaths: ['/api/docs', '/api/docs.json'],
- * });
- */
-declare function setupAuth(app: KozoAppLike, secretOrPublicKey: string | Uint8Array, options?: SetupAuthOptions): void;
-/**
  * Decode a JWT token payload without verifying its signature.
  * Safe for client-side use to inspect claims (e.g. displaying user info in the UI).
  * Never use this for authorization — always verify the signature server-side.
@@ -223,4 +201,4 @@ declare function setupAuth(app: KozoAppLike, secretOrPublicKey: string | Uint8Ar
  */
 declare function decodeTokenPayload<T extends KozoUser = KozoUser>(token: string): T | null;
 
-export { type AuthOptions, type Guard, type KozoAppLike, type RegisterAuthOptions, type SetupAuthOptions, anyOf, authenticateJWT, canActivate, createJWT, decodeJWT, decodeTokenPayload, getUser, hasRole, isAuthenticated, isSelf, registerAuthBeforeLoadRoutes, setupAuth };
+export { type AuthOptions, type Guard, type KozoAppLike, type RegisterAuthOptions, anyOf, authenticateJWT, canActivate, createJWT, decodeJWT, decodeTokenPayload, getUser, hasRole, isAuthenticated, isSelf, registerAuthBeforeLoadRoutes };

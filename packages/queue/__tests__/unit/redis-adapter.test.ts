@@ -130,12 +130,15 @@ describe('createRedisAdapter', () => {
     expect(mockWorkerOn).toHaveBeenCalledWith('error', errorHandler);
   });
 
-  it('on("completed") lazily creates QueueEvents', () => {
+  it('on("completed") lazily creates QueueEvents', async () => {
     const adapter = createRedisAdapter('jobs', {
       connection: { host: 'localhost' },
     });
     const unsub = adapter.on('completed', vi.fn());
     expect(typeof unsub).toBe('function');
+    await vi.waitFor(() => {
+      expect(mockQueueEventsOn).toHaveBeenCalledWith('completed', expect.any(Function));
+    });
   });
 
   it('on() returns unsubscribe function', async () => {
@@ -143,14 +146,20 @@ describe('createRedisAdapter', () => {
       connection: { host: 'localhost' },
     });
 
+    mockQueueEventsOn.mockClear();
+    mockQueueEventsOff.mockClear();
+
     const unsub = adapter.on('completed', vi.fn());
-    // Wait for async QueueEvents initialization
-    await new Promise((r) => setTimeout(r, 50));
+
+    await vi.waitFor(() => {
+      expect(mockQueueEventsOn).toHaveBeenCalledWith('completed', expect.any(Function));
+    });
 
     unsub();
-    // unsub triggers an async .then() — give it a tick to resolve
-    await new Promise((r) => setTimeout(r, 10));
-    expect(mockQueueEventsOff).toHaveBeenCalledWith('completed', expect.any(Function));
+
+    await vi.waitFor(() => {
+      expect(mockQueueEventsOff).toHaveBeenCalledWith('completed', expect.any(Function));
+    });
   });
 
   it('close() closes queue, worker, and queueEvents', async () => {
@@ -162,8 +171,9 @@ describe('createRedisAdapter', () => {
     // Start a worker and subscribe to events to create all instances
     await adapter.process(vi.fn().mockResolvedValue(undefined));
     adapter.on('completed', vi.fn());
-    // Wait for async QueueEvents initialization
-    await new Promise((r) => setTimeout(r, 50));
+    await vi.waitFor(() => {
+      expect(mockQueueEventsOn).toHaveBeenCalled();
+    });
 
     await adapter.close();
     expect(mockQueueClose).toHaveBeenCalled();

@@ -44,16 +44,8 @@ app.middleware('/api/*', authenticateJWT(process.env.JWT_SECRET!));
 
 Handlers receive `ctx.user` (Kozo) or `c.get('user')` (Hono raw context).
 
-## After `loadRoutes` only (no role `_middleware`)
-
-```typescript
-import { setupAuth } from '@kozojs/auth';
-
-await app.loadRoutes();
-setupAuth(app, process.env.JWT_SECRET!, { prefix: '/api' });
-```
-
-> **Warning:** `setupAuth()` registers JWT **after** directory `_middleware.ts`. Admin guards that check `user.role` will run **before** JWT — use `registerAuthBeforeLoadRoutes` instead.
+For apps with custom rate limits or extra middleware (see **kozo-app** `registerApiSecurity`), compose
+`authenticateJWT` manually **before** `loadRoutes()` — same ordering rule as above.
 
 ## Role guards
 
