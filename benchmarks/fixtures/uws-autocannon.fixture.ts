@@ -34,6 +34,15 @@ export async function setupUwsAutocannon(): Promise<{ port: number; server: { cl
   return new Promise((resolve, reject) => {
     const app = uWS.App();
 
+    app.get('/api/health', (res: any) => {
+      const body = JSON.stringify({ status: 'ok', timestamp: Date.now() });
+      res.cork(() => {
+        res.writeStatus('200 OK');
+        res.writeHeader('Content-Type', 'application/json');
+        res.end(body);
+      });
+    });
+
     app.get('/api/users', (res: any) => {
       const body = serializeUsers();
       res.cork(() => {

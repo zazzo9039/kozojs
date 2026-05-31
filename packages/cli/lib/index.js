@@ -2728,7 +2728,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 async function scaffoldFullstackReadme(projectDir, projectName) {
   const readme = `# ${projectName}
 
-Full-stack application built with **[Kozo](https://github.com/kozojs/kozo)** \u2014 React + Vite frontend with SSR support and a Kozo/Hono API backend.
+Full-stack application built with **[Kozo](https://github.com/zazzo9039/kozojs)** \u2014 React + Vite frontend with SSR support and a Kozo/Hono API backend.
 
 ## Stack
 
@@ -3938,8 +3938,8 @@ function fileToRoute(filePath) {
     if (seg.startsWith("[") && seg.endsWith("]")) return ":" + seg.slice(1, -1);
     return seg;
   });
-  const path13 = "/" + urlSegments.join("/");
-  return { path: path13, method };
+  const path15 = "/" + urlSegments.join("/");
+  return { path: path15, method };
 }
 function extractParams(urlPath) {
   return urlPath.split("/").filter((seg) => seg.startsWith(":")).map((seg) => seg.slice(1));
@@ -4217,30 +4217,87 @@ async function buildCommand(options = {}) {
 var import_child_process = require("child_process");
 var import_chokidar = __toESM(require("chokidar"));
 var import_picocolors4 = __toESM(require("picocolors"));
-var import_fs_extra7 = __toESM(require("fs-extra"));
+var import_fs_extra8 = __toESM(require("fs-extra"));
 var import_path = __toESM(require("path"));
+
+// src/kozo/types.ts
+var import_fs_extra7 = __toESM(require("fs-extra"));
+var import_node_path9 = __toESM(require("path"));
+var import_node_url = require("url");
+var import_core = require("@kozojs/core");
+async function resolveKozoConfig(cwd = process.cwd()) {
+  for (const rel of import_core.KOZO_CONFIG_CANDIDATES) {
+    const configPath = import_node_path9.default.join(cwd, rel);
+    if (!await import_fs_extra7.default.pathExists(configPath)) continue;
+    const mod = await import((0, import_node_url.pathToFileURL)(configPath).href);
+    const definition = mod.default ?? mod.kozoApp;
+    if (!(definition == null ? void 0 : definition.types) || typeof definition.build !== "function") continue;
+    return { configPath, definition };
+  }
+  return null;
+}
+async function resolveKozoTypesRef(cwd) {
+  for (const rel of import_core.KOZO_TYPES_CANDIDATES) {
+    const full = import_node_path9.default.join(cwd, rel);
+    if (!await import_fs_extra7.default.pathExists(full)) continue;
+    const mod = await import((0, import_node_url.pathToFileURL)(full).href);
+    const ref = mod.kozoTypes ?? mod.default;
+    if ((ref == null ? void 0 : ref.from) && (ref == null ? void 0 : ref.name)) return ref;
+  }
+  const fromConfig = await resolveKozoConfig(cwd);
+  return (fromConfig == null ? void 0 : fromConfig.definition.types) ?? null;
+}
+async function generateKozoTypes(cwd = process.cwd()) {
+  const types = await resolveKozoTypesRef(cwd);
+  if (!types) return null;
+  const outPath = import_node_path9.default.join(cwd, import_core.KOZO_TYPES_OUTPUT);
+  await import_fs_extra7.default.ensureDir(import_node_path9.default.dirname(outPath));
+  const source = await (0, import_core.renderKozoTypesDts)(types, cwd);
+  await import_fs_extra7.default.writeFile(outPath, source, "utf8");
+  return outPath;
+}
+async function resolveBuildApp(cwd = process.cwd()) {
+  var _a;
+  const fromConfig = await resolveKozoConfig(cwd);
+  if (fromConfig) return () => fromConfig.definition.build();
+  const legacy = ["src/app.ts", "src/app.js", "src/index.ts", "src/index.js"];
+  for (const rel of legacy) {
+    const full = import_node_path9.default.join(cwd, rel);
+    if (!await import_fs_extra7.default.pathExists(full)) continue;
+    const mod = await import((0, import_node_url.pathToFileURL)(full).href);
+    const buildApp = mod.buildApp ?? ((_a = mod.default) == null ? void 0 : _a.build) ?? mod.default;
+    if (typeof buildApp === "function") return buildApp;
+  }
+  return null;
+}
+
+// src/commands/dev.ts
 async function devCommand() {
   console.clear();
   printBox2("Kozo Development Server");
   await runStep(1, 4, "Checking project structure...", async () => {
-    if (!import_fs_extra7.default.existsSync(import_path.default.join(process.cwd(), "package.json"))) {
+    if (!import_fs_extra8.default.existsSync(import_path.default.join(process.cwd(), "package.json"))) {
       throw new Error("No package.json found. Run this command in a Kozo project.");
     }
   });
-  await runStep(2, 4, "Checking dependencies...", async () => {
-    if (!import_fs_extra7.default.existsSync(import_path.default.join(process.cwd(), "node_modules"))) {
+  await runStep(2, 5, "Checking dependencies...", async () => {
+    if (!import_fs_extra8.default.existsSync(import_path.default.join(process.cwd(), "node_modules"))) {
       throw new Error("Dependencies not installed. Run: pnpm install");
     }
     await sleep(300);
   });
+  await runStep(3, 5, "Generating route types...", async () => {
+    const out = await generateKozoTypes(process.cwd());
+    if (out) await sleep(100);
+  });
   const routesDir = resolveRoutesDir(process.cwd());
-  await runStep(3, 4, "Scanning routes...", async () => {
+  await runStep(4, 5, "Scanning routes...", async () => {
     if (routesDir) {
       await generateManifest({ routesDir, projectRoot: process.cwd(), cache: false, verbose: false });
     }
     await sleep(300);
   });
-  await runStep(4, 4, "Starting server on port 3000...", async () => {
+  await runStep(5, 5, "Starting server on port 3000...", async () => {
     await sleep(200);
   });
   console.log(import_picocolors4.default.gray("\n\u2139  \u{1F440} Watching for file changes... (Ctrl+C to stop)\n"));
@@ -4317,7 +4374,7 @@ function resolveRoutesDir(cwd) {
     import_path.default.join(cwd, "app", "routes")
   ];
   for (const candidate of candidates) {
-    if (import_fs_extra7.default.existsSync(candidate) && import_fs_extra7.default.statSync(candidate).isDirectory()) {
+    if (import_fs_extra8.default.existsSync(candidate) && import_fs_extra8.default.statSync(candidate).isDirectory()) {
       return candidate;
     }
   }
@@ -4352,8 +4409,8 @@ function sleep(ms) {
 // src/commands/generate.ts
 var p2 = __toESM(require("@clack/prompts"));
 var import_picocolors5 = __toESM(require("picocolors"));
-var import_fs_extra8 = __toESM(require("fs-extra"));
-var import_node_path9 = __toESM(require("path"));
+var import_fs_extra9 = __toESM(require("fs-extra"));
+var import_node_path10 = __toESM(require("path"));
 var ROUTE_TEMPLATE = `import { z } from 'zod';
 import type { KozoContext } from '@kozojs/core';
 
@@ -4479,9 +4536,9 @@ async function generateRoute(routePath) {
     p2.cancel("Cancelled");
     process.exit(0);
   }
-  const routesDir = import_node_path9.default.join(process.cwd(), "src", "routes");
-  const filePath = import_node_path9.default.join(routesDir, targetPath, `${method}.ts`);
-  if (await import_fs_extra8.default.pathExists(filePath)) {
+  const routesDir = import_node_path10.default.join(process.cwd(), "src", "routes");
+  const filePath = import_node_path10.default.join(routesDir, targetPath, `${method}.ts`);
+  if (await import_fs_extra9.default.pathExists(filePath)) {
     const overwrite = await p2.confirm({
       message: `File ${filePath} already exists. Overwrite?`,
       initialValue: false
@@ -4491,10 +4548,10 @@ async function generateRoute(routePath) {
       process.exit(0);
     }
   }
-  await import_fs_extra8.default.ensureDir(import_node_path9.default.dirname(filePath));
+  await import_fs_extra9.default.ensureDir(import_node_path10.default.dirname(filePath));
   const template = method === "get" ? GET_ROUTE_TEMPLATE : ROUTE_TEMPLATE;
-  await import_fs_extra8.default.writeFile(filePath, template);
-  const relativePath = import_node_path9.default.relative(process.cwd(), filePath);
+  await import_fs_extra9.default.writeFile(filePath, template);
+  const relativePath = import_node_path10.default.relative(process.cwd(), filePath);
   p2.log.success(`Created ${import_picocolors5.default.cyan(relativePath)}`);
   const urlPath = "/" + targetPath.replace(/\[([^\]]+)\]/g, ":$1");
   console.log(`
@@ -4515,9 +4572,9 @@ async function generateMiddleware(middlewareName) {
     }
     name = result;
   }
-  const middlewareDir = import_node_path9.default.join(process.cwd(), "src", "middleware");
-  const filePath = import_node_path9.default.join(middlewareDir, `${name}.ts`);
-  if (await import_fs_extra8.default.pathExists(filePath)) {
+  const middlewareDir = import_node_path10.default.join(process.cwd(), "src", "middleware");
+  const filePath = import_node_path10.default.join(middlewareDir, `${name}.ts`);
+  if (await import_fs_extra9.default.pathExists(filePath)) {
     const overwrite = await p2.confirm({
       message: `File ${filePath} already exists. Overwrite?`,
       initialValue: false
@@ -4527,10 +4584,10 @@ async function generateMiddleware(middlewareName) {
       process.exit(0);
     }
   }
-  await import_fs_extra8.default.ensureDir(middlewareDir);
+  await import_fs_extra9.default.ensureDir(middlewareDir);
   const content = MIDDLEWARE_TEMPLATE.replace(/\{\{name\}\}/g, name);
-  await import_fs_extra8.default.writeFile(filePath, content);
-  const relativePath = import_node_path9.default.relative(process.cwd(), filePath);
+  await import_fs_extra9.default.writeFile(filePath, content);
+  const relativePath = import_node_path10.default.relative(process.cwd(), filePath);
   p2.log.success(`Created ${import_picocolors5.default.cyan(relativePath)}`);
 }
 async function generateDirMiddleware(routePath) {
@@ -4547,11 +4604,11 @@ async function generateDirMiddleware(routePath) {
     }
     targetPath = result;
   }
-  const routesDir = import_node_path9.default.join(process.cwd(), "src", "routes");
-  const filePath = import_node_path9.default.join(routesDir, targetPath, "_middleware.ts");
-  if (await import_fs_extra8.default.pathExists(filePath)) {
+  const routesDir = import_node_path10.default.join(process.cwd(), "src", "routes");
+  const filePath = import_node_path10.default.join(routesDir, targetPath, "_middleware.ts");
+  if (await import_fs_extra9.default.pathExists(filePath)) {
     const overwrite = await p2.confirm({
-      message: `File ${import_node_path9.default.relative(process.cwd(), filePath)} already exists. Overwrite?`,
+      message: `File ${import_node_path10.default.relative(process.cwd(), filePath)} already exists. Overwrite?`,
       initialValue: false
     });
     if (p2.isCancel(overwrite) || !overwrite) {
@@ -4559,9 +4616,9 @@ async function generateDirMiddleware(routePath) {
       process.exit(0);
     }
   }
-  await import_fs_extra8.default.ensureDir(import_node_path9.default.dirname(filePath));
-  await import_fs_extra8.default.writeFile(filePath, DIR_MIDDLEWARE_TEMPLATE);
-  const relativePath = import_node_path9.default.relative(process.cwd(), filePath);
+  await import_fs_extra9.default.ensureDir(import_node_path10.default.dirname(filePath));
+  await import_fs_extra9.default.writeFile(filePath, DIR_MIDDLEWARE_TEMPLATE);
+  const relativePath = import_node_path10.default.relative(process.cwd(), filePath);
   p2.log.success(`Created ${import_picocolors5.default.cyan(relativePath)}`);
   const urlPrefix = "/" + targetPath.replace(/\\/g, "/") + "/*";
   console.log(`
@@ -4582,11 +4639,11 @@ async function generateService(serviceName) {
     }
     name = result;
   }
-  const servicesDir = import_node_path9.default.join(process.cwd(), "src", "services");
-  const filePath = import_node_path9.default.join(servicesDir, `${name}.ts`);
-  if (await import_fs_extra8.default.pathExists(filePath)) {
+  const servicesDir = import_node_path10.default.join(process.cwd(), "src", "services");
+  const filePath = import_node_path10.default.join(servicesDir, `${name}.ts`);
+  if (await import_fs_extra9.default.pathExists(filePath)) {
     const overwrite = await p2.confirm({
-      message: `File ${import_node_path9.default.relative(process.cwd(), filePath)} already exists. Overwrite?`,
+      message: `File ${import_node_path10.default.relative(process.cwd(), filePath)} already exists. Overwrite?`,
       initialValue: false
     });
     if (p2.isCancel(overwrite) || !overwrite) {
@@ -4595,10 +4652,10 @@ async function generateService(serviceName) {
     }
   }
   const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
-  await import_fs_extra8.default.ensureDir(servicesDir);
+  await import_fs_extra9.default.ensureDir(servicesDir);
   const content = SERVICE_TEMPLATE.replace(/\{\{name\}\}/g, name).replace(/\{\{Name\}\}/g, capitalized);
-  await import_fs_extra8.default.writeFile(filePath, content);
-  const relativePath = import_node_path9.default.relative(process.cwd(), filePath);
+  await import_fs_extra9.default.writeFile(filePath, content);
+  const relativePath = import_node_path10.default.relative(process.cwd(), filePath);
   p2.log.success(`Created ${import_picocolors5.default.cyan(relativePath)}`);
   console.log(`
   Register in your app:
@@ -4608,8 +4665,8 @@ async function generateService(serviceName) {
 
 // src/commands/routes.ts
 var import_picocolors6 = __toESM(require("picocolors"));
-var import_fs_extra9 = __toESM(require("fs-extra"));
-var import_node_path10 = __toESM(require("path"));
+var import_fs_extra10 = __toESM(require("fs-extra"));
+var import_node_path11 = __toESM(require("path"));
 var import_node_fs3 = require("fs");
 function readMeta(handlerPath) {
   try {
@@ -4628,8 +4685,8 @@ function readMeta(handlerPath) {
 }
 async function routesCommand(opts) {
   const cwd = process.cwd();
-  const routesDir = opts.routesDir ? import_node_path10.default.resolve(cwd, opts.routesDir) : resolveRoutesDir(cwd);
-  if (!routesDir || !await import_fs_extra9.default.pathExists(routesDir)) {
+  const routesDir = opts.routesDir ? import_node_path11.default.resolve(cwd, opts.routesDir) : resolveRoutesDir(cwd);
+  if (!routesDir || !await import_fs_extra10.default.pathExists(routesDir)) {
     console.error(import_picocolors6.default.red("No routes directory found."));
     console.error(import_picocolors6.default.dim("Looked for src/routes, routes, src/app/routes, app/routes"));
     console.error(import_picocolors6.default.dim("Or pass --routes-dir <path>"));
@@ -4640,7 +4697,7 @@ async function routesCommand(opts) {
     console.log(import_picocolors6.default.yellow("No routes found in"), routesDir);
     return;
   }
-  console.log(import_picocolors6.default.bold(`Routes (${routes.length})`) + import_picocolors6.default.dim(` \u2014 ${import_node_path10.default.relative(cwd, routesDir)}`));
+  console.log(import_picocolors6.default.bold(`Routes (${routes.length})`) + import_picocolors6.default.dim(` \u2014 ${import_node_path11.default.relative(cwd, routesDir)}`));
   console.log();
   const colMethod = 7;
   const colPath = 28;
@@ -4660,35 +4717,14 @@ async function routesCommand(opts) {
 
 // src/commands/gen-client.ts
 var import_picocolors7 = __toESM(require("picocolors"));
-var import_fs_extra10 = __toESM(require("fs-extra"));
-var import_node_path11 = __toESM(require("path"));
-var import_node_url = require("url");
+var import_fs_extra11 = __toESM(require("fs-extra"));
+var import_node_path12 = __toESM(require("path"));
 async function genClientCommand(opts) {
   const cwd = process.cwd();
-  const appCandidates = ["src/app.ts", "src/app.js", "src/index.ts", "src/index.js"];
-  let appPath = null;
-  for (const rel of appCandidates) {
-    const full = import_node_path11.default.join(cwd, rel);
-    if (await import_fs_extra10.default.pathExists(full)) {
-      appPath = full;
-      break;
-    }
-  }
-  if (!appPath) {
-    console.error(import_picocolors7.default.red("Could not find src/app.ts or src/index.ts"));
-    console.error(import_picocolors7.default.dim("Export buildApp() from src/app.ts for best results."));
-    process.exit(1);
-  }
-  let mod;
-  try {
-    mod = await import((0, import_node_url.pathToFileURL)(appPath).href);
-  } catch (err) {
-    console.error(import_picocolors7.default.red("Failed to import app module:"), err.message);
-    process.exit(1);
-  }
-  const buildApp = mod.buildApp ?? mod.default;
-  if (typeof buildApp !== "function") {
-    console.error(import_picocolors7.default.red("Module must export buildApp() or default async factory"));
+  await generateKozoTypes(cwd);
+  const buildApp = await resolveBuildApp(cwd);
+  if (!buildApp) {
+    console.error(import_picocolors7.default.red("Could not find kozo.config.ts or src/app.ts with buildApp()"));
     process.exit(1);
   }
   const app = await buildApp();
@@ -4696,24 +4732,36 @@ async function genClientCommand(opts) {
     console.error(import_picocolors7.default.red("App instance has no generateClient() \u2014 did you register routes?"));
     process.exit(1);
   }
-  const outPath = import_node_path11.default.resolve(cwd, opts.out ?? "src/generated/client.ts");
+  const outPath = import_node_path12.default.resolve(cwd, opts.out ?? "src/generated/client.ts");
   const source = app.generateClient({
     baseUrl: opts.baseUrl ?? "http://localhost:3000",
     includeValidation: true
   });
-  await import_fs_extra10.default.ensureDir(import_node_path11.default.dirname(outPath));
-  await import_fs_extra10.default.writeFile(outPath, source, "utf8");
-  console.log(import_picocolors7.default.green("\u2713 Generated typed client \u2192"), import_node_path11.default.relative(cwd, outPath));
+  await import_fs_extra11.default.ensureDir(import_node_path12.default.dirname(outPath));
+  await import_fs_extra11.default.writeFile(outPath, source, "utf8");
+  console.log(import_picocolors7.default.green("\u2713 Generated typed client \u2192"), import_node_path12.default.relative(cwd, outPath));
+}
+
+// src/commands/types.ts
+var import_picocolors8 = __toESM(require("picocolors"));
+var import_node_path13 = __toESM(require("path"));
+async function typesCommand() {
+  const out = await generateKozoTypes();
+  if (!out) {
+    console.error(import_picocolors8.default.red("No kozo.config.ts found (export default defineKozoApp({ types: ... }))"));
+    process.exit(1);
+  }
+  console.log(import_picocolors8.default.green("\u2713 Generated"), import_node_path13.default.relative(process.cwd(), out));
 }
 
 // src/commands/init-template.ts
-var import_picocolors8 = __toESM(require("picocolors"));
+var import_picocolors9 = __toESM(require("picocolors"));
 var import_execa3 = require("execa");
-var import_node_path13 = __toESM(require("path"));
+var import_node_path15 = __toESM(require("path"));
 
 // src/utils/copy-template.ts
-var import_fs_extra11 = __toESM(require("fs-extra"));
-var import_node_path12 = __toESM(require("path"));
+var import_fs_extra12 = __toESM(require("fs-extra"));
+var import_node_path14 = __toESM(require("path"));
 var import_node_url2 = require("url");
 var import_meta = {};
 var TEMPLATE_NAMES = ["minimal", "file-routing", "fullstack-ssr"];
@@ -4722,28 +4770,28 @@ function isTemplateName(value) {
 }
 function moduleDir() {
   if (typeof __dirname !== "undefined") return __dirname;
-  return import_node_path12.default.dirname((0, import_node_url2.fileURLToPath)(import_meta.url));
+  return import_node_path14.default.dirname((0, import_node_url2.fileURLToPath)(import_meta.url));
 }
 function resolveTemplatesRoot() {
   const here = moduleDir();
   const candidates = [
-    import_node_path12.default.resolve(here, "../templates"),
-    import_node_path12.default.resolve(here, "../../../../templates"),
-    import_node_path12.default.resolve(here, "../../../templates"),
-    import_node_path12.default.resolve(here, "../../templates")
+    import_node_path14.default.resolve(here, "../templates"),
+    import_node_path14.default.resolve(here, "../../../../templates"),
+    import_node_path14.default.resolve(here, "../../../templates"),
+    import_node_path14.default.resolve(here, "../../templates")
   ];
   for (const candidate of candidates) {
-    if (import_fs_extra11.default.existsSync(import_node_path12.default.join(candidate, "minimal", "package.json"))) {
+    if (import_fs_extra12.default.existsSync(import_node_path14.default.join(candidate, "minimal", "package.json"))) {
       return candidate;
     }
   }
   let dir = process.cwd();
   for (let i = 0; i < 8; i++) {
-    const candidate = import_node_path12.default.join(dir, "templates");
-    if (import_fs_extra11.default.existsSync(import_node_path12.default.join(candidate, "minimal", "package.json"))) {
+    const candidate = import_node_path14.default.join(dir, "templates");
+    if (import_fs_extra12.default.existsSync(import_node_path14.default.join(candidate, "minimal", "package.json"))) {
       return candidate;
     }
-    const parent = import_node_path12.default.dirname(dir);
+    const parent = import_node_path14.default.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
@@ -4752,9 +4800,9 @@ function resolveTemplatesRoot() {
   );
 }
 async function replaceInTree(dir, search, replace) {
-  const entries = await import_fs_extra11.default.readdir(dir, { withFileTypes: true });
+  const entries = await import_fs_extra12.default.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
-    const full = import_node_path12.default.join(dir, entry.name);
+    const full = import_node_path14.default.join(dir, entry.name);
     if (entry.isDirectory()) {
       await replaceInTree(full, search, replace);
       continue;
@@ -4762,9 +4810,9 @@ async function replaceInTree(dir, search, replace) {
     if (!/\.(ts|tsx|json|md|html|example|env)$/i.test(entry.name) && entry.name !== ".env.example") {
       continue;
     }
-    const text3 = await import_fs_extra11.default.readFile(full, "utf8");
+    const text3 = await import_fs_extra12.default.readFile(full, "utf8");
     if (text3.includes(search)) {
-      await import_fs_extra11.default.writeFile(full, text3.split(search).join(replace), "utf8");
+      await import_fs_extra12.default.writeFile(full, text3.split(search).join(replace), "utf8");
     }
   }
 }
@@ -4772,48 +4820,48 @@ async function copyTemplate(template, dest, projectName) {
   if (!isTemplateName(template)) {
     throw new Error(`Unknown template "${template}". Choose: ${TEMPLATE_NAMES.join(", ")}`);
   }
-  const src = import_node_path12.default.join(resolveTemplatesRoot(), template);
-  if (!import_fs_extra11.default.existsSync(src)) {
+  const src = import_node_path14.default.join(resolveTemplatesRoot(), template);
+  if (!import_fs_extra12.default.existsSync(src)) {
     throw new Error(`Template not found: ${src}`);
   }
-  if (await import_fs_extra11.default.pathExists(dest)) {
+  if (await import_fs_extra12.default.pathExists(dest)) {
     throw new Error(`Destination already exists: ${dest}`);
   }
-  await import_fs_extra11.default.copy(src, dest, { filter: (p3) => !p3.includes("node_modules") });
+  await import_fs_extra12.default.copy(src, dest, { filter: (p3) => !p3.includes("node_modules") });
   await replaceInTree(dest, "{{PROJECT_NAME}}", projectName);
 }
 
 // src/commands/init-template.ts
 async function initFromTemplate(projectName, template, install = true) {
   printLogo();
-  console.log(import_picocolors8.default.bold(import_picocolors8.default.red("\u{1F525} Create a new Kozo project")));
-  console.log(import_picocolors8.default.dim(`Template: ${template}
+  console.log(import_picocolors9.default.bold(import_picocolors9.default.red("\u{1F525} Create a new Kozo project")));
+  console.log(import_picocolors9.default.dim(`Template: ${template}
 `));
-  const dest = import_node_path13.default.resolve(process.cwd(), projectName);
+  const dest = import_node_path15.default.resolve(process.cwd(), projectName);
   await copyTemplate(template, dest, projectName);
-  console.log(import_picocolors8.default.green("\u2713 Project created at"), dest);
+  console.log(import_picocolors9.default.green("\u2713 Project created at"), dest);
   if (install) {
     try {
       await (0, import_execa3.execa)("pnpm", ["install"], { cwd: dest, stdio: "inherit" });
     } catch {
-      console.log(import_picocolors8.default.yellow("Run `pnpm install` manually in the project directory."));
+      console.log(import_picocolors9.default.yellow("Run `pnpm install` manually in the project directory."));
     }
   }
   console.log(`
-${import_picocolors8.default.bold("Next steps:")}
+${import_picocolors9.default.bold("Next steps:")}
 
-  ${import_picocolors8.default.cyan(`cd ${projectName}`)}
-  ${!install ? import_picocolors8.default.cyan("pnpm install") + "\n  " : ""}${import_picocolors8.default.cyan("pnpm dev")}
+  ${import_picocolors9.default.cyan(`cd ${projectName}`)}
+  ${!install ? import_picocolors9.default.cyan("pnpm install") + "\n  " : ""}${import_picocolors9.default.cyan("pnpm dev")}
 
-${import_picocolors8.default.dim("List routes:")} ${import_picocolors8.default.cyan("kozo routes")}
-${import_picocolors8.default.dim("Generate client:")} ${import_picocolors8.default.cyan("kozo gen:client")}
+${import_picocolors9.default.dim("List routes:")} ${import_picocolors9.default.cyan("kozo routes")}
+${import_picocolors9.default.dim("Generate client:")} ${import_picocolors9.default.cyan("kozo gen:client")}
 `);
 }
 
 // package.json
 var package_default = {
   name: "@kozojs/cli",
-  version: "0.5.1",
+  version: "0.5.8",
   description: "CLI to scaffold new Kozo Framework projects - The next-gen TypeScript Backend Framework",
   bin: {
     "create-kozo": "./lib/index.js",
@@ -4849,16 +4897,16 @@ var package_default = {
   license: "MIT",
   repository: {
     type: "git",
-    url: "https://github.com/zazzo9039/kozo.git",
-    directory: "packages/cli"
+    url: "https://github.com/zazzo9039/kozojs.git"
   },
-  homepage: "https://github.com/zazzo9039/kozo/tree/main/packages/cli#readme",
-  bugs: "https://github.com/zazzo9039/kozo/issues",
+  homepage: "https://github.com/zazzo9039/kozojs#readme",
+  bugs: "https://github.com/zazzo9039/kozojs/issues",
   engines: {
     node: ">=18.0.0"
   },
   dependencies: {
     "@clack/prompts": "^0.8.0",
+    "@kozojs/core": "workspace:*",
     commander: "^12.0.0",
     picocolors: "^1.1.0",
     execa: "^9.5.0",
@@ -4912,7 +4960,10 @@ program.command("generate [type] [name]").alias("g").description("Generate scaff
 program.command("routes").description("List routes from the file-system routes directory").option("--routes-dir <dir>", "Routes directory relative to project root").action(async (opts) => {
   await routesCommand(opts);
 });
-program.command("gen:client").description("Generate a typed API client (requires export buildApp in src/app.ts)").option("-o, --out <path>", "Output file path", "src/generated/client.ts").option("--base-url <url>", "Base URL for the client", "http://localhost:3000").action(async (opts) => {
+program.command("types").description("Generate .kozo/types.d.ts from kozo.config.ts (typed route handlers)").action(async () => {
+  await typesCommand();
+});
+program.command("gen:client").description("Generate a typed API client (kozo.config.ts or src/app.ts with buildApp)").option("-o, --out <path>", "Output file path", "src/generated/client.ts").option("--base-url <url>", "Base URL for the client", "http://localhost:3000").action(async (opts) => {
   await genClientCommand(opts);
 });
 program.parse();

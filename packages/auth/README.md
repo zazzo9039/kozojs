@@ -1,6 +1,6 @@
 # @kozojs/auth
 
-JWT authentication for [Kozo Framework](https://github.com/zazzo9039/kozo) — built on [`jose`](https://github.com/panva/jose).
+JWT authentication for [Kozo Framework](https://github.com/zazzo9039/kozojs) — built on [`jose`](https://github.com/panva/jose).
 
 ## Install
 

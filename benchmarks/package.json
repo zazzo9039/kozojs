@@ -9,6 +9,7 @@
     "bench:requests": "tsx request-overhead-fair.bench.ts",
     "bench:requests:legacy": "tsx request-overhead.bench.ts",
     "bench:autocannon": "tsx autocannon.bench.ts",
+    "bench:docs": "tsx autocannon.bench.ts",
     "bench:validate": "tsx statistical-validation.ts"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "autocannon": "^7.15.0",
     "fastify": "^5.1.0",
     "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
     "table": "^6.8.2",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#6609a88ffa9a16ac5158046761356ce03250a0df",
     "zod": "^3.23.0"

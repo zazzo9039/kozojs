@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/testing",
-  "version": "0.5.2",
+  "version": "0.5.9",
   "description": "In-process test client for Kozo Framework — no HTTP server required",
   "type": "module",
   "main": "./lib/index.js",
@@ -34,16 +34,15 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zazzo9039/kozo.git",
-    "directory": "packages/testing"
+    "url": "https://github.com/zazzo9039/kozojs.git"
   },
-  "homepage": "https://github.com/zazzo9039/kozo/tree/main/packages/testing#readme",
-  "bugs": "https://github.com/zazzo9039/kozo/issues",
+  "homepage": "https://github.com/zazzo9039/kozojs#readme",
+  "bugs": "https://github.com/zazzo9039/kozojs/issues",
   "engines": {
     "node": ">=18.0.0"
   },
   "peerDependencies": {
-    "@kozojs/core": "^0.5.0"
+    "@kozojs/core": "^0.5.9"
   },
   "devDependencies": {
     "@kozojs/core": "workspace:*",

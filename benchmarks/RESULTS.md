@@ -28,7 +28,8 @@ pnpm bench                 # full suite (startup + latency + throughput)
 pnpm bench:startup         # forked-process startup time
 pnpm bench:requests        # interleaved latency (fair)
 pnpm bench:requests:legacy # sequential latency (legacy)
-pnpm bench:autocannon      # 10 conns × 10s throughput
+pnpm bench:autocannon      # throughput (default BENCH_CONFIG=docs)
+pnpm bench:docs            # same as above — official 10c/10s preset
 pnpm bench:validate        # 5 rounds + statistical significance
 ```
 
@@ -49,7 +50,7 @@ The benchmark fixtures live in [`benchmarks/fixtures/`](./fixtures/). Each fixtu
 | uWebSockets.js | `github:uNetworking/uWebSockets.js#6609a88` (pinned in `benchmarks/package.json`) |
 | Fastify | `^5.1.0` |
 | NestJS | `^10.4.8` (Fastify adapter, logging disabled) |
-| autocannon | `^7.15.0`, `-c 10 -d 10` (10 connections, 10 s) |
+| autocannon | `^7.15.0`, `BENCH_CONFIG=docs` → 10 connections, 10 s, pipelining 1 |
 
 > A clean re-run should update the table above (commit SHA, date, machine specs) and re-publish the resulting numbers.
 
@@ -112,7 +113,15 @@ Time from module import to "server ready" message. Forked process per framework,
 
 ### Load Testing (`autocannon.bench.ts`)
 
-`autocannon -c 10 -d 10` against each fixture's `GET /api/health` endpoint.
+Official throughput uses **`BENCH_CONFIG=docs`** (10 connections, 10 seconds, pipelining 1).
+
+Primary route — **`GET /api/health`** (published numbers):
+
+```bash
+cd benchmarks
+BENCH_CONFIG=docs pnpm bench:autocannon
+# or: pnpm bench:docs
+```
 
 ```
 ┌────────────┬──────────────┬──────────────┬──────────────┐
@@ -123,13 +132,11 @@ Time from module import to "server ready" message. Forked process per framework,
 │ Fastify    │ 13,210       │ ~0.76 ms     │ ~1.2 ms      │
 │ NestJS     │  4,131       │ ~2.42 ms     │ ~4.0 ms      │
 └────────────┴──────────────┴──────────────┴──────────────┘
-
-Kozo vs uWS bare: ~equivalent (0.1 % gap)
-Kozo vs Fastify:  +32.5 % req/sec
-Kozo vs NestJS:   +324  % req/sec
 ```
 
-**Why Kozo matches bare uWS.** Routes are registered directly in the C++ radix trie at `nativeListen()` time. Once a route matches, only a single JS callback (`compileUwsNativeHandler`) runs — no Hono dispatch, no Web API Request/Response allocation, response written via `uwsRes.cork()` to batch the kernel send.
+Secondary route — **`GET /api/users`** (in-memory list + Zod validation) is also printed by `bench:autocannon` for framework overhead comparison. Do **not** mix with Postgres-backed app routes.
+
+See [METHODOLOGY.md](./METHODOLOGY.md) for all presets (`light`, `medium`, `heavy`) and kozo-native-api app benchmarks.
 
 ---
 
@@ -241,8 +248,10 @@ Interleaving requests neutralizes those effects.
 
 ### Load testing
 
-- `autocannon -c 10 -d 10` (10 connections, 10 seconds)
-- Compared metrics: requests/sec, mean latency, p99 latency
+- `BENCH_CONFIG=docs` → 10 connections, 10 seconds, pipelining 1
+- Primary route: **`GET /api/health`** (published req/s)
+- Secondary route: `GET /api/users` (in-memory; same run)
+- Metrics: requests/sec, mean latency, p99 latency, errors
 
 ---
 

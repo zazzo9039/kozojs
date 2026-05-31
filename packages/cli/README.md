@@ -1,6 +1,6 @@
 # @kozojs/cli
 
-🔥 **Scaffolding CLI for the [Kozo Framework](https://github.com/zazzo9039/kozo)** — the next-gen TypeScript backend framework with Zod-native validation and an optional uWebSockets.js transport.
+🔥 **Scaffolding CLI for the [Kozo Framework](https://github.com/zazzo9039/kozojs)** — the next-gen TypeScript backend framework with Zod-native validation and an optional uWebSockets.js transport.
 
 ## Quick Start
 

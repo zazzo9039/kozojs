@@ -4,6 +4,7 @@ import pc from 'picocolors';
 import fs from 'fs-extra';
 import path from 'path';
 import { generateManifest } from '../routing/manifest.js';
+import { generateKozoTypes } from '../kozo/types.js';
 
 // ---------------------------------------------------------------------------
 // Dev command
@@ -22,24 +23,29 @@ export async function devCommand(): Promise<void> {
     }
   });
 
-  await runStep(2, 4, 'Checking dependencies...', async () => {
+  await runStep(2, 5, 'Checking dependencies...', async () => {
     if (!fs.existsSync(path.join(process.cwd(), 'node_modules'))) {
       throw new Error('Dependencies not installed. Run: pnpm install');
     }
     await sleep(300);
   });
 
-  // 3. Detect routes directory
+  await runStep(3, 5, 'Generating route types...', async () => {
+    const out = await generateKozoTypes(process.cwd());
+    if (out) await sleep(100);
+  });
+
+  // Detect routes directory
   const routesDir = resolveRoutesDir(process.cwd());
 
-  await runStep(3, 4, 'Scanning routes...', async () => {
+  await runStep(4, 5, 'Scanning routes...', async () => {
     if (routesDir) {
       await generateManifest({ routesDir, projectRoot: process.cwd(), cache: false, verbose: false });
     }
     await sleep(300);
   });
 
-  await runStep(4, 4, 'Starting server on port 3000...', async () => {
+  await runStep(5, 5, 'Starting server on port 3000...', async () => {
     await sleep(200);
   });
 

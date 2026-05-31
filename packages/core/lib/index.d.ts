@@ -135,6 +135,23 @@ type KozoHandler<S extends RouteSchema = {}, TServices extends Services = Servic
 interface Services {
     [key: string]: unknown;
 }
+/**
+ * App services injected into every route handler (`ctx.services`).
+ *
+ * Augment once in your app so file-system routes get full autocompletion
+ * without a local `defineRoute` wrapper:
+ *
+ * @example
+ * // src/kozo.d.ts
+ * import type { AppServices } from './lib/services/index.js';
+ * declare module '@kozojs/core' {
+ *   interface KozoServices extends AppServices {}
+ * }
+ */
+interface KozoServices extends Services {
+}
+/** Handler context for file-system routes — uses augmented {@link KozoServices}. */
+type RouteContext<S extends RouteSchema = {}> = KozoContext<S, KozoServices>;
 interface KozoEnv {
     Variables: {
         services: Services;
@@ -195,9 +212,23 @@ interface RouteMeta {
         window: number;
     };
 }
-interface RouteModule<S extends RouteSchema = RouteSchema> {
-    default: KozoHandler<S>;
+/** Single default export: `{ schema?, meta?, handler }` (or `defineRoute(...)`). */
+interface RouteDefinitionOptions<S extends RouteSchema = RouteSchema> {
     schema?: S;
+    meta?: RouteMeta;
+    handler: KozoHandler<S>;
+}
+interface RouteModule<S extends RouteSchema = RouteSchema> {
+    /** Handler function, or a route definition object with `handler`. */
+    default: KozoHandler<S> | RouteDefinitionOptions<S>;
+    /** Legacy: schema as a separate export (prefer `default.schema`). */
+    schema?: S;
+    /** Legacy: meta as a separate export (prefer `default.meta`). */
+    meta?: RouteMeta;
+}
+interface ResolvedRouteModule<S extends RouteSchema = RouteSchema> {
+    handler: KozoHandler<S>;
+    schema: S;
     meta?: RouteMeta;
 }
 /**
@@ -304,6 +335,10 @@ interface KozoConfig<TServices extends Services = Services, TScoped extends Reco
         services: TServices;
     }) => void | Promise<void>;
 }
+/** Typed helper for `export default defineRoute({ schema, handler, meta? })`. */
+declare function defineRoute<S extends RouteSchema = RouteSchema>(options: RouteDefinitionOptions<S> & {
+    handler: KozoHandler<S, KozoServices>;
+}): RouteDefinitionOptions<S>;
 
 /**
  * Client Generator Options
@@ -782,6 +817,49 @@ declare class Kozo<TServices extends Services = Services, TScoped extends Record
 }
 declare function createKozo<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>>(config?: KozoConfig<TServices, TScoped>): Kozo<TServices, TScoped>;
 
+/** Tells the Kozo CLI which type to inject into `KozoServices` (auto-generated `.kozo/types.d.ts`). */
+interface KozoAppTypesRef {
+    /** Module path relative to project root, e.g. `src/lib/services/index.js` */
+    from: string;
+    /** Exported interface name, e.g. `AppServices` */
+    name: string;
+}
+interface KozoAppHooks<TServices extends Services> {
+    app: Kozo<TServices>;
+    services: TServices;
+}
+interface KozoAppDefinition<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>> {
+    routesDir: string;
+    services: () => TServices | Promise<TServices>;
+    types: KozoAppTypesRef;
+    configure?: (ctx: KozoAppHooks<TServices>) => void | Promise<void>;
+    onReady?: (ctx: Pick<KozoAppHooks<TServices>, 'app'>) => void | Promise<void>;
+    kozo?: Omit<KozoConfig<TServices, TScoped>, 'services' | 'routesDir'>;
+    build: () => Promise<Kozo<TServices, TScoped>>;
+}
+interface DefineKozoAppOptions<TServices extends Services, TScoped extends Record<string, unknown> = Record<string, never>> {
+    routesDir?: string;
+    services: () => TServices | Promise<TServices>;
+    types: KozoAppTypesRef;
+    configure?: (ctx: KozoAppHooks<TServices>) => void | Promise<void>;
+    onReady?: (ctx: Pick<KozoAppHooks<TServices>, 'app'>) => void | Promise<void>;
+}
+/**
+ * Declare a Kozo app — used in `kozo.config.ts`.
+ * The CLI reads {@link KozoAppTypesRef} and generates `.kozo/types.d.ts` so route
+ * handlers get typed `ctx.services` without manual module augmentation.
+ */
+declare function defineKozoApp<TServicesFn extends () => Services | Promise<Services>, TScoped extends Record<string, unknown> = Record<string, never>>(options: DefineKozoAppOptions<Awaited<ReturnType<TServicesFn>>, TScoped> & Omit<KozoConfig<Awaited<ReturnType<TServicesFn>>, TScoped>, 'services' | 'routesDir'> & {
+    services: TServicesFn;
+}): KozoAppDefinition<Awaited<ReturnType<TServicesFn>>, TScoped>;
+/** Bootstrap a app from {@link defineKozoApp}. */
+declare function buildKozoApp<TServices extends Services, TScoped extends Record<string, unknown> = Record<string, never>>(definition: KozoAppDefinition<TServices, TScoped>): Promise<Kozo<TServices, TScoped>>;
+/** Generate `.kozo/types.d.ts` source (CLI / Node). */
+declare function renderKozoTypesDts(types: KozoAppTypesRef, projectRoot: string): Promise<string>;
+declare const KOZO_TYPES_CANDIDATES: readonly ["src/kozo.types.ts", "src/kozo.types.js", "kozo.types.ts"];
+declare const KOZO_CONFIG_CANDIDATES: readonly ["kozo.config.ts", "kozo.config.js", "src/kozo.config.ts", "src/kozo.config.js"];
+declare const KOZO_TYPES_OUTPUT = ".kozo/types.d.ts";
+
 /** Per-request DI factory + optional teardown — set via `createKozo({ scopedServices })`. */
 interface ScopeConfig<TBase extends Services = Services, TScoped extends Record<string, unknown> = Record<string, unknown>> {
     base: TBase;
@@ -1156,6 +1234,8 @@ interface ScanOptions {
     routesDir: string;
     verbose?: boolean;
 }
+/** Normalize a dynamically imported route module to handler + schema + meta. */
+declare function resolveRouteModule<S extends RouteSchema = RouteSchema>(module: RouteModule<S>): ResolvedRouteModule<S> | null;
 /**
  * Scan routes directory and return route definitions
  */
@@ -1304,4 +1384,4 @@ declare const deletedSchema: z.ZodObject<{
     deletedId: z.ZodString;
 }, z.core.$strip>;
 
-export { BadRequestError, type ClientGeneratorOptions, type CompiledRoute, ConflictError, ERROR_RESPONSES, ForbiddenError, GoneError, type Infer, type InferResponse, type InferSchema, type InflightTracker, Kozo, type KozoConfig, type KozoContext, type KozoEnv, KozoError, KozoGroup, type KozoHandler, type KozoRequest, type KozoUser, type KozoWebSocket, type MiddlewareDefinition, type NativeKozoContext, type NativeKozoHandler, NotFoundError, type OpenAPIConfig, OpenAPIGenerator, type OpenAPIInfo, type OpenAPISpec, type PaginatedResult, type Plugin, type ProblemDetails, type RouteInfo, type RouteMeta, type RouteModule, type RouteSchema, SchemaCompiler, type Services, ShutdownManager, type ShutdownOptions, type ShutdownState, type SsrConfig, type SsrRenderFn, type SsrRenderResult, UnauthorizedError, type ValidationError, ValidationFailedError, type WebSocketHandler, type WsUpgradeRequest, buildNativeContext, compileRouteHandler, createInflightTracker, createKozo, createOpenAPIGenerator, createShutdownManager, createSsrServer, defineEnv, deletedSchema, fastCL, fastWrite400, fastWrite404, fastWrite500, fastWriteError, fastWriteHtml, fastWriteJson, fastWriteJsonStatus, fastWriteText, fileToPath, forbiddenResponse, formatZodErrors, generateSwaggerHtml, generateTypedClient, idParams, internalErrorResponse, isMiddlewareFile, isRouteFile, notFoundResponse, paginate, paginationSchema, scanMiddleware, scanRoutes, searchSchema, sortSchema, successSchema, timestamps, trackRequest, unauthorizedResponse, uuid, uuidParams, validationErrorResponse };
+export { BadRequestError, type ClientGeneratorOptions, type CompiledRoute, ConflictError, type DefineKozoAppOptions, ERROR_RESPONSES, ForbiddenError, GoneError, type Infer, type InferResponse, type InferSchema, type InflightTracker, KOZO_CONFIG_CANDIDATES, KOZO_TYPES_CANDIDATES, KOZO_TYPES_OUTPUT, Kozo, type KozoAppDefinition, type KozoAppHooks, type KozoAppTypesRef, type KozoConfig, type KozoContext, type KozoEnv, KozoError, KozoGroup, type KozoHandler, type KozoRequest, type KozoServices, type KozoUser, type KozoWebSocket, type MiddlewareDefinition, type NativeKozoContext, type NativeKozoHandler, NotFoundError, type OpenAPIConfig, OpenAPIGenerator, type OpenAPIInfo, type OpenAPISpec, type PaginatedResult, type Plugin, type ProblemDetails, type ResolvedRouteModule, type RouteContext, type RouteDefinitionOptions, type RouteInfo, type RouteMeta, type RouteModule, type RouteSchema, SchemaCompiler, type Services, ShutdownManager, type ShutdownOptions, type ShutdownState, type SsrConfig, type SsrRenderFn, type SsrRenderResult, UnauthorizedError, type ValidationError, ValidationFailedError, type WebSocketHandler, type WsUpgradeRequest, buildKozoApp, buildNativeContext, compileRouteHandler, createInflightTracker, createKozo, createOpenAPIGenerator, createShutdownManager, createSsrServer, defineEnv, defineKozoApp, defineRoute, deletedSchema, fastCL, fastWrite400, fastWrite404, fastWrite500, fastWriteError, fastWriteHtml, fastWriteJson, fastWriteJsonStatus, fastWriteText, fileToPath, forbiddenResponse, formatZodErrors, generateSwaggerHtml, generateTypedClient, idParams, internalErrorResponse, isMiddlewareFile, isRouteFile, notFoundResponse, paginate, paginationSchema, renderKozoTypesDts, resolveRouteModule, scanMiddleware, scanRoutes, searchSchema, sortSchema, successSchema, timestamps, trackRequest, unauthorizedResponse, uuid, uuidParams, validationErrorResponse };

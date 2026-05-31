@@ -82,4 +82,19 @@ describe('registerAuthBeforeLoadRoutes', () => {
 
     expect((await request(app, '/docs')).status).toBe(200);
   });
+
+  it('treats object default export with meta.auth false as public', async () => {
+    await writeModule('health/get.js', `
+      export default {
+        meta: { auth: false },
+        handler: () => ({ ok: true }),
+      };
+    `);
+
+    const app = createKozo();
+    await registerAuthBeforeLoadRoutes(app, SECRET, { routesDir: tmpDir, prefix: '' });
+    await app.loadRoutes(tmpDir);
+
+    expect((await request(app, '/health')).status).toBe(200);
+  });
 });

@@ -2,7 +2,17 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { MiddlewareHandler } from 'hono';
-import type { RouteDefinition, RouteModule, HttpMethod, MiddlewareDefinition, KozoEnv } from './types.js';
+import type {
+  RouteDefinition,
+  RouteModule,
+  RouteSchema,
+  ResolvedRouteModule,
+  RouteDefinitionOptions,
+  KozoHandler,
+  HttpMethod,
+  MiddlewareDefinition,
+  KozoEnv,
+} from './types.js';
 import { fileToPath, isRouteFile, isMiddlewareFile } from './utils/file-to-path.js';
 
 /** Recursively list *.ts and *.js files, skipping underscore/test/spec files */
@@ -43,6 +53,40 @@ export interface ScanOptions {
   verbose?: boolean;
 }
 
+function isRouteDefinitionOptions(value: unknown): value is RouteDefinitionOptions {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    'handler' in value &&
+    typeof (value as RouteDefinitionOptions).handler === 'function'
+  );
+}
+
+/** Normalize a dynamically imported route module to handler + schema + meta. */
+export function resolveRouteModule<S extends RouteSchema = RouteSchema>(
+  module: RouteModule<S>,
+): ResolvedRouteModule<S> | null {
+  const d = module.default;
+
+  if (isRouteDefinitionOptions(d)) {
+    return {
+      handler: d.handler as KozoHandler<S>,
+      schema: (d.schema ?? module.schema ?? {}) as S,
+      meta: d.meta ?? module.meta,
+    };
+  }
+
+  if (typeof d === 'function') {
+    return {
+      handler: d as KozoHandler<S>,
+      schema: (module.schema ?? {}) as S,
+      meta: module.meta,
+    };
+  }
+
+  return null;
+}
+
 /**
  * Scan routes directory and return route definitions
  */
@@ -68,7 +112,7 @@ export async function scanRoutes(options: ScanOptions): Promise<RouteDefinition[
         const fileUrl = pathToFileURL(fullPath).href;
         const module = await import(fileUrl) as RouteModule;
 
-        if (typeof module.default !== 'function') {
+        if (!resolveRouteModule(module)) {
           return { type: 'no-export' as const, file };
         }
 
@@ -92,7 +136,7 @@ export async function scanRoutes(options: ScanOptions): Promise<RouteDefinition[
     const val = r.value;
     if (!val) continue;
     if (val.type === 'no-export') {
-      if (verbose) console.warn(`⚠️  Skipping ${val.file}: no default export function`);
+      if (verbose) console.warn(`⚠️  Skipping ${val.file}: no default export (function or { handler })`);
       continue;
     }
     routes.push({

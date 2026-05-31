@@ -157,3 +157,52 @@ export {
   createUpdateSchema,
   createSchemaFactory,
 } from 'drizzle-zod';
+
+// ─── Query helpers (CRUD, pagination, transactions) ──────────────────────────
+export {
+  // Types
+  type DbClient,
+  type IdTable,
+  type PaginatedQuery,
+  type PaginatedResult,
+  type CursorPaginatedQuery,
+  type CursorPaginatedResult,
+  type SelectOptions,
+  type ReturningOptions,
+  type DeleteByIdResult,
+  // Errors
+  RowNotFoundError,
+  RowConflictError,
+  isUniqueViolation,
+  rethrowConflict,
+  // Read
+  findMany,
+  findOne,
+  findFirst,
+  findOneOrThrow,
+  findById,
+  findByIdOrThrow,
+  exists,
+  countRows,
+  countWhere,
+  findManyAfterCursor,
+  // Write
+  insertOne,
+  insertMany,
+  updateOne,
+  updateOneOrThrow,
+  updateById,
+  updateByIdOrThrow,
+  deleteOne,
+  deleteOneOrThrow,
+  deleteById,
+  deleteByIdOrThrow,
+  deleteOneByIdOrThrow,
+  deleteMany,
+  upsertOne,
+  // Pagination
+  paginateTable,
+  paginateCursor,
+  // Transactions
+  runTransaction,
+} from './query-helpers/index.js';

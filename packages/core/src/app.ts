@@ -11,7 +11,7 @@ import { compileRouteHandler, compileUwsNativeHandler, SchemaCompiler, DEFAULT_M
 import { clearRateLimitStore } from './middleware/rate-limit.js';
 import { KozoError, internalErrorResponse } from './errors.js';
 import { ShutdownManager, type ShutdownOptions } from './shutdown.js';
-import { scanRoutes, scanMiddleware } from './router.js';
+import { scanRoutes, scanMiddleware, resolveRouteModule } from './router.js';
 import { tryLoadUws, createUwsServer, type UwsRouteEntry, type UwsCorsConfig } from './uws-transport.js';
 import { createSsrServer, type SsrConfig } from './ssr.js';
 import type { WebSocketHandler, WsRouteEntry } from './ws.js';
@@ -171,29 +171,29 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     const compiled = await Promise.all(
       routes.map(async (route) => {
         const { path, method, module } = route;
-        const schema: RouteSchema = module.schema ?? {};
+        const resolved = resolveRouteModule(module)!;
+        const { handler, schema, meta } = resolved;
         const compiledSchema = SchemaCompiler.compile(schema);
-        return { path, method, module, schema, compiledSchema };
+        return { path, method, handler, schema, meta, compiledSchema };
       })
     );
 
-    for (const { path, method, module, schema, compiledSchema } of compiled) {
-      const userHandler = module.default;
+    for (const { path, method, handler, schema, meta, compiledSchema } of compiled) {
       const normalizedSchema = Kozo.normalizeSchema(schema);
       const optimizedHandler = compileRouteHandler(
-        (ctx: any) => userHandler(ctx),
+        (ctx: any) => handler(ctx),
         normalizedSchema,
         this.services,
         compiledSchema,
         this._scope,
       );
-      this.routes.push({ method: method as HttpMethod, path, schema: normalizedSchema, meta: module.meta });
+      this.routes.push({ method: method as HttpMethod, path, schema: normalizedSchema, meta });
       (this.app as any)[method](path, optimizedHandler);
 
       // Defer uWS route compilation until nativeListen() is called
       const paramNames: string[] = [];
       path.replace(/:([^/]+)/g, (_: string, name: string) => { paramNames.push(name); return name; });
-      this._deferredUws.push({ method: method.toUpperCase(), path, paramNames, handler: (ctx: any) => userHandler(ctx), schema, compiled: compiledSchema });
+      this._deferredUws.push({ method: method.toUpperCase(), path, paramNames, handler: (ctx: any) => handler(ctx), schema, compiled: compiledSchema });
     }
 
     return this;

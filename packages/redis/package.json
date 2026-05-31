@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/redis",
-  "version": "0.5.2",
+  "version": "0.5.9",
   "description": "Redis integration for Kozo framework — cache, pub/sub, and distributed rate-limit store",
   "type": "module",
   "main": "./lib/index.js",
@@ -32,15 +32,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zazzo9039/kozo.git",
-    "directory": "packages/redis"
+    "url": "https://github.com/zazzo9039/kozojs.git"
   },
-  "homepage": "https://github.com/zazzo9039/kozo/tree/main/packages/redis#readme",
-  "bugs": "https://github.com/zazzo9039/kozo/issues",
+  "homepage": "https://github.com/zazzo9039/kozojs#readme",
+  "bugs": "https://github.com/zazzo9039/kozojs/issues",
   "dependencies": {},
   "peerDependencies": {
     "ioredis": ">=5.0.0",
-    "@kozojs/core": "^0.5.0"
+    "@kozojs/core": "^0.5.9"
   },
   "peerDependenciesMeta": {
     "@kozojs/core": {

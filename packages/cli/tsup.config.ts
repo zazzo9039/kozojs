@@ -7,6 +7,7 @@ export default defineConfig({
   clean: true,
   minify: false,
   target: 'node14',
+  external: ['@kozojs/core'],
   banner: {
     js: '#!/usr/bin/env node'
   },

@@ -398,11 +398,13 @@ function isPublicPath(pathname: string, publicPaths: ReadonlySet<string>): boole
 }
 
 async function collectPublicPaths(routesDir: string, extraPublicPaths: string[]): Promise<Set<string>> {
-  const { scanRoutes } = await import('@kozojs/core');
+  const { scanRoutes, resolveRouteModule } = await import('@kozojs/core');
   const scanned = await scanRoutes({ routesDir, verbose: false });
   return new Set([
     ...extraPublicPaths,
-    ...scanned.filter((r) => r.module.meta?.auth === false).map((r) => r.path),
+    ...scanned
+      .filter((r) => resolveRouteModule(r.module)?.meta?.auth === false)
+      .map((r) => r.path),
   ]);
 }
 

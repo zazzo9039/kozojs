@@ -361,7 +361,7 @@ Options:
 | `baseUrl` | `string` | `''` | API base URL |
 | `includeValidation` | `boolean` | `true` | Include Zod schemas in output |
 | `validateByDefault` | `boolean` | `false` | Enable validation in client constructor |
-| `defaultHeaders` | `Record<string, string>` | `{}` | Default request headers |
+| `defaultHeaders` | `Record&lt;string, string&gt;` | `{}` | Default request headers |
 
 ---
 
@@ -513,8 +513,8 @@ Supports React 18 streaming (`renderToPipeableStream`) and string rendering.
 | `apiPrefix` | `string \| string[]` | `'/api'` | Routes that bypass SSR |
 | `devSsr` | `boolean` | auto-detected | Enable SSR in dev mode |
 | `template` | `string` | `'index.html'` | HTML template path |
-| `appPlaceholder` | `string` | `'<!--app-html-->'` | Placeholder for rendered HTML |
-| `headPlaceholder` | `string` | `'<!--ssr-head-->'` | Placeholder for head tags |
+| `appPlaceholder` | `string` | `&lt;!--app-html--&gt;` (default) | Placeholder for rendered HTML |
+| `headPlaceholder` | `string` | `&lt;!--ssr-head--&gt;` (default) | Placeholder for head tags |
 | `distClient` | `string` | `'dist/client'` | Built client assets |
 | `distServer` | `string` | `'dist/server'` | Server bundle directory |
 
@@ -601,7 +601,7 @@ export default { fetch: app.fetch };
 
 ## API Reference
 
-### `createKozo<TServices>(config?)`
+### `createKozo&lt;TServices&gt;(config?)`
 
 Create a Kozo application.
 

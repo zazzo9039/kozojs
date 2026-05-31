@@ -1,5 +1,29 @@
 # @kozojs/db
 
+## 0.5.9
+
+## 0.5.8
+
+### Patch Changes
+
+- Point npm `repository`, `homepage`, and `bugs` to the public GitHub repo `zazzo9039/kozojs` (not the private monorepo).
+
+## 0.5.7
+
+## 0.5.6
+
+## 0.5.4
+
+### Minor Changes
+
+- Expand query helpers into a full CRUD toolkit: read (`findMany`, `findById`, `exists`, `count*`), write (`insert*`, `update*`, `delete*`, `upsertOne`), pagination (`paginateTable`, `paginateCursor`), transactions (`runTransaction`), and error utilities (`RowConflictError`, `isUniqueViolation`).
+
+## 0.5.3
+
+### Minor Changes
+
+- Add Drizzle query helpers: `paginateTable`, `findOne`, `findOneOrThrow`, `deleteOne`, `deleteOneOrThrow`, `deleteOneByIdOrThrow`, and `RowNotFoundError`.
+
 ## 0.4.0
 
 ### Minor Changes

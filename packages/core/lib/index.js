@@ -558,20 +558,57 @@ var BODY_413 = JSON.stringify({
   detail: "Request body exceeds maximum allowed size"
 });
 var DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024;
+var uwsAborted = /* @__PURE__ */ new WeakMap();
+var uwsFinished = /* @__PURE__ */ new WeakMap();
+function isUwsAborted(uwsRes) {
+  return uwsAborted.get(uwsRes) === true;
+}
+function canWriteUws(uwsRes) {
+  return !isUwsAborted(uwsRes) && uwsFinished.get(uwsRes) !== true;
+}
+function markUwsFinished(uwsRes) {
+  uwsFinished.set(uwsRes, true);
+}
+function uwsSafeEnd(uwsRes, body) {
+  markUwsFinished(uwsRes);
+  try {
+    if (body === void 0) uwsRes.end();
+    else uwsRes.end(body);
+  } catch {
+  }
+}
+function uwsCorkWrite(uwsRes, fn) {
+  if (!canWriteUws(uwsRes)) return;
+  try {
+    uwsRes.cork(() => {
+      if (!canWriteUws(uwsRes)) return;
+      try {
+        fn();
+      } catch {
+        markUwsFinished(uwsRes);
+      }
+    });
+  } catch {
+    markUwsFinished(uwsRes);
+  }
+}
+function uwsCorkRespond(uwsRes, fn) {
+  uwsCorkWrite(uwsRes, fn);
+}
 function uwsFastWriteJson(uwsRes, body, corsHeaders) {
-  uwsRes.cork(() => {
+  uwsCorkWrite(uwsRes, () => {
     uwsRes.writeStatus("200 OK");
     uwsRes.writeHeader("Content-Type", CT_JSON);
     if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-    uwsRes.end(body);
+    uwsSafeEnd(uwsRes, body);
   });
 }
 function uwsFastWriteJsonStatus(uwsRes, body, status, corsHeaders) {
-  uwsRes.cork(() => {
+  uwsCorkWrite(uwsRes, () => {
     uwsRes.writeStatus(STATUS_TEXT[status] ?? `${status}`);
     uwsRes.writeHeader("Content-Type", CT_JSON);
     if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-    uwsRes.end(body);
+    uwsSafeEnd(uwsRes, body);
   });
 }
 function uwsFastWrite400(field, errors, uwsRes, corsHeaders) {
@@ -585,33 +622,34 @@ function uwsFastWrite400(field, errors, uwsRes, corsHeaders) {
       code: e.keyword || "invalid"
     }))
   });
-  uwsRes.cork(() => {
+  uwsCorkWrite(uwsRes, () => {
     uwsRes.writeStatus("400 Bad Request");
     uwsRes.writeHeader("Content-Type", CT_PROBLEM);
     if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-    uwsRes.end(body);
+    uwsSafeEnd(uwsRes, body);
   });
 }
 function uwsFastWrite500(uwsRes, corsHeaders) {
-  uwsRes.cork(() => {
+  uwsCorkWrite(uwsRes, () => {
     uwsRes.writeStatus("500 Internal Server Error");
     uwsRes.writeHeader("Content-Type", CT_PROBLEM);
     if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-    uwsRes.end(BODY_500);
+    uwsSafeEnd(uwsRes, BODY_500);
   });
 }
 function uwsFastWriteError(err, uwsRes, corsHeaders) {
+  if (!canWriteUws(uwsRes)) return;
   if (err instanceof KozoError) {
     const body = JSON.stringify({
       type: `https://kozo-docs.vercel.app/docs/core/errors#${err.code}`,
       title: err.message,
       status: err.statusCode
     });
-    uwsRes.cork(() => {
+    uwsCorkWrite(uwsRes, () => {
       uwsRes.writeStatus(STATUS_TEXT[err.statusCode] ?? `${err.statusCode}`);
       uwsRes.writeHeader("Content-Type", CT_PROBLEM);
       if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-      uwsRes.end(body);
+      uwsSafeEnd(uwsRes, body);
     });
   } else {
     uwsFastWrite500(uwsRes, corsHeaders);
@@ -659,22 +697,31 @@ function buildCorsHeaders(cfg) {
   if (cfg.credentials) h.push(["Access-Control-Allow-Credentials", "true"]);
   return h;
 }
+function attachAbortGuard(uwsRes) {
+  uwsRes.onAborted(() => {
+    uwsAborted.set(uwsRes, true);
+    markUwsFinished(uwsRes);
+  });
+}
 function wrapHandler(h, corsHeaders, isShuttingDown, trackRequest2) {
-  if (!corsHeaders && !isShuttingDown && !trackRequest2) return h;
-  return (uwsRes, url, rawBody, params) => {
+  return (uwsRes, url, rawBody, params, corsHeadersArg) => {
     if (isShuttingDown?.()) {
-      uwsRes.cork(() => {
+      uwsCorkWrite(uwsRes, () => {
         uwsRes.writeStatus("503 Service Unavailable");
         uwsRes.writeHeader("Content-Type", CT_PROBLEM);
         if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-        uwsRes.end(BODY_503);
+        uwsSafeEnd(uwsRes, BODY_503);
       });
       return;
     }
-    const untrack = trackRequest2?.();
-    if (!untrack) return h(uwsRes, url, rawBody, params, corsHeaders ?? void 0);
+    attachAbortGuard(uwsRes);
+    const cors2 = corsHeadersArg ?? corsHeaders ?? void 0;
+    if (!trackRequest2) {
+      return h(uwsRes, url, rawBody, params, cors2);
+    }
+    const untrack = trackRequest2();
     try {
-      const result = h(uwsRes, url, rawBody, params, corsHeaders ?? void 0);
+      const result = h(uwsRes, url, rawBody, params, cors2);
       if (result && typeof result.then === "function") {
         result.then(untrack, untrack);
       } else {
@@ -806,10 +853,10 @@ async function createUwsServer(opts) {
     const uwsApp = uws.App();
     if (corsHeaders) {
       uwsApp.options("/*", (uwsRes) => {
-        uwsRes.cork(() => {
+        uwsCorkWrite(uwsRes, () => {
           uwsRes.writeStatus("204 No Content");
           for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-          uwsRes.end();
+          uwsSafeEnd(uwsRes);
         });
       });
     }
@@ -844,6 +891,8 @@ async function createUwsServer(opts) {
           const chunks = [];
           uwsRes.onAborted(() => {
             aborted = true;
+            uwsAborted.set(uwsRes, true);
+            markUwsFinished(uwsRes);
           });
           uwsRes.onData((chunk, isLast) => {
             if (aborted) return;
@@ -851,10 +900,10 @@ async function createUwsServer(opts) {
               totalBytes += chunk.byteLength;
               if (totalBytes > maxBody) {
                 aborted = true;
-                uwsRes.cork(() => {
+                uwsCorkWrite(uwsRes, () => {
                   uwsRes.writeStatus("413 Payload Too Large");
                   uwsRes.writeHeader("Content-Type", CT_PROBLEM);
-                  uwsRes.end(BODY_413);
+                  uwsSafeEnd(uwsRes, BODY_413);
                 });
                 return;
               }
@@ -879,6 +928,8 @@ async function createUwsServer(opts) {
           const chunks = [];
           uwsRes.onAborted(() => {
             aborted = true;
+            uwsAborted.set(uwsRes, true);
+            markUwsFinished(uwsRes);
           });
           uwsRes.onData((chunk, isLast) => {
             if (aborted) return;
@@ -886,10 +937,10 @@ async function createUwsServer(opts) {
               totalBytes += chunk.byteLength;
               if (totalBytes > maxBody) {
                 aborted = true;
-                uwsRes.cork(() => {
+                uwsCorkWrite(uwsRes, () => {
                   uwsRes.writeStatus("413 Payload Too Large");
                   uwsRes.writeHeader("Content-Type", CT_PROBLEM);
-                  uwsRes.end(BODY_413);
+                  uwsSafeEnd(uwsRes, BODY_413);
                 });
                 return;
               }
@@ -909,11 +960,11 @@ async function createUwsServer(opts) {
       }
     }
     uwsApp.any("/*", (uwsRes) => {
-      uwsRes.cork(() => {
+      uwsCorkWrite(uwsRes, () => {
         uwsRes.writeStatus("404 Not Found");
         uwsRes.writeHeader("Content-Type", CT_PROBLEM);
         if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-        uwsRes.end(BODY_404);
+        uwsSafeEnd(uwsRes, BODY_404);
       });
     });
     let listenToken = null;
@@ -1299,20 +1350,32 @@ function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, servi
     },
     text(data, status) {
       done = true;
-      uwsRes.cork(() => {
+      if (!canWriteUws(uwsRes)) return;
+      uwsCorkRespond(uwsRes, () => {
         uwsRes.writeStatus(`${status ?? 200}`);
         uwsRes.writeHeader("Content-Type", "text/plain");
         if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-        uwsRes.end(data);
+        uwsSafeEnd(uwsRes, data);
+      });
+    },
+    html(data, status) {
+      done = true;
+      if (!canWriteUws(uwsRes)) return;
+      uwsCorkRespond(uwsRes, () => {
+        uwsRes.writeStatus(`${status ?? 200}`);
+        uwsRes.writeHeader("Content-Type", "text/html; charset=utf-8");
+        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        uwsSafeEnd(uwsRes, data);
       });
     },
     redirect(target, status) {
       done = true;
-      uwsRes.cork(() => {
+      if (!canWriteUws(uwsRes)) return;
+      uwsCorkRespond(uwsRes, () => {
         uwsRes.writeStatus(`${status ?? 302}`);
         uwsRes.writeHeader("Location", target);
         if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-        uwsRes.end("");
+        uwsSafeEnd(uwsRes, "");
       });
     }
   };
@@ -1511,24 +1574,31 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope) {
     if (result != null && typeof result.then === "function") {
       result.then(
         (r) => {
-          if (!responded()) uwsFastWriteJson(uwsRes, ser(r), corsHeaders);
+          if (!canWriteUws(uwsRes)) return;
+          try {
+            if (!responded()) uwsFastWriteJson(uwsRes, ser(r), corsHeaders);
+          } catch (err) {
+            uwsFastWriteError(err, uwsRes, corsHeaders);
+          }
         },
-        (err) => uwsFastWriteError(err, uwsRes, corsHeaders)
+        (err) => {
+          if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
+        }
       );
       return;
     }
-    if (!responded()) uwsFastWriteJson(uwsRes, ser(result), corsHeaders);
+    if (!responded() && canWriteUws(uwsRes)) uwsFastWriteJson(uwsRes, ser(result), corsHeaders);
   }
   return function uws_handler(uwsRes, url, rawBody, params, corsHeaders) {
     try {
       let body;
       if (vb) {
         if (rawBody && rawBody.length > DEFAULT_MAX_BODY_BYTES2) {
-          uwsRes.cork(() => {
+          uwsCorkRespond(uwsRes, () => {
             uwsRes.writeStatus("413 Payload Too Large");
             uwsRes.writeHeader("Content-Type", "application/json");
             if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-            uwsRes.end(JSON.stringify({ error: "Payload Too Large", message: `Request body exceeds maximum allowed size` }));
+            uwsSafeEnd(uwsRes, JSON.stringify({ error: "Payload Too Large", message: `Request body exceeds maximum allowed size` }));
           });
           return;
         }
@@ -1568,7 +1638,7 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope) {
             runUwsHandler(uwsRes, url, rawBody, params, body, query, resolved.services, corsHeaders);
           } catch (e) {
             err = e;
-            uwsFastWriteError(err, uwsRes, corsHeaders);
+            if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
           } finally {
             await resolved.finish(err);
           }
@@ -1577,7 +1647,7 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope) {
       }
       runUwsHandler(uwsRes, url, rawBody, params, body, query, svc, corsHeaders);
     } catch (err) {
-      uwsFastWriteError(err, uwsRes, corsHeaders);
+      if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
     }
   };
 }
@@ -1943,6 +2013,27 @@ async function scanMiddlewareFiles(dir, base = "") {
   }
   return results;
 }
+function isRouteDefinitionOptions(value) {
+  return value !== null && typeof value === "object" && "handler" in value && typeof value.handler === "function";
+}
+function resolveRouteModule(module) {
+  const d = module.default;
+  if (isRouteDefinitionOptions(d)) {
+    return {
+      handler: d.handler,
+      schema: d.schema ?? module.schema ?? {},
+      meta: d.meta ?? module.meta
+    };
+  }
+  if (typeof d === "function") {
+    return {
+      handler: d,
+      schema: module.schema ?? {},
+      meta: module.meta
+    };
+  }
+  return null;
+}
 async function scanRoutes(options) {
   const { routesDir, verbose = true } = options;
   if (verbose) {
@@ -1958,7 +2049,7 @@ async function scanRoutes(options) {
       const fullPath = join(routesDir, file);
       const fileUrl = pathToFileURL(fullPath).href;
       const module = await import(fileUrl);
-      if (typeof module.default !== "function") {
+      if (!resolveRouteModule(module)) {
         return { type: "no-export", file };
       }
       return {
@@ -1979,7 +2070,7 @@ async function scanRoutes(options) {
     const val = r.value;
     if (!val) continue;
     if (val.type === "no-export") {
-      if (verbose) console.warn(`\u26A0\uFE0F  Skipping ${val.file}: no default export function`);
+      if (verbose) console.warn(`\u26A0\uFE0F  Skipping ${val.file}: no default export (function or { handler })`);
       continue;
     }
     routes.push({
@@ -2423,29 +2514,29 @@ var Kozo = class _Kozo {
     const compiled = await Promise.all(
       routes.map(async (route) => {
         const { path: path2, method, module } = route;
-        const schema = module.schema ?? {};
+        const resolved = resolveRouteModule(module);
+        const { handler, schema, meta } = resolved;
         const compiledSchema = SchemaCompiler.compile(schema);
-        return { path: path2, method, module, schema, compiledSchema };
+        return { path: path2, method, handler, schema, meta, compiledSchema };
       })
     );
-    for (const { path: path2, method, module, schema, compiledSchema } of compiled) {
-      const userHandler = module.default;
+    for (const { path: path2, method, handler, schema, meta, compiledSchema } of compiled) {
       const normalizedSchema = _Kozo.normalizeSchema(schema);
       const optimizedHandler = compileRouteHandler(
-        (ctx) => userHandler(ctx),
+        (ctx) => handler(ctx),
         normalizedSchema,
         this.services,
         compiledSchema,
         this._scope
       );
-      this.routes.push({ method, path: path2, schema: normalizedSchema, meta: module.meta });
+      this.routes.push({ method, path: path2, schema: normalizedSchema, meta });
       this.app[method](path2, optimizedHandler);
       const paramNames = [];
       path2.replace(/:([^/]+)/g, (_, name) => {
         paramNames.push(name);
         return name;
       });
-      this._deferredUws.push({ method: method.toUpperCase(), path: path2, paramNames, handler: (ctx) => userHandler(ctx), schema, compiled: compiledSchema });
+      this._deferredUws.push({ method: method.toUpperCase(), path: path2, paramNames, handler: (ctx) => handler(ctx), schema, compiled: compiledSchema });
     }
     return this;
   }
@@ -2752,6 +2843,69 @@ var Kozo = class _Kozo {
 };
 function createKozo(config) {
   return new Kozo(config);
+}
+
+// src/kozo-app.ts
+function defineKozoApp(options) {
+  const { routesDir = "./src/routes", services, types, configure, onReady, ...kozo } = options;
+  const definition = {
+    routesDir,
+    services,
+    types,
+    configure,
+    onReady,
+    kozo,
+    build: () => buildKozoApp(definition)
+  };
+  return definition;
+}
+async function buildKozoApp(definition) {
+  const resolved = await definition.services();
+  const app = createKozo({
+    ...definition.kozo,
+    routesDir: definition.routesDir,
+    services: resolved
+  });
+  if (definition.configure) {
+    await definition.configure({ app, services: resolved });
+  }
+  await app.loadRoutes();
+  if (definition.onReady) {
+    await definition.onReady({ app });
+  }
+  return app;
+}
+async function renderKozoTypesDts(types, projectRoot) {
+  const path2 = await import("path");
+  const from = path2.join(projectRoot, ".kozo", "types.d.ts");
+  const to = path2.join(projectRoot, types.from);
+  let rel = path2.relative(path2.dirname(from), to).replace(/\\/g, "/");
+  if (!rel.startsWith(".")) rel = `./${rel}`;
+  const importPath = rel.replace(/\.ts$/, ".js");
+  return `// Auto-generated by Kozo \u2014 do not edit.
+import type { ${types.name} } from '${importPath}';
+
+declare module '@kozojs/core' {
+  interface KozoServices extends ${types.name} {}
+}
+`;
+}
+var KOZO_TYPES_CANDIDATES = [
+  "src/kozo.types.ts",
+  "src/kozo.types.js",
+  "kozo.types.ts"
+];
+var KOZO_CONFIG_CANDIDATES = [
+  "kozo.config.ts",
+  "kozo.config.js",
+  "src/kozo.config.ts",
+  "src/kozo.config.js"
+];
+var KOZO_TYPES_OUTPUT = ".kozo/types.d.ts";
+
+// src/types.ts
+function defineRoute(options) {
+  return options;
 }
 
 // src/index.ts
@@ -3217,6 +3371,9 @@ export {
   ERROR_RESPONSES,
   ForbiddenError,
   GoneError,
+  KOZO_CONFIG_CANDIDATES,
+  KOZO_TYPES_CANDIDATES,
+  KOZO_TYPES_OUTPUT,
   Kozo,
   KozoError,
   KozoGroup,
@@ -3227,6 +3384,7 @@ export {
   UnauthorizedError,
   ValidationFailedError,
   applyFileSystemRouting,
+  buildKozoApp,
   buildNativeContext,
   clearRateLimitStore,
   compileRouteHandler,
@@ -3238,6 +3396,8 @@ export {
   createShutdownManager,
   createSsrServer,
   defineEnv,
+  defineKozoApp,
+  defineRoute,
   deletedSchema,
   errorHandler,
   fastCL,
@@ -3263,6 +3423,8 @@ export {
   paginate,
   paginationSchema,
   rateLimit,
+  renderKozoTypesDts,
+  resolveRouteModule,
   scanMiddleware,
   scanRoutes,
   searchSchema,

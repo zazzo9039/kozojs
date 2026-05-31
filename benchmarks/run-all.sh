@@ -24,9 +24,9 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# 3. Autocannon Light
-echo "⚡ Running Autocannon Benchmark (Light)..."
-npm run bench:autocannon light
+# 3. Autocannon (official docs preset)
+echo "⚡ Running Autocannon Benchmark (BENCH_CONFIG=docs)..."
+BENCH_CONFIG=docs npm run bench:autocannon
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"

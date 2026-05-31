@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Services, RouteSchema, KozoRequest } from './types.js';
 import type { UwsHttpRes, UwsNativeHandler } from './uws-transport.js';
-import { uwsFastWriteJson, uwsFastWriteJsonStatus, uwsFastWrite400, uwsFastWriteError } from './uws-transport.js';
+import { uwsFastWriteJson, uwsFastWriteJsonStatus, uwsFastWrite400, uwsFastWriteError, canWriteUws, uwsCorkRespond, uwsSafeEnd } from './uws-transport.js';
 import { fastParseQuery } from './native-context.js';
 import { buildNativeContext } from './native-context.js';
 import type { AnyScopeConfig } from './scoped-services.js';
@@ -183,20 +183,32 @@ function buildUwsHandlerContext(
     },
     text(data: string, status?: number) {
       done = true;
-      uwsRes.cork(() => {
+      if (!canWriteUws(uwsRes)) return;
+      uwsCorkRespond(uwsRes, () => {
         uwsRes.writeStatus(`${status ?? 200}`);
         uwsRes.writeHeader('Content-Type', 'text/plain');
         if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-        uwsRes.end(data);
+        uwsSafeEnd(uwsRes, data);
+      });
+    },
+    html(data: string, status?: number) {
+      done = true;
+      if (!canWriteUws(uwsRes)) return;
+      uwsCorkRespond(uwsRes, () => {
+        uwsRes.writeStatus(`${status ?? 200}`);
+        uwsRes.writeHeader('Content-Type', 'text/html; charset=utf-8');
+        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        uwsSafeEnd(uwsRes, data);
       });
     },
     redirect(target: string, status?: number) {
       done = true;
-      uwsRes.cork(() => {
+      if (!canWriteUws(uwsRes)) return;
+      uwsCorkRespond(uwsRes, () => {
         uwsRes.writeStatus(`${status ?? 302}`);
         uwsRes.writeHeader('Location', target);
         if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-        uwsRes.end('');
+        uwsSafeEnd(uwsRes, '');
       });
     },
   };
@@ -602,12 +614,21 @@ export function compileUwsNativeHandler(
     const result = noArgs ? (handler as any)() : handler(ctx);
     if (result != null && typeof (result as any).then === 'function') {
       (result as Promise<any>).then(
-        (r: any) => { if (!responded()) uwsFastWriteJson(uwsRes, ser(r), corsHeaders); },
-        (err: unknown) => uwsFastWriteError(err, uwsRes, corsHeaders),
+        (r: any) => {
+          if (!canWriteUws(uwsRes)) return;
+          try {
+            if (!responded()) uwsFastWriteJson(uwsRes, ser(r), corsHeaders);
+          } catch (err) {
+            uwsFastWriteError(err, uwsRes, corsHeaders);
+          }
+        },
+        (err: unknown) => {
+          if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
+        },
       );
       return;
     }
-    if (!responded()) uwsFastWriteJson(uwsRes, ser(result as any), corsHeaders);
+    if (!responded() && canWriteUws(uwsRes)) uwsFastWriteJson(uwsRes, ser(result as any), corsHeaders);
   }
 
   // Single closure — uWS pre-buffers the body so even body routes are sync
@@ -617,11 +638,11 @@ export function compileUwsNativeHandler(
       if (vb) {
         // Security: reject oversized bodies
         if (rawBody && rawBody.length > DEFAULT_MAX_BODY_BYTES) {
-          uwsRes.cork(() => {
+          uwsCorkRespond(uwsRes, () => {
             uwsRes.writeStatus('413 Payload Too Large');
             uwsRes.writeHeader('Content-Type', 'application/json');
             if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-            uwsRes.end(JSON.stringify({ error: 'Payload Too Large', message: `Request body exceeds maximum allowed size` }));
+            uwsSafeEnd(uwsRes, JSON.stringify({ error: 'Payload Too Large', message: `Request body exceeds maximum allowed size` }));
           });
           return;
         }
@@ -640,7 +661,7 @@ export function compileUwsNativeHandler(
             runUwsHandler(uwsRes, url, rawBody, params, body, query, resolved.services, corsHeaders);
           } catch (e) {
             err = e as Error;
-            uwsFastWriteError(err, uwsRes, corsHeaders);
+            if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
           } finally {
             await resolved.finish(err);
           }
@@ -649,6 +670,6 @@ export function compileUwsNativeHandler(
       }
 
       runUwsHandler(uwsRes, url, rawBody, params, body, query, svc, corsHeaders);
-    } catch (err) { uwsFastWriteError(err, uwsRes, corsHeaders); }
+    } catch (err) { if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders); }
   };
 }

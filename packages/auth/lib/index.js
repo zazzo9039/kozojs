@@ -161,11 +161,11 @@ function isPublicPath(pathname, publicPaths) {
   return false;
 }
 async function collectPublicPaths(routesDir, extraPublicPaths) {
-  const { scanRoutes } = await import("@kozojs/core");
+  const { scanRoutes, resolveRouteModule } = await import("@kozojs/core");
   const scanned = await scanRoutes({ routesDir, verbose: false });
   return /* @__PURE__ */ new Set([
     ...extraPublicPaths,
-    ...scanned.filter((r) => r.module.meta?.auth === false).map((r) => r.path)
+    ...scanned.filter((r) => resolveRouteModule(r.module)?.meta?.auth === false).map((r) => r.path)
   ]);
 }
 async function registerAuthBeforeLoadRoutes(app, secretOrPublicKey, options) {

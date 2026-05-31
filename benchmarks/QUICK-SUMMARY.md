@@ -32,6 +32,8 @@ const app = createKozo();
 await app.nativeListen(3000); // registers routes into uWS C++ trie
 ```
 
-## 📋 Methodology Note
+## 📋 Methodology
 
-Benchmarks use **interleaved requests** to eliminate ordering bias. Results are averaged across multiple rounds for statistical significance. Load testing uses `autocannon` with 10 concurrent connections for 10 seconds.
+See **[METHODOLOGY.md](./METHODOLOGY.md)** for presets, comparable routes, and kozo-native-api app benchmarks.
+
+Load testing defaults to **`BENCH_CONFIG=docs`** (10 concurrent connections, 10 seconds, pipelining 1) on **`GET /api/health`**. Interleaved latency benchmarks use `request-overhead-fair.bench.ts`.

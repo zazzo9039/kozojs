@@ -1,0 +1,37 @@
+# queue-redis-example
+
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.5.9
+  - @kozojs/queue@0.5.9
+  - @kozojs/redis@0.5.9
+
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.5.8
+  - @kozojs/queue@0.5.8
+  - @kozojs/redis@0.5.8
+
+## 0.0.2
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.5.7
+  - @kozojs/queue@0.5.7
+  - @kozojs/redis@0.5.7
+
+## 0.0.1
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.5.6
+  - @kozojs/queue@0.5.6
+  - @kozojs/redis@0.5.6

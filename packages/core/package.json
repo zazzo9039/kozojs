@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/core",
-  "version": "0.5.2",
+  "version": "0.5.9",
   "description": "High-performance TypeScript framework with type-safe client generation",
   "type": "module",
   "main": "./lib/index.js",
@@ -9,11 +9,10 @@
   "author": "Kozo Team",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zazzo9039/kozo.git",
-    "directory": "packages/core"
+    "url": "https://github.com/zazzo9039/kozojs.git"
   },
-  "homepage": "https://github.com/zazzo9039/kozo/tree/main/packages/core#readme",
-  "bugs": "https://github.com/zazzo9039/kozo/issues",
+  "homepage": "https://github.com/zazzo9039/kozojs#readme",
+  "bugs": "https://github.com/zazzo9039/kozojs/issues",
   "keywords": [
     "kozo",
     "framework",

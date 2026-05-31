@@ -1,5 +1,29 @@
 # @kozojs/core
 
+## 0.5.9
+
+### Patch Changes
+
+- Fix README markdown so npm registry renders it (escape HTML comments and angle brackets in tables).
+
+## 0.5.8
+
+### Patch Changes
+
+- Point npm `repository`, `homepage`, and `bugs` to the public GitHub repo `zazzo9039/kozojs` (not the private monorepo).
+
+## 0.5.7
+
+### Patch Changes
+
+- Point npm repository, homepage, bugs, and package README links to the public `zazzo9039/kozojs` GitHub repo.
+
+## 0.5.6
+
+### Patch Changes
+
+- Fix uWS response lifecycle (write after abort/end), add fair autocannon benchmarks (random order + cooldown), and align benchmark docs methodology.
+
 ## 0.4.0
 
 ### Minor Changes

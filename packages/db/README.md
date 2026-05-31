@@ -1,6 +1,6 @@
 # @kozojs/db
 
-Drizzle ORM integration for [Kozo Framework](https://github.com/zazzo9039/kozo).  
+Drizzle ORM integration for [Kozo Framework](https://github.com/zazzo9039/kozojs).  
 Supports PostgreSQL, MySQL, and SQLite with a single unified API.
 
 ## Install

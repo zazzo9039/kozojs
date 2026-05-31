@@ -29,11 +29,14 @@ npm run bench:requests
 
 ### Load Testing (`npm run bench:autocannon`)
 
-High-concurrency throughput testing using Autocannon.
+High-concurrency throughput using Autocannon. **Default: `BENCH_CONFIG=docs`** (10 conn · 10s · pipelining 1).
 
 ```bash
-npm run bench:autocannon
+pnpm bench:docs          # official preset (GET /api/health table)
+BENCH_CONFIG=heavy pnpm bench:autocannon
 ```
+
+See [METHODOLOGY.md](./METHODOLOGY.md) for all presets and what is comparable.
 
 ## 🎯 Results Summary
 
@@ -85,7 +88,9 @@ benchmarks/
 ├── startup-time.bench.ts         # Startup time benchmark
 ├── request-overhead.bench.ts     # Request latency (sequential)
 ├── request-overhead-fair.bench.ts # Request latency (fair interleaved)
-├── autocannon.bench.ts           # Load testing
+├── autocannon.bench.ts           # Load testing (health + users)
+├── config.ts                     # Shared BENCH_CONFIG presets
+├── METHODOLOGY.md                # Single source of truth
 ├── statistical-validation.ts     # Statistical significance tests
 ├── RESULTS.md                    # Detailed results
 └── QUICK-SUMMARY.md              # Summary table
@@ -106,9 +111,12 @@ benchmarks/
 4. Calculate mean + median latency
 
 ### Load Testing
-1. Concurrent connections: 10
-2. Duration: 10 seconds
-3. Measure requests/second and latency percentiles
+1. Preset **`docs`**: 10 connections, 10 seconds, pipelining 1
+2. Primary route: **`GET /api/health`** (published req/s)
+3. Secondary route: **`GET /api/users`** (in-memory; printed in same run)
+4. Measure req/s, latency mean, p99, errors
+
+Full preset table: [METHODOLOGY.md](./METHODOLOGY.md)
 
 ## 💡 Tips
 

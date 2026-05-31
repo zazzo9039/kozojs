@@ -6,22 +6,44 @@ import { FastifyAdapter } from '@nestjs/platform-fastify';
 import { NestAutocannonModule } from './fixtures/nestjs-autocannon.fixture';
 import { setupKozoAutocannon } from './fixtures/kozo-autocannon.fixture';
 import { setupUwsAutocannon } from './fixtures/uws-autocannon.fixture';
+import { resolveBenchConfig, type BenchConfig } from './config.js';
 
-// ===== Benchmark Configuration =====
+const ROUTES = {
+  health: '/api/health',
+  users: '/api/users',
+} as const;
 
-interface BenchConfig {
-  connections: number;
-  duration: number;
-  pipelining: number;
+type RouteName = keyof typeof ROUTES;
+type FrameworkName = 'Kozo' | 'uWS bare' | 'Fastify' | 'NestJS';
+
+interface FrameworkResult {
+  name: FrameworkName;
+  health: autocannon.Result;
+  users: autocannon.Result;
 }
 
-const BENCH_CONFIGS: Record<string, BenchConfig> = {
-  light:  { connections: 10,  duration: 5,  pipelining: 1 },
-  medium: { connections: 50,  duration: 10, pipelining: 1 },
-  heavy:  { connections: 100, duration: 15, pipelining: 10 },
-};
+const COOLDOWN_MS = Number(process.env.BENCH_COOLDOWN_MS ?? 3000);
+const FRAMEWORKS: FrameworkName[] = ['Kozo', 'uWS bare', 'Fastify', 'NestJS'];
 
-// ===== Runner =====
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function shuffle<T>(items: T[]): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function resolveRunOrder(): FrameworkName[] {
+  if (process.env.BENCH_ORDER === 'fixed') {
+    return ['Kozo', 'uWS bare', 'NestJS', 'Fastify'];
+  }
+  return shuffle(FRAMEWORKS);
+}
 
 function runAutocannon(url: string, config: BenchConfig): Promise<autocannon.Result> {
   return new Promise((resolve, reject) => {
@@ -33,6 +55,10 @@ function runAutocannon(url: string, config: BenchConfig): Promise<autocannon.Res
   });
 }
 
+function errors(result: autocannon.Result): number {
+  return result.errors + result.timeouts + result.non2xx;
+}
+
 function formatReqSec(n: number) {
   return n.toFixed(0).padStart(8) + ' req/s';
 }
@@ -41,96 +67,137 @@ function formatLatency(n: number) {
   return n.toFixed(2).padStart(8) + 'ms';
 }
 
-// ===== Main =====
+async function benchKozo(config: BenchConfig): Promise<FrameworkResult> {
+  const { port, server } = await setupKozoAutocannon();
+  const base = `http://127.0.0.1:${port}`;
+  const health = await runAutocannon(`${base}${ROUTES.health}`, config);
+  const users = await runAutocannon(`${base}${ROUTES.users}`, config);
+  server.close();
+  return { name: 'Kozo', health, users };
+}
 
-async function main() {
-  const CONFIG_NAME = process.env.BENCH_CONFIG ?? 'medium';
-  const config = BENCH_CONFIGS[CONFIG_NAME] ?? BENCH_CONFIGS.medium;
+async function benchUwsBare(config: BenchConfig): Promise<FrameworkResult> {
+  const { port, server } = await setupUwsAutocannon();
+  const base = `http://127.0.0.1:${port}`;
+  const health = await runAutocannon(`${base}${ROUTES.health}`, config);
+  const users = await runAutocannon(`${base}${ROUTES.users}`, config);
+  server.close();
+  return { name: 'uWS bare', health, users };
+}
 
-  console.log('\n🔥 Autocannon Throughput Benchmark');
-  console.log('='.repeat(60));
-  console.log(`Config: ${CONFIG_NAME} | connections=${config.connections} | duration=${config.duration}s | pipelining=${config.pipelining}\n`);
+async function benchNestJs(config: BenchConfig): Promise<FrameworkResult> {
+  const nestApp = await NestFactory.create(NestAutocannonModule, new FastifyAdapter(), { logger: false });
+  await nestApp.listen(0);
+  const port = (nestApp.getHttpServer().address() as { port: number }).port;
+  const base = `http://127.0.0.1:${port}`;
+  const health = await runAutocannon(`${base}${ROUTES.health}`, config);
+  const users = await runAutocannon(`${base}${ROUTES.users}`, config);
+  await nestApp.close();
+  return { name: 'NestJS', health, users };
+}
 
-  // ---- Fastify ----
-  console.log('📊 Starting Fastify...');
+async function benchFastify(config: BenchConfig): Promise<FrameworkResult> {
   const fastify = Fastify({ logger: false });
-  const fastifyUsers: any[] = [];
-  fastify.get('/api/users', async () => fastifyUsers);
-  fastify.post('/api/users', async (req: any, reply: any) => {
-    const user = { id: Date.now().toString(), ...(req.body as any) };
+  const fastifyUsers: unknown[] = [];
+  fastify.get(ROUTES.health, async () => ({ status: 'ok', timestamp: Date.now() }));
+  fastify.get(ROUTES.users, async () => fastifyUsers);
+  fastify.post(ROUTES.users, async (req: any, reply: any) => {
+    const user = { id: Date.now().toString(), ...(req.body as object) };
     fastifyUsers.push(user);
     reply.status(201);
     return user;
   });
   await fastify.listen({ port: 0 });
-  const fastifyPort = (fastify.server.address() as any).port;
-  console.log(`   Fastify listening on :${fastifyPort}`);
-  const fastifyResult = await runAutocannon(`http://127.0.0.1:${fastifyPort}/api/users`, config);
+  const port = (fastify.server.address() as { port: number }).port;
+  const base = `http://127.0.0.1:${port}`;
+  const health = await runAutocannon(`${base}${ROUTES.health}`, config);
+  const users = await runAutocannon(`${base}${ROUTES.users}`, config);
   await fastify.close();
+  return { name: 'Fastify', health, users };
+}
 
-  // ---- NestJS ----
-  console.log('📊 Starting NestJS...');
-  const nestApp = await NestFactory.create(NestAutocannonModule, new FastifyAdapter(), { logger: false });
-  await nestApp.listen(0);
-  const nestPort = (nestApp.getHttpServer().address() as any).port;
-  console.log(`   NestJS listening on :${nestPort}`);
-  const nestResult = await runAutocannon(`http://127.0.0.1:${nestPort}/api/users`, config);
-  await nestApp.close();
+const RUNNERS: Record<FrameworkName, (config: BenchConfig) => Promise<FrameworkResult>> = {
+  Kozo: benchKozo,
+  'uWS bare': benchUwsBare,
+  Fastify: benchFastify,
+  NestJS: benchNestJs,
+};
 
-  // ---- uWS bare ----
-  console.log('📊 Starting uWS bare...');
-  const { port: uwsPort, server: uwsServer } = await setupUwsAutocannon();
-  console.log(`   uWS bare listening on :${uwsPort}`);
-  const uwsResult = await runAutocannon(`http://127.0.0.1:${uwsPort}/api/users`, config);
-  uwsServer.close();
+function printTable(title: string, route: RouteName, results: FrameworkResult[]) {
+  const sorted = [...results].sort(
+    (a, b) => b[route].requests.average - a[route].requests.average,
+  );
 
-  // ---- Kozo ----
-  console.log('📊 Starting Kozo...');
-  const { port: kozoPort, server: kozoServer } = await setupKozoAutocannon();
-  console.log(`   Kozo listening on :${kozoPort}`);
-  const kozoResult = await runAutocannon(`http://127.0.0.1:${kozoPort}/api/users`, config);
-  kozoServer.close();
-
-  // ===== Results =====
-  const results = [
-    { name: 'Kozo',      req: kozoResult.requests.average,    lat: kozoResult.latency.mean,    p99: kozoResult.latency.p99 },
-    { name: 'uWS bare',  req: uwsResult.requests.average,     lat: uwsResult.latency.mean,     p99: uwsResult.latency.p99 },
-    { name: 'Fastify',   req: fastifyResult.requests.average, lat: fastifyResult.latency.mean, p99: fastifyResult.latency.p99 },
-    { name: 'NestJS',    req: nestResult.requests.average,    lat: nestResult.latency.mean,    p99: nestResult.latency.p99 },
-  ];
-
-  // Sort by throughput descending
-  results.sort((a, b) => b.req - a.req);
-
-  console.log('\n' + '='.repeat(60));
-  console.log('📈 RESULTS — Throughput (GET /api/users)');
-  console.log('='.repeat(60));
+  console.log('\n' + '='.repeat(72));
+  console.log(`📈 ${title}`);
+  console.log('='.repeat(72));
   console.log(
     '\n' +
-    'Framework'.padEnd(14) +
-    'Req/sec'.padStart(14) +
-    'Latency'.padStart(12) +
-    'p99 lat'.padStart(12)
+      'Framework'.padEnd(14) +
+      'Req/sec'.padStart(14) +
+      'Latency'.padStart(12) +
+      'p99 lat'.padStart(12) +
+      'Errors'.padStart(10),
   );
-  console.log('-'.repeat(54));
-  for (const r of results) {
-    const rank = r === results[0] ? ' 🏆' : '';
+  console.log('-'.repeat(62));
+
+  for (const r of sorted) {
+    const result = r[route];
+    const rank = r === sorted[0] ? ' 🏆' : '';
     console.log(
       (r.name + rank).padEnd(16) +
-      formatReqSec(r.req).padStart(14) +
-      formatLatency(r.lat).padStart(12) +
-      formatLatency(r.p99).padStart(12)
+        formatReqSec(result.requests.average).padStart(14) +
+        formatLatency(result.latency.mean).padStart(12) +
+        formatLatency(result.latency.p99).padStart(12) +
+        String(errors(result)).padStart(10),
     );
   }
+}
 
-  // ===== Comparison vs Kozo =====
-  const kozo = results.find(r => r.name === 'Kozo')!;
-  console.log('\n📊 vs Kozo throughput:');
-  for (const r of results.filter(r => r.name !== 'Kozo')) {
-    const diff = ((kozo.req - r.req) / r.req * 100);
+function printVsKozo(route: RouteName, results: FrameworkResult[]) {
+  const kozo = results.find((r) => r.name === 'Kozo');
+  if (!kozo) return;
+
+  console.log(`\n📊 vs Kozo (${ROUTES[route]}):`);
+  for (const r of results.filter((x) => x.name !== 'Kozo')) {
+    const diff = ((kozo[route].requests.average - r[route].requests.average) / r[route].requests.average) * 100;
     const arrow = diff > 0 ? '🟢' : '🔴';
-    console.log(`  ${arrow} ${r.name.padEnd(10)} Kozo is ${Math.abs(diff).toFixed(1)}% ${diff > 0 ? 'faster' : 'slower'}`);
+    console.log(
+      `  ${arrow} ${r.name.padEnd(10)} Kozo is ${Math.abs(diff).toFixed(1)}% ${diff > 0 ? 'faster' : 'slower'}`,
+    );
   }
+}
+
+async function main() {
+  const configName = process.env.BENCH_CONFIG ?? 'docs';
+  const config = resolveBenchConfig(configName);
+  const order = resolveRunOrder();
+
+  console.log('\n🔥 Autocannon Throughput Benchmark (framework comparison)');
+  console.log('='.repeat(72));
+  console.log(
+    `Config: ${configName} | connections=${config.connections} | duration=${config.duration}s | pipelining=${config.pipelining}`,
+  );
+  console.log(`Order: ${order.join(' → ')} (set BENCH_ORDER=fixed to disable shuffle)`);
+  console.log(`Cooldown: ${COOLDOWN_MS}ms between frameworks (BENCH_COOLDOWN_MS)`);
+  console.log('See METHODOLOGY.md — official table uses GET /api/health with BENCH_CONFIG=docs\n');
+
+  const results: FrameworkResult[] = [];
+  for (let i = 0; i < order.length; i++) {
+    const name = order[i];
+    console.log(`📊 ${name}…`);
+    results.push(await RUNNERS[name](config));
+    if (i < order.length - 1) {
+      console.log(`⏸ Cooldown ${COOLDOWN_MS}ms…`);
+      await sleep(COOLDOWN_MS);
+    }
+  }
+
+  printTable('OFFICIAL — GET /api/health (published in RESULTS.md)', 'health', results);
+  printVsKozo('health', results);
+
+  printTable('SECONDARY — GET /api/users (in-memory + validation)', 'users', results);
+  printVsKozo('users', results);
 
   console.log('');
 }

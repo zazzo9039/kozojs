@@ -154,6 +154,24 @@ export interface Services {
   [key: string]: unknown;
 }
 
+/**
+ * App services injected into every route handler (`ctx.services`).
+ *
+ * Augment once in your app so file-system routes get full autocompletion
+ * without a local `defineRoute` wrapper:
+ *
+ * @example
+ * // src/kozo.d.ts
+ * import type { AppServices } from './lib/services/index.js';
+ * declare module '@kozojs/core' {
+ *   interface KozoServices extends AppServices {}
+ * }
+ */
+export interface KozoServices extends Services {}
+
+/** Handler context for file-system routes — uses augmented {@link KozoServices}. */
+export type RouteContext<S extends RouteSchema = {}> = KozoContext<S, KozoServices>;
+
 export interface KozoEnv {
   Variables: {
     services: Services;
@@ -241,9 +259,25 @@ export interface RouteMeta {
   };
 }
 
-export interface RouteModule<S extends RouteSchema = RouteSchema> {
-  default: KozoHandler<S>;
+/** Single default export: `{ schema?, meta?, handler }` (or `defineRoute(...)`). */
+export interface RouteDefinitionOptions<S extends RouteSchema = RouteSchema> {
   schema?: S;
+  meta?: RouteMeta;
+  handler: KozoHandler<S>;
+}
+
+export interface RouteModule<S extends RouteSchema = RouteSchema> {
+  /** Handler function, or a route definition object with `handler`. */
+  default: KozoHandler<S> | RouteDefinitionOptions<S>;
+  /** Legacy: schema as a separate export (prefer `default.schema`). */
+  schema?: S;
+  /** Legacy: meta as a separate export (prefer `default.meta`). */
+  meta?: RouteMeta;
+}
+
+export interface ResolvedRouteModule<S extends RouteSchema = RouteSchema> {
+  handler: KozoHandler<S>;
+  schema: S;
   meta?: RouteMeta;
 }
 
@@ -367,18 +401,9 @@ export interface KozoConfig<
 // DEFINE ROUTE HELPER
 // ============================================
 
-export interface RouteDefinitionOptions<S extends RouteSchema = RouteSchema> {
-  schema?: S;
-  meta?: RouteMeta;
-  handler: KozoHandler<S>;
-}
-
+/** Typed helper for `export default defineRoute({ schema, handler, meta? })`. */
 export function defineRoute<S extends RouteSchema = RouteSchema>(
-  options: RouteDefinitionOptions<S>,
-): RouteModule<S> {
-  return {
-    default: options.handler,
-    schema: options.schema,
-    meta: options.meta,
-  };
+  options: RouteDefinitionOptions<S> & { handler: KozoHandler<S, KozoServices> },
+): RouteDefinitionOptions<S> {
+  return options;
 }

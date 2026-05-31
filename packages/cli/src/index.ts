@@ -5,6 +5,7 @@ import { devCommand } from './commands/dev.js';
 import { generateCommand } from './commands/generate.js';
 import { routesCommand } from './commands/routes.js';
 import { genClientCommand } from './commands/gen-client.js';
+import { typesCommand } from './commands/types.js';
 import { initFromTemplate, isTemplateName } from './commands/init-template.js';
 import pkg from '../package.json';
 
@@ -83,10 +84,18 @@ program
     await routesCommand(opts);
   });
 
+// Generate KozoServices types from kozo.config.ts
+program
+  .command('types')
+  .description('Generate .kozo/types.d.ts from kozo.config.ts (typed route handlers)')
+  .action(async () => {
+    await typesCommand();
+  });
+
 // Generate typed API client from registered routes
 program
   .command('gen:client')
-  .description('Generate a typed API client (requires export buildApp in src/app.ts)')
+  .description('Generate a typed API client (kozo.config.ts or src/app.ts with buildApp)')
   .option('-o, --out <path>', 'Output file path', 'src/generated/client.ts')
   .option('--base-url <url>', 'Base URL for the client', 'http://localhost:3000')
   .action(async (opts: { out?: string; baseUrl?: string }) => {

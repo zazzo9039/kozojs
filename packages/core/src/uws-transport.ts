@@ -159,23 +159,73 @@ const DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024;
 // no writeHead capture, no header loop indirection.
 // ============================================================================
 
+// ============================================================================
+// uWS response lifecycle — skip writes after abort or after end() (autocannon)
+// ============================================================================
+
+const uwsAborted = new WeakMap<UwsHttpRes, boolean>();
+const uwsFinished = new WeakMap<UwsHttpRes, boolean>();
+
+export function isUwsAborted(uwsRes: UwsHttpRes): boolean {
+  return uwsAborted.get(uwsRes) === true;
+}
+
+/** True when the uWS response can still accept writes. */
+export function canWriteUws(uwsRes: UwsHttpRes): boolean {
+  return !isUwsAborted(uwsRes) && uwsFinished.get(uwsRes) !== true;
+}
+
+function markUwsFinished(uwsRes: UwsHttpRes): void {
+  uwsFinished.set(uwsRes, true);
+}
+
+/** End a uWS response and mark it finished (safe to call once). */
+export function uwsSafeEnd(uwsRes: UwsHttpRes, body?: string): void {
+  markUwsFinished(uwsRes);
+  try {
+    if (body === undefined) uwsRes.end();
+    else uwsRes.end(body);
+  } catch { /* response already closed */ }
+}
+
+function uwsCorkWrite(uwsRes: UwsHttpRes, fn: () => void): void {
+  if (!canWriteUws(uwsRes)) return;
+  try {
+    uwsRes.cork(() => {
+      if (!canWriteUws(uwsRes)) return;
+      try {
+        fn();
+      } catch {
+        markUwsFinished(uwsRes);
+      }
+    });
+  } catch {
+    markUwsFinished(uwsRes);
+  }
+}
+
+/** Cork a custom response write (status/headers/end). Marks the response finished. */
+export function uwsCorkRespond(uwsRes: UwsHttpRes, fn: () => void): void {
+  uwsCorkWrite(uwsRes, fn);
+}
+
 /** Write a 200 JSON response directly to uWS. */
 export function uwsFastWriteJson(uwsRes: UwsHttpRes, body: string, corsHeaders?: CorsHeaders): void {
-  uwsRes.cork(() => {
+  uwsCorkWrite(uwsRes, () => {
     uwsRes.writeStatus('200 OK');
     uwsRes.writeHeader('Content-Type', CT_JSON);
     if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-    uwsRes.end(body);
+    uwsSafeEnd(uwsRes, body);
   });
 }
 
 /** Write a JSON response with a custom HTTP status code. */
 export function uwsFastWriteJsonStatus(uwsRes: UwsHttpRes, body: string, status: number, corsHeaders?: CorsHeaders): void {
-  uwsRes.cork(() => {
+  uwsCorkWrite(uwsRes, () => {
     uwsRes.writeStatus(STATUS_TEXT[status] ?? `${status}`);
     uwsRes.writeHeader('Content-Type', CT_JSON);
     if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-    uwsRes.end(body);
+    uwsSafeEnd(uwsRes, body);
   });
 }
 
@@ -191,37 +241,38 @@ export function uwsFastWrite400(field: string, errors: any, uwsRes: UwsHttpRes, 
       code:    e.keyword || 'invalid',
     })),
   });
-  uwsRes.cork(() => {
+  uwsCorkWrite(uwsRes, () => {
     uwsRes.writeStatus('400 Bad Request');
     uwsRes.writeHeader('Content-Type', CT_PROBLEM);
     if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-    uwsRes.end(body);
+    uwsSafeEnd(uwsRes, body);
   });
 }
 
 /** Write a 500 Internal Server Error response. */
 export function uwsFastWrite500(uwsRes: UwsHttpRes, corsHeaders?: CorsHeaders): void {
-  uwsRes.cork(() => {
+  uwsCorkWrite(uwsRes, () => {
     uwsRes.writeStatus('500 Internal Server Error');
     uwsRes.writeHeader('Content-Type', CT_PROBLEM);
     if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-    uwsRes.end(BODY_500);
+    uwsSafeEnd(uwsRes, BODY_500);
   });
 }
 
 /** Write a KozoError or fall back to 500. */
 export function uwsFastWriteError(err: unknown, uwsRes: UwsHttpRes, corsHeaders?: CorsHeaders): void {
+  if (!canWriteUws(uwsRes)) return;
   if (err instanceof KozoError) {
     const body = JSON.stringify({
       type:   `https://kozo-docs.vercel.app/docs/core/errors#${err.code}`,
       title:  err.message,
       status: err.statusCode,
     });
-    uwsRes.cork(() => {
+    uwsCorkWrite(uwsRes, () => {
       uwsRes.writeStatus(STATUS_TEXT[err.statusCode] ?? `${err.statusCode}`);
       uwsRes.writeHeader('Content-Type', CT_PROBLEM);
       if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-      uwsRes.end(body);
+      uwsSafeEnd(uwsRes, body);
     });
   } else {
     uwsFastWrite500(uwsRes, corsHeaders);
@@ -258,10 +309,10 @@ export async function tryLoadUws(): Promise<UwsBindings | null> {
  * Write a pre-built 404 response directly to a uWS response.
  */
 export function uwsWrite404(uwsRes: UwsHttpRes): void {
-  uwsRes.cork(() => {
+  uwsCorkWrite(uwsRes, () => {
     uwsRes.writeStatus('404 Not Found');
     uwsRes.writeHeader('Content-Type', 'application/problem+json');
-    uwsRes.end(BODY_404);
+    uwsSafeEnd(uwsRes, BODY_404);
   });
 }
 
@@ -289,7 +340,7 @@ export function makeShimRes(uwsRes: UwsHttpRes): ServerResponse {
       _headers = headers;
     },
     end(body: string = '') {
-      uwsRes.cork(() => {
+      uwsCorkWrite(uwsRes, () => {
         uwsRes.writeStatus(STATUS_TEXT[_status] ?? String(_status));
         for (let i = 0; i + 1 < _headers.length; i += 2) {
           // Skip Content-Length — uWS auto-computes it from the body passed to end().
@@ -297,7 +348,7 @@ export function makeShimRes(uwsRes: UwsHttpRes): ServerResponse {
           if (_headers[i] === 'Content-Length') continue;
           uwsRes.writeHeader(_headers[i], _headers[i + 1]);
         }
-        uwsRes.end(body);
+        uwsSafeEnd(uwsRes, body);
       });
     },
   } as unknown as ServerResponse;
@@ -450,31 +501,45 @@ function buildCorsHeaders(cfg: UwsCorsConfig): [string, string][] {
  * Optimization: passes corsHeaders directly to handler instead of creating
  * a wrapper object with 7 bound functions per request.
  */
+/**
+ * uWS forbids returning from a route handler while a response is still pending
+ * unless an abort handler is registered (POST routes get this via onData setup).
+ */
+function attachAbortGuard(uwsRes: UwsHttpRes): void {
+  uwsRes.onAborted(() => {
+    uwsAborted.set(uwsRes, true);
+    markUwsFinished(uwsRes);
+  });
+}
+
 function wrapHandler(
   h: UwsNativeHandler,
   corsHeaders: [string, string][] | null,
   isShuttingDown?: () => boolean,
   trackRequest?: () => () => void,
 ): UwsNativeHandler {
-  if (!corsHeaders && !isShuttingDown && !trackRequest) return h;
-
-  return (uwsRes, url, rawBody, params) => {
+  return (uwsRes, url, rawBody, params, corsHeadersArg) => {
     // Reject during graceful shutdown
     if (isShuttingDown?.()) {
-      uwsRes.cork(() => {
+      uwsCorkWrite(uwsRes, () => {
         uwsRes.writeStatus('503 Service Unavailable');
         uwsRes.writeHeader('Content-Type', CT_PROBLEM);
         if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-        uwsRes.end(BODY_503);
+        uwsSafeEnd(uwsRes, BODY_503);
       });
       return;
     }
 
-    // Pass corsHeaders directly to handler — no wrapper allocation
-    const untrack = trackRequest?.();
-    if (!untrack) return h(uwsRes, url, rawBody, params, corsHeaders ?? undefined);
+    attachAbortGuard(uwsRes);
+    const cors = corsHeadersArg ?? corsHeaders ?? undefined;
+
+    if (!trackRequest) {
+      return h(uwsRes, url, rawBody, params, cors);
+    }
+
+    const untrack = trackRequest();
     try {
-      const result = h(uwsRes, url, rawBody, params, corsHeaders ?? undefined);
+      const result = h(uwsRes, url, rawBody, params, cors);
       if (result && typeof (result as any).then === 'function') {
         (result as Promise<void>).then(untrack, untrack);
       } else {
@@ -652,10 +717,10 @@ export async function createUwsServer(opts: UwsDispatchOptions): Promise<{ port:
     // ── CORS preflight handler ──────────────────────────────────────────
     if (corsHeaders) {
       uwsApp.options('/*', (uwsRes) => {
-        uwsRes.cork(() => {
+        uwsCorkWrite(uwsRes, () => {
           uwsRes.writeStatus('204 No Content');
           for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-          uwsRes.end();
+          uwsSafeEnd(uwsRes);
         });
       });
     }
@@ -697,17 +762,17 @@ export async function createUwsServer(opts: UwsDispatchOptions): Promise<{ port:
           let aborted = false;
           let totalBytes = 0;
           const chunks: Buffer[] = [];
-          uwsRes.onAborted(() => { aborted = true; });
+          uwsRes.onAborted(() => { aborted = true; uwsAborted.set(uwsRes, true); markUwsFinished(uwsRes); });
           uwsRes.onData((chunk, isLast) => {
             if (aborted) return;
             if (chunk.byteLength > 0) {
               totalBytes += chunk.byteLength;
               if (totalBytes > maxBody) {
                 aborted = true;
-                uwsRes.cork(() => {
+                uwsCorkWrite(uwsRes, () => {
                   uwsRes.writeStatus('413 Payload Too Large');
                   uwsRes.writeHeader('Content-Type', CT_PROBLEM);
-                  uwsRes.end(BODY_413);
+                  uwsSafeEnd(uwsRes, BODY_413);
                 });
                 return;
               }
@@ -732,17 +797,17 @@ export async function createUwsServer(opts: UwsDispatchOptions): Promise<{ port:
           let aborted = false;
           let totalBytes = 0;
           const chunks: Buffer[] = [];
-          uwsRes.onAborted(() => { aborted = true; });
+          uwsRes.onAborted(() => { aborted = true; uwsAborted.set(uwsRes, true); markUwsFinished(uwsRes); });
           uwsRes.onData((chunk, isLast) => {
             if (aborted) return;
             if (chunk.byteLength > 0) {
               totalBytes += chunk.byteLength;
               if (totalBytes > maxBody) {
                 aborted = true;
-                uwsRes.cork(() => {
+                uwsCorkWrite(uwsRes, () => {
                   uwsRes.writeStatus('413 Payload Too Large');
                   uwsRes.writeHeader('Content-Type', CT_PROBLEM);
-                  uwsRes.end(BODY_413);
+                  uwsSafeEnd(uwsRes, BODY_413);
                 });
                 return;
               }
@@ -766,11 +831,11 @@ export async function createUwsServer(opts: UwsDispatchOptions): Promise<{ port:
 
     // ── Catch-all 404 for unmatched routes ──────────────────────────────
     uwsApp.any('/*', (uwsRes) => {
-      uwsRes.cork(() => {
+      uwsCorkWrite(uwsRes, () => {
         uwsRes.writeStatus('404 Not Found');
         uwsRes.writeHeader('Content-Type', CT_PROBLEM);
         if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-        uwsRes.end(BODY_404);
+        uwsSafeEnd(uwsRes, BODY_404);
       });
     });
 

@@ -1,5 +1,34 @@
 # @kozojs/testing
 
+## 0.5.9
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.5.9
+
+## 0.5.8
+
+### Patch Changes
+
+- Point npm `repository`, `homepage`, and `bugs` to the public GitHub repo `zazzo9039/kozojs` (not the private monorepo).
+- Updated dependencies
+  - @kozojs/core@0.5.8
+
+## 0.5.7
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.5.7
+
+## 0.5.6
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.5.6
+
 ## 0.4.0
 
 ### Minor Changes
