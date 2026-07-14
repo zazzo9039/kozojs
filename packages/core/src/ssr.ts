@@ -86,6 +86,11 @@ export interface SsrConfig {
    * Default: dark background + hidden root until JS loads.
    */
   devCriticalCss?: string;
+  /**
+   * Set to `false` to silence the startup banner.
+   * Inherited from `createKozo({ logger })` when started via `app.listenSsr()`.
+   */
+  logger?: boolean;
 }
 
 // ── MIME type map ───────────────────────────────────────────────────────
@@ -178,8 +183,19 @@ async function serveStaticFile(
   urlPath: string,
   res: ServerResponse,
 ): Promise<boolean> {
-  // Decode and normalize, stripping traversal attempts
-  const decoded = decodeURIComponent(urlPath);
+  // Decode and normalize, stripping traversal attempts.
+  // Malformed percent-encoding (e.g. "/assets/%zz") makes decodeURIComponent
+  // throw URIError. This runs OUTSIDE any try/catch on the static path, so an
+  // unguarded throw becomes an unhandledRejection and crashes the process.
+  // Treat it as a 400 instead.
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(urlPath);
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    res.end('Bad Request');
+    return true; // response sent — caller must not fall through to SSR render
+  }
   const safePath = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '');
   const filePath = path.join(staticDir, safePath);
 
@@ -351,7 +367,9 @@ async function startProductionServer(
 
   return new Promise((resolve) => {
     server.listen(port, () => {
-      console.log(`🚀 Kozo SSR production server → http://localhost:${port}`);
+      if (config.logger !== false) {
+        console.log(`🚀 Kozo SSR production server → http://localhost:${port}`);
+      }
       resolve({ server, port });
     });
   });
@@ -492,7 +510,9 @@ async function startDevServer(
 
   return new Promise((resolve) => {
     server.listen(port, () => {
-      console.log(`⚡ Kozo SSR dev server → http://localhost:${port}`);
+      if (config.logger !== false) {
+        console.log(`⚡ Kozo SSR dev server → http://localhost:${port}`);
+      }
       resolve({ server, port });
     });
   });

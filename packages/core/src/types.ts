@@ -218,7 +218,7 @@ export interface NativeKozoContext<
   // ── Response helpers ──────────────────────────────────────────────
   // These write directly to res with optimal cork/uncork batching.
 
-  /** Send a JSON response (default status 200). Uses fast-json-stringify if schema.response is defined. */
+  /** Send a JSON response (default status 200). Uses fast-json-stringify when schema.response is defined. */
   json(data: InferResponse<S['response']>, status?: number): void;
   /** Send a plain text response. */
   text(data: string, status?: number): void;
@@ -260,10 +260,13 @@ export interface RouteMeta {
 }
 
 /** Single default export: `{ schema?, meta?, handler }` (or `defineRoute(...)`). */
-export interface RouteDefinitionOptions<S extends RouteSchema = RouteSchema> {
+export interface RouteDefinitionOptions<
+  S extends RouteSchema = RouteSchema,
+  TServices extends Services = Services,
+> {
   schema?: S;
   meta?: RouteMeta;
-  handler: KozoHandler<S>;
+  handler: KozoHandler<S, TServices>;
 }
 
 export interface RouteModule<S extends RouteSchema = RouteSchema> {
@@ -315,16 +318,6 @@ export interface RouteDefinition {
 // APP CONFIG TYPES
 // ============================================
 
-export interface OpenAPIConfigRef {
-  info: {
-    title: string;
-    version: string;
-    description?: string;
-  };
-  servers?: Array<{ url: string; description?: string }>;
-  tags?: Array<{ name: string; description?: string }>;
-}
-
 export interface KozoConfig<
   TServices extends Services = Services,
   TScoped extends Record<string, unknown> = Record<string, never>,
@@ -352,19 +345,21 @@ export interface KozoConfig<
   onRequestEnd?: (scoped: TScoped, error?: Error) => void | Promise<void>;
   /** Max request body size in bytes — requests above this get a 413. Default: 1 MB. */
   maxBodyBytes?: number;
-  port?: number;
-  mode?: 'safe' | 'turbo';
-  runtime?: 'node' | 'bun';
-  target?: 'node' | 'edge' | 'cloudflare' | 'vercel' | 'netlify';
-  monitoring?: {
-    enable: boolean;
-    metrics: ('req/sec' | 'latency' | 'errors')[];
-    port?: number;
-  };
-  basePath?: string;
-  openapi?: OpenAPIConfigRef;
-  onError?: (error: Error, ctx: any) => any;
-  onNotFound?: (ctx: any) => any;
+  /** Set to `false` to silence the startup banner (e.g. in tests or benchmarks). Default: true. */
+  logger?: boolean;
+
+  /**
+   * Custom global error handler (Hono / `listen()` / bridged uWS routes).
+   * Return a `Response` to override the default RFC 7807 handling; return
+   * `undefined` to fall through to built-in {@link KozoError} / 500 handling.
+   */
+  onError?: (error: Error, ctx: any) => Response | Promise<Response> | void;
+
+  /**
+   * Custom 404 handler (Hono / `listen()` / bridged uWS routes).
+   * Return a `Response` to override the default not-found problem detail.
+   */
+  onNotFound?: (ctx: any) => Response | Promise<Response> | void;
 
   /**
    * Called after the server starts listening.
@@ -406,4 +401,41 @@ export function defineRoute<S extends RouteSchema = RouteSchema>(
   options: RouteDefinitionOptions<S> & { handler: KozoHandler<S, KozoServices> },
 ): RouteDefinitionOptions<S> {
   return options;
+}
+
+/**
+ * Returns a `defineRoute` bound to a concrete services type — the explicit
+ * alternative to augmenting the global {@link KozoServices} interface
+ * (no codegen, no pre-hook scripts, and two apps in the same repo cannot
+ * fight over one global interface).
+ *
+ * Wire it once per app and point a package.json subpath import at it, so
+ * every route file imports the same alias regardless of folder depth:
+ *
+ * @example
+ * // package.json
+ * // { "imports": { "#kozo": "./src/kozo.ts" } }
+ *
+ * // src/kozo.ts — the only glue file, written by hand, never regenerated
+ * import { createRouteFactory } from '@kozojs/core';
+ * import type { AppServices } from './lib/services/index.js';
+ * export const { defineRoute } = createRouteFactory<AppServices>();
+ *
+ * // src/routes/api/users/get.ts
+ * import { defineRoute } from '#kozo';
+ * export default defineRoute({
+ *   handler: ({ services }) => services.users.list(), // fully typed
+ * });
+ */
+export function createRouteFactory<TServices extends Services>() {
+  return {
+    defineRoute<S extends RouteSchema = RouteSchema>(
+      // A plain generic options type (no intersection): the handler context is
+      // typed exactly KozoContext<S, TServices>, so passing `ctx.services`
+      // around keeps the concrete type instead of degrading to a union.
+      options: RouteDefinitionOptions<S, TServices>,
+    ): RouteDefinitionOptions<S, TServices> {
+      return options;
+    },
+  };
 }

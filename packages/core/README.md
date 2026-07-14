@@ -1,8 +1,17 @@
 # @kozojs/core
 
-High-performance TypeScript framework with native Zod validation, type-safe client generation, and edge runtime compatibility.
+**Build your backend from a single contract.**
 
-**3 runtime deps** · **155 kB** · **MIT licensed**
+Define a route once with a Zod schema — runtime validation, an OpenAPI 3.1 spec, and a fully-typed TypeScript client all come from that one definition. With no extra wiring you get:
+
+- **Runtime validation** — RFC 7807 errors on bad input, zero boilerplate
+- **OpenAPI 3.1** — generated from the same schema
+- **A typed client SDK** — `app.generateClient()` → `api.postUsers({ body })`, typed end-to-end
+- **Native-speed routing** — an optional uWebSockets.js transport registers routes straight into a C++ radix trie
+
+Runs on Node, Bun, and edge runtimes.
+
+**4 runtime deps** · **155 kB** · **MIT licensed**
 
 ```
 npm install @kozojs/core zod
@@ -66,10 +75,10 @@ await app.listen(3000);
 
 ### `app.nativeListen(port?)` — uWebSockets.js (C++ transport)
 
-Routes are registered directly with uWS's C++ radix trie router — zero JS routing overhead per request. Requires `uWebSockets.js` as a peer dependency.
+Routes are registered directly with uWS's C++ radix trie router — zero JS routing overhead per request. Requires `uWebSockets.js` as a peer dependency (it is published on GitHub, not npm):
 
 ```bash
-pnpm add uWebSockets.js
+pnpm add uNetworking/uWebSockets.js#v20.66.0
 ```
 
 ```typescript
@@ -175,6 +184,21 @@ Invalid requests return RFC 7807 `application/problem+json`:
 }
 ```
 
+### Response schema = contract (read this)
+
+When you set `response` on a route, Kozo treats it as the **public API contract**, not just typing sugar:
+
+- **Compiled serialization** — if the schema maps to JSON Schema (`z.object`, primitives, arrays, …), Kozo compiles a `fast-json-stringify` serializer **once at route registration**. Schemas with `.transform()`, `z.date()`, or `z.any()` use `JSON.stringify` instead (safe fallback — no silent wrong compile).
+- **Undeclared fields are dropped** — extra properties on the handler return value (e.g. DB columns not in the schema) are **omitted from the JSON response**. This is intentional contract enforcement: declare everything you return, or remove `response` from the route if you want pass-through serialization.
+
+```typescript
+app.get('/users/:id', {
+  params: z.object({ id: z.string() }),
+  response: z.object({ id: z.string(), name: z.string() }), // only these two keys in JSON
+}, ({ params, services }) => services.db.findUser(params.id));
+// If the DB row has `{ id, name, email, createdAt }`, the client receives `{ id, name }` only.
+```
+
 ---
 
 ## Services (Dependency Injection)
@@ -200,26 +224,62 @@ app.get('/users', (ctx) => {
 
 ---
 
+## Guards (security — single source of truth)
+
+`app.guard(pattern, fn)` registers a transport-agnostic check: it runs as Hono
+middleware under `listen()` and **compiled into the uWS fast path** under
+`nativeListen()` — identical semantics, native speed. Use guards for auth,
+roles, and rate limits.
+
+```typescript
+import { rateLimitGuard } from '@kozojs/core';
+import { jwtGuard, roleGuard } from '@kozojs/auth';
+
+app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, { publicPaths: ['/api/health'] }));
+app.guard('/api/admin/*', roleGuard('admin'));
+app.guard('/api/auth/*', rateLimitGuard({ max: 20, window: 60 }));
+
+// Custom guard: allow (return nothing), attach user, or deny
+app.guard('/internal/*', (req) => {
+  if (req.header('x-api-key') !== process.env.API_KEY) {
+    return { deny: { status: 401, body: { error: 'invalid api key' } } };
+  }
+});
+```
+
+CORS is handled at the transport level (preflight included):
+
+```typescript
+await app.nativeListen({ port: 3000, cors: { origin: ['https://app.com'], credentials: true } });
+```
+
+---
+
 ## Middleware
 
 Register Hono middleware globally or per-path:
 
 ```typescript
-import { logger, cors, rateLimit, errorHandler } from '@kozojs/core/middleware';
+import { logger, errorHandler } from '@kozojs/core/middleware';
 
-// Built-in middleware
-app.middleware(logger());                            // request logging
-app.middleware(cors({ origin: 'https://app.com' })); // CORS
-app.middleware('/api/*', rateLimit({ max: 100, window: 60 })); // rate limiting
-app.middleware(errorHandler());                       // error handler (RFC 7807)
+app.middleware(logger());        // request logging
+app.middleware(errorHandler());  // error handler (RFC 7807)
 
-// Custom middleware
+// Custom middleware (needs the Hono Context)
 app.middleware('/admin/*', async (c, next) => {
-  const user = await verifyJwt(c.req.header('authorization'));
-  c.set('user', user);
+  c.set('requestId', crypto.randomUUID());
   return next();
 });
 ```
+
+> Under `nativeListen()`, routes covered by middleware patterns are served
+> through the Hono bridge to guarantee correctness (~35% slower than the
+> native path). Prefer `app.guard()` for security checks — it stays native.
+> Versions ≤ 0.5.15 silently **bypassed** middleware under `nativeListen()`;
+> upgrade to ≥ 0.5.16.
+>
+> **Native transport limits** (multipart, streaming/SSE on bridged routes, HTTPS):
+> see [Common Pitfalls §12](../../docs/common-pitfalls.md#12-native-transport-limits-nativelisten--uws).
 
 ### Built-in Middleware
 
@@ -609,6 +669,8 @@ Create a Kozo application.
 |--------|------|---------|-------------|
 | `services` | `TServices` | `{}` | Dependency injection container |
 | `routesDir` | `string` | — | Directory for file-system routing |
+| `maxBodyBytes` | `number` | `1048576` | Max request body size — larger requests get a 413 |
+| `logger` | `boolean` | `true` | Set `false` to silence the startup banner (tests, benchmarks) |
 
 ### Instance Methods
 

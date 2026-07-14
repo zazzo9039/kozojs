@@ -93,8 +93,8 @@ pnpm dev
 mkdir my-app && cd my-app
 pnpm init
 pnpm add @kozojs/core zod
-# Optional: native transport
-pnpm add uWebSockets.js
+# Optional: native transport (published on GitHub, not npm)
+pnpm add uNetworking/uWebSockets.js#v20.66.0
 ```
 
 ```typescript
@@ -200,7 +200,8 @@ await app.listen(3000);
 ### Node.js + uWebSockets.js (max throughput)
 
 ```bash
-pnpm add uWebSockets.js
+# uWebSockets.js is published on GitHub, not npm
+pnpm add uNetworking/uWebSockets.js#v20.66.0
 ```
 
 ```typescript

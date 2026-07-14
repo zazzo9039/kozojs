@@ -4,23 +4,59 @@ import { Hono } from 'hono/quick';
 import type { MiddlewareHandler } from 'hono';
 import { serve } from '@hono/node-server';
 import type { Server } from 'node:http';
-import type { KozoConfig, KozoEnv, Services, RouteSchema, KozoHandler, RouteMeta, HttpMethod } from './types.js';
+import type { KozoConfig, KozoEnv, Services, RouteSchema, KozoHandler, RouteMeta, HttpMethod, RouteDefinition } from './types.js';
 import type { AnyScopeConfig } from './scoped-services.js';
 import { generateTypedClient, type ClientGeneratorOptions, type RouteInfo } from './client-generator.js';
 import { compileRouteHandler, compileUwsNativeHandler, SchemaCompiler, DEFAULT_MAX_BODY_BYTES } from './compiler.js';
 import { clearRateLimitStore } from './middleware/rate-limit.js';
-import { KozoError, internalErrorResponse } from './errors.js';
+import { KozoError, internalErrorResponse, bodyTooLargeJson, notFoundResponse } from './errors.js';
 import { ShutdownManager, type ShutdownOptions } from './shutdown.js';
 import { scanRoutes, scanMiddleware, resolveRouteModule } from './router.js';
-import { tryLoadUws, createUwsServer, type UwsRouteEntry, type UwsCorsConfig } from './uws-transport.js';
+import { tryLoadUws, createUwsServer, makeUwsHonoBridge, middlewarePatternOverlaps, type UwsRouteEntry, type UwsCorsConfig } from './uws-transport.js';
+import { guardToHonoMiddleware, compileGuards, wrapNativeWithGuards, type KozoGuard, type GuardEntry } from './guard.js';
 import { createSsrServer, type SsrConfig } from './ssr.js';
 import type { WebSocketHandler, WsRouteEntry } from './ws.js';
+import { createOpenAPIGenerator, generateSwaggerHtml, type OpenAPISpec } from './openapi.js';
 
 // Plugin Architecture
 export interface Plugin {
   name: string;
   version?: string;
   install: (app: Kozo<Services>) => void | Promise<void>;
+}
+
+/** Options for {@link Kozo.mountDocs}. */
+export interface MountDocsOptions {
+  /**
+   * Base path of the Swagger UI page; the OpenAPI spec is served at
+   * `${path}.json`. Default: `/docs`.
+   */
+  path?: string;
+  /** Title shown in Swagger UI and the spec. Default: `'API'`. */
+  title?: string;
+  /** Spec `info.version`. Default: `'0.0.0'`. */
+  version?: string;
+  /** Spec `info.description`. */
+  description?: string;
+  /** OpenAPI `servers` entries. */
+  servers?: Array<{ url: string; description?: string }>;
+  /**
+   * Whether the docs routes are mounted at all.
+   * Default: `process.env.NODE_ENV !== 'production'` — the spec is a complete
+   * map of the API surface, so in production it stays off unless you opt in
+   * explicitly (e.g. `enabled: env.ENABLE_DOCS`).
+   */
+  enabled?: boolean;
+}
+
+/**
+ * Tag for a route path: first meaningful segment, skipping a leading `api`
+ * prefix (`/api/billing/...` → `Billing`).
+ */
+function docsRouteTag(path: string): string {
+  const segments = path.split('/').filter(Boolean);
+  const seg = (segments[0]?.toLowerCase() === 'api' ? segments[1] : segments[0]) ?? 'general';
+  return seg.charAt(0).toUpperCase() + seg.slice(1);
 }
 
 /**
@@ -97,6 +133,11 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
   private _onStart?: (ctx: { services: TServices }) => void | Promise<void>;
   private _onStop?: (ctx: { services: TServices }) => void | Promise<void>;
   private _maxBodyBytes: number;
+  private _logger: boolean;
+  private _onError?: KozoConfig['onError'];
+  private _onNotFound?: KozoConfig['onNotFound'];
+  /** Async plugin installs queued by use() — flushed before the server binds. */
+  private _pendingPluginInstalls: Promise<void>[] = [];
 
   /** Normalize bare Zod response schema → { 200: schema } for OpenAPI generators */
   private static normalizeSchema(schema: RouteSchema): RouteSchema {
@@ -113,6 +154,9 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     this._onStart = config.onStart;
     this._onStop = config.onStop;
     this._maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+    this._logger = config.logger !== false;
+    this._onError = config.onError;
+    this._onNotFound = config.onNotFound;
     if (config.scopedServices) {
       this._scope = {
         base: this.services,
@@ -123,6 +167,19 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
 
     // Global Error Handler (RFC 7807 Problem Details)
     this.app.onError((err, c) => {
+      const hook = this._onError;
+      if (hook) {
+        try {
+          const custom = hook(err as Error, c);
+          if (custom instanceof Response) return custom;
+          if (custom != null && typeof (custom as Promise<Response>).then === 'function') {
+            return custom as Promise<Response>;
+          }
+        } catch (hookErr) {
+          console.error('[Kozo] onError hook failed:', hookErr);
+        }
+      }
+
       // 1. Known Kozo errors (NotFoundError, ForbiddenError, etc.)
       if (err instanceof KozoError) {
         return err.toResponse(c.req.path);
@@ -132,12 +189,44 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
       console.error('[Kozo] Unhandled error:', err);
       return internalErrorResponse(err as Error, c.req.path);
     });
+
+    this.app.notFound((c) => {
+      const hook = this._onNotFound;
+      if (hook) {
+        try {
+          const custom = hook(c);
+          if (custom instanceof Response) return custom;
+          if (custom != null && typeof (custom as Promise<Response>).then === 'function') {
+            return custom as Promise<Response>;
+          }
+        } catch (hookErr) {
+          console.error('[Kozo] onNotFound hook failed:', hookErr);
+        }
+      }
+      return notFoundResponse(c.req.path);
+    });
   }
 
   // Plugin system
   use(plugin: Plugin): this {
-    plugin.install(this as unknown as Kozo<Services>);
+    try {
+      const result = plugin.install(this as unknown as Kozo<Services>);
+      if (result != null && typeof (result as Promise<void>).then === 'function') {
+        this._pendingPluginInstalls.push(result as Promise<void>);
+      }
+    } catch (err) {
+      console.error(`[Kozo] Plugin "${plugin.name}" install failed:`, err);
+      throw err;
+    }
     return this;
+  }
+
+  /** Await all async plugin installs registered via use(). Called before bind. */
+  private async flushPluginInstalls(): Promise<void> {
+    if (this._pendingPluginInstalls.length === 0) return;
+    const pending = this._pendingPluginInstalls;
+    this._pendingPluginInstalls = [];
+    await Promise.all(pending);
   }
 
   /**
@@ -160,6 +249,7 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     const middlewares = await scanMiddleware({ routesDir: dir, verbose: false });
     for (const mw of middlewares) {
       this.app.use(mw.pathPrefix, mw.handler as MiddlewareHandler<KozoEnv>);
+      this._middlewarePatterns.push(mw.pathPrefix);
     }
 
     // 2. Scan and register route handlers
@@ -186,6 +276,7 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
         this.services,
         compiledSchema,
         this._scope,
+        this._onError,
       );
       this.routes.push({ method: method as HttpMethod, path, schema: normalizedSchema, meta });
       (this.app as any)[method](path, optimizedHandler);
@@ -294,7 +385,7 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     const normalizedSchema = Kozo.normalizeSchema(schema);
     this.routes.push({ method: method as HttpMethod, path, schema: normalizedSchema, meta });
 
-    // 1. Compile schemas (Zod -> Ajv validators + fast-json-stringify serializer)
+    // 1. Compile schemas (Zod validators + fast-json-stringify response serializer)
     const compiled = SchemaCompiler.compile(normalizedSchema);
 
     // 2. Generate the optimized Hono handler
@@ -304,6 +395,7 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
       this.services,
       compiled,
       this._scope,
+      this._onError,
     );
 
     // 3. Register the compiled handler with Hono
@@ -328,6 +420,8 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
    * Returns { port, server } so callers can close the server when done.
    */
   async nativeListen(portOrOptions?: number | { port?: number; cors?: UwsCorsConfig }): Promise<{ port: number; server: Server }> {
+    await this.flushPluginInstalls();
+
     const opts = typeof portOrOptions === 'number' ? { port: portOrOptions } : (portOrOptions ?? {});
     const port = opts.port ?? 3000;
 
@@ -335,19 +429,52 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     if (!uwsBindings) {
       throw new Error(
         '[Kozo] uWebSockets.js is required but not installed.\n' +
-        'Run: pnpm add uWebSockets.js',
+        'It is published on GitHub, not npm — install it with:\n' +
+        '  pnpm add uNetworking/uWebSockets.js#v20.66.0',
       );
     }
 
     const manager = this.shutdownManager;
 
-    // Lazy-compile uWS handlers only when nativeListen is actually called
-    const uwsRoutes: UwsRouteEntry[] = this._deferredUws.map(r => ({
-      method: r.method,
-      path: r.path,
-      paramNames: r.paramNames,
-      handler: compileUwsNativeHandler(r.handler, r.schema, this.services, r.compiled, this._scope),
-    }));
+    // Lazy-compile uWS handlers only when nativeListen is actually called.
+    // Routes covered by a middleware pattern are bridged through the Hono
+    // fetch pipeline (identical semantics to listen(): auth, rate limits,
+    // CORS, … all run); uncovered routes keep the zero-shim native path.
+    // Guards (app.guard) run natively on uncovered routes — no bridge needed.
+    const patterns = this._middlewarePatterns;
+    const honoFetch = this.app.fetch;
+    let bridgedCount = 0;
+    let guardedCount = 0;
+    const uwsRoutes: UwsRouteEntry[] = this._deferredUws.map(r => {
+      if (patterns.some(p => middlewarePatternOverlaps(p, r.path))) {
+        // Bridged: guards run via their Hono twin inside the fetch pipeline.
+        bridgedCount++;
+        return {
+          method: r.method,
+          path: r.path,
+          paramNames: r.paramNames,
+          handler: makeUwsHonoBridge(r.method, honoFetch),
+        };
+      }
+      const native = compileUwsNativeHandler(r.handler, r.schema, this.services, r.compiled, this._scope, this._maxBodyBytes, r.method);
+      const guards = this._guards.filter(g => middlewarePatternOverlaps(g.pattern, r.path));
+      if (guards.length === 0) {
+        return { method: r.method, path: r.path, paramNames: r.paramNames, handler: native };
+      }
+      guardedCount++;
+      return {
+        method: r.method,
+        path: r.path,
+        paramNames: r.paramNames,
+        handler: wrapNativeWithGuards(compileGuards(guards), native, r.method),
+      };
+    });
+    if (this._logger && (bridgedCount > 0 || guardedCount > 0)) {
+      const parts: string[] = [];
+      if (guardedCount > 0) parts.push(`${guardedCount} native+guards`);
+      if (bridgedCount > 0) parts.push(`${bridgedCount} Hono-bridged (app.middleware / _middleware.ts)`);
+      console.log(`[Kozo] routes: ${parts.join(', ')}, ${uwsRoutes.length - bridgedCount - guardedCount} pure native of ${uwsRoutes.length}`);
+    }
 
     // Clear deferred routes to free memory after compilation
     this._deferredUws.length = 0;
@@ -360,13 +487,16 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
       isShuttingDown: () => manager.isShuttingDown(),
       trackRequest: () => manager.trackRequest(),
       wsRoutes: this._wsRoutes.length > 0 ? this._wsRoutes : undefined,
+      maxBodyBytes: this._maxBodyBytes,
     });
 
     manager.setServer(result.server as unknown as Server);
-    if (this._wsRoutes.length > 0) {
-      console.log(`🚀 uWebSockets.js transport active (HTTP + ${this._wsRoutes.length} WebSocket route${this._wsRoutes.length > 1 ? 's' : ''})`);
-    } else {
-      console.log('🚀 uWebSockets.js transport active (C++ HTTP parser + native radix router)');
+    if (this._logger) {
+      if (this._wsRoutes.length > 0) {
+        console.log(`🚀 uWebSockets.js transport active (HTTP + ${this._wsRoutes.length} WebSocket route${this._wsRoutes.length > 1 ? 's' : ''})`);
+      } else {
+        console.log('🚀 uWebSockets.js transport active (C++ HTTP parser + native radix router)');
+      }
     }
 
     // Run onStart lifecycle hook
@@ -377,7 +507,9 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     return result as { port: number; server: Server };
   }
 
-  async listen(port?: number): Promise<void> {
+  async listen(port?: number): Promise<{ port: number; server: Server }> {
+    await this.flushPluginInstalls();
+
     if (this._wsRoutes.length > 0) {
       console.warn('[Kozo] WebSocket routes require nativeListen() (uWebSockets.js). They will be ignored with listen().');
     }
@@ -393,23 +525,18 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
       shutdownStarted = true;
     });
 
+    let resolveListening!: (p: number) => void;
+    const listening = new Promise<number>((r) => { resolveListening = r; });
+
     const server = serve({
       fetch: (req: Request, ...args: any[]) => {
         // Reject oversized request bodies before they are read
         const contentLength = req.headers.get('content-length');
         if (contentLength !== null && Number(contentLength) > this._maxBodyBytes) {
-          return new Response(
-            JSON.stringify({
-              type: 'about:blank',
-              title: 'Content Too Large',
-              status: 413,
-              detail: `Request body exceeds the ${this._maxBodyBytes}-byte limit`,
-            }),
-            {
-              status: 413,
-              headers: { 'Content-Type': 'application/problem+json' },
-            },
-          );
+          return new Response(bodyTooLargeJson(this._maxBodyBytes), {
+            status: 413,
+            headers: { 'Content-Type': 'application/problem+json' },
+          });
         }
 
         // Fast path: normal operation (no async wrapper allocation)
@@ -447,15 +574,22 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
         }
       },
       port: finalPort,
-    }) as unknown as Server;
+    }, (info) => resolveListening(info.port)) as unknown as Server;
 
     manager.setServer(server);
-    console.log(`🚀 Kozo server listening on http://localhost:${finalPort}`);
+
+    // Await the listening callback so we can report the actual bound port
+    // (important when finalPort is 0 → OS-assigned ephemeral port).
+    const boundPort = await listening;
+    if (this._logger) {
+      console.log(`🚀 Kozo server listening on http://localhost:${boundPort}`);
+    }
 
     // Run onStart lifecycle hook
     if (this._onStart) {
       await this._onStart({ services: this.services });
     }
+    return { port: boundPort, server };
   }
 
   /**
@@ -478,6 +612,8 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
    * });
    */
   async listenSsr(port: number, ssrConfig: SsrConfig): Promise<{ server: Server; port: number }> {
+    await this.flushPluginInstalls();
+
     const manager = this.shutdownManager;
 
     // Store original fetch to avoid creating async wrapper per request
@@ -490,6 +626,14 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     });
 
     const shutdownFetch = (req: Request, ...args: any[]) => {
+      const contentLength = req.headers.get('content-length');
+      if (contentLength !== null && Number(contentLength) > this._maxBodyBytes) {
+        return new Response(bodyTooLargeJson(this._maxBodyBytes), {
+          status: 413,
+          headers: { 'Content-Type': 'application/problem+json' },
+        });
+      }
+
       // Fast path: normal operation (no async wrapper allocation)
       if (!shutdownStarted) {
         const untrack = manager.trackRequest();
@@ -526,7 +670,7 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     const { getRequestListener } = await import('@hono/node-server');
     const honoHandler = getRequestListener(shutdownFetch);
 
-    const result = await createSsrServer(ssrConfig, honoHandler, port);
+    const result = await createSsrServer({ logger: this._logger, ...ssrConfig }, honoHandler, port);
     manager.setServer(result.server);
     return result;
   }
@@ -560,20 +704,66 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
   /**
    * Register a Hono middleware on the app.
    *
+   * Patterns are tracked so `nativeListen()` can bridge any covered route
+   * through the Hono pipeline (auth, rate limits, CORS, `_middleware.ts`, …).
+   *
+   * NOTE: bridged routes lose the zero-shim uWS fast path. For cross-cutting
+   * security (auth, rate limits, role checks) prefer {@link guard} — it runs
+   * the same check on both transports at native speed. Use `middleware()`
+   * only for logic that genuinely needs the Hono `Context`.
+   *
    * @example
    * app.middleware('/api/*', async (c, next) => {
    *   c.set('user', await verifyJwt(c.req.header('authorization')));
    *   return next();
    * });
    */
+  private _middlewarePatterns: string[] = [];
+
   middleware(handler: MiddlewareHandler<KozoEnv>): this;
   middleware(path: string, handler: MiddlewareHandler<KozoEnv>): this;
   middleware(pathOrHandler: string | MiddlewareHandler<KozoEnv>, handler?: MiddlewareHandler<KozoEnv>): this {
     if (typeof pathOrHandler === 'string') {
       this.app.use(pathOrHandler, handler!);
+      this._middlewarePatterns.push(pathOrHandler);
     } else {
       this.app.use(pathOrHandler);
+      this._middlewarePatterns.push('*');
     }
+    return this;
+  }
+
+  /**
+   * Guards registered via {@link guard}. Unlike `_middlewarePatterns`, these
+   * do NOT force routes through the Hono bridge under `nativeListen()` —
+   * they are compiled directly into the uWS fast path.
+   */
+  private _guards: GuardEntry[] = [];
+
+  /**
+   * Register a transport-agnostic guard (auth, rate-limit, …).
+   *
+   * The same guard function runs on BOTH transports:
+   * - `listen()`        → as a Hono middleware
+   * - `nativeListen()`  → compiled into the zero-shim uWS path (no Hono,
+   *                       no Request/Response allocation — native speed)
+   *
+   * This is the recommended way to protect routes when using the uWS
+   * transport: `app.middleware()` forces covered routes through the Hono
+   * bridge, `app.guard()` does not.
+   *
+   * @example
+   * app.guard('/api/*', async (req) => {
+   *   const token = req.header('authorization')?.slice(7);
+   *   if (!token) return { deny: { status: 401 } };
+   *   const user = await verifyJwt(token);
+   *   return user ? { user } : { deny: { status: 401 } };
+   * });
+   */
+  guard(pattern: string, guard: KozoGuard): this {
+    this._guards.push({ pattern, guard });
+    // Hono twin: identical semantics under listen() and on bridged routes.
+    this.app.use(pattern, guardToHonoMiddleware(guard));
     return this;
   }
 
@@ -587,6 +777,72 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
    */
   getRoutes(): ReadonlyArray<{ method: HttpMethod; path: string; schema: RouteSchema; meta?: RouteMeta }> {
     return this.routes;
+  }
+
+  /**
+   * Mounts Swagger UI + the OpenAPI 3.1 spec of every registered route.
+   *
+   * Safe by default: outside `NODE_ENV=production` the docs are on; in
+   * production they are NOT mounted unless `enabled: true` is passed
+   * explicitly. The spec is generated lazily on the first request (and then
+   * cached), so `mountDocs()` can be called before or after `loadRoutes()`
+   * and works with `listen()` and `nativeListen()` alike.
+   *
+   * Both routes carry `meta.auth: false`; auth layers that scan route files
+   * (e.g. `@kozojs/auth`'s `registerAuthBeforeLoadRoutes`) still need the two
+   * paths in `extraPublicPaths`.
+   *
+   * @example
+   * app.mountDocs({ title: 'my-api', version: '1.0.0', path: '/api/docs' });
+   * // production opt-in:
+   * app.mountDocs({ enabled: env.ENABLE_DOCS });
+   */
+  mountDocs(options: MountDocsOptions = {}): this {
+    const enabled = options.enabled ?? process.env.NODE_ENV !== 'production';
+    if (!enabled) return this;
+
+    const uiPath = options.path ?? '/docs';
+    const specPath = `${uiPath}.json`;
+    const info = {
+      title: options.title ?? 'API',
+      version: options.version ?? '0.0.0',
+      description: options.description,
+    };
+
+    let cachedSpec: OpenAPISpec | null = null;
+    const buildSpec = (): OpenAPISpec => {
+      if (cachedSpec) return cachedSpec;
+      const apiRoutes = this.getRoutes().filter(
+        (r) => r.path !== uiPath && r.path !== specPath,
+      );
+      const seen = new Set<string>();
+      const tags = apiRoutes
+        .map((r) => r.meta?.tags?.[0] ?? docsRouteTag(r.path))
+        .filter((name) => !seen.has(name) && seen.add(name))
+        .map((name) => ({ name, description: `${name} endpoints` }));
+      const definitions: RouteDefinition[] = apiRoutes.map((r) => ({
+        path: r.path,
+        method: r.method,
+        filePath: r.path,
+        module: {
+          default: () => undefined,
+          schema: r.schema,
+          meta: { ...r.meta, tags: r.meta?.tags ?? [docsRouteTag(r.path)] },
+        },
+      }));
+      cachedSpec = createOpenAPIGenerator({ info, servers: options.servers, tags }).generate(definitions);
+      return cachedSpec;
+    };
+
+    this.get(uiPath, {}, (ctx) => ctx.html(generateSwaggerHtml(specPath, info.title)), {
+      auth: false,
+      summary: 'API documentation (Swagger UI)',
+    });
+    this.get(specPath, {}, (ctx) => ctx.json(buildSpec() as any), {
+      auth: false,
+      summary: 'OpenAPI 3.1 specification',
+    });
+    return this;
   }
 
   get fetch() {

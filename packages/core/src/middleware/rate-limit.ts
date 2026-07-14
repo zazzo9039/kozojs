@@ -1,4 +1,5 @@
 import type { Context, Next } from 'hono';
+import type { GuardRequest, KozoGuard } from '../guard.js';
 
 // ── Store interface ──────────────────────────────────────────────────────────
 
@@ -91,6 +92,54 @@ export function rateLimit(options: RateLimitOptions) {
     }
 
     await next();
+  };
+}
+
+// ── Guard variant (transport-agnostic — native speed under uWS) ─────────────
+
+export interface RateLimitGuardOptions {
+  max: number;
+  window: number; // in seconds
+  keyGenerator?: (req: GuardRequest) => string;
+  message?: string;
+  /** External store (Redis, etc.). Falls back to in-memory Map when omitted. */
+  store?: RateLimitStore;
+}
+
+/**
+ * Rate limiting as a guard for `app.guard()` — same semantics and store as
+ * the `rateLimit` middleware (X-RateLimit-* headers, 429 on excess), but it
+ * runs on the uWS native fast path instead of forcing the Hono bridge.
+ *
+ * @example
+ * app.guard('/api/auth/login', rateLimitGuard({ max: 20, window: 900 }));
+ */
+export function rateLimitGuard(options: RateLimitGuardOptions): KozoGuard {
+  const {
+    max,
+    window,
+    keyGenerator = (req: GuardRequest) =>
+      req.header('x-forwarded-for')?.split(',')[0]?.trim()
+      ?? req.header('x-real-ip')
+      ?? req.remoteAddress
+      ?? 'anonymous',
+    message = 'Too many requests',
+    store = memoryStore,
+  } = options;
+
+  const windowMs = window * 1000;
+
+  return async (req) => {
+    const record = await store.increment(keyGenerator(req), windowMs);
+    const headers = {
+      'X-RateLimit-Limit': String(max),
+      'X-RateLimit-Remaining': String(Math.max(0, max - record.count)),
+      'X-RateLimit-Reset': String(Math.ceil(record.resetAt / 1000)),
+    };
+    if (record.count > max) {
+      return { deny: { status: 429, body: { error: message }, headers } };
+    }
+    return { headers };
   };
 }
 

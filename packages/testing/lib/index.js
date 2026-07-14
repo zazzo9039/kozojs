@@ -50,7 +50,34 @@ function createTestClient(app) {
 function createTestApp(config) {
   return createTestClient(createKozo(config));
 }
+async function createNativeTestClient(app) {
+  const { port, server } = await app.nativeListen({ port: 0 });
+  const base = `http://127.0.0.1:${port}`;
+  const fetchFn = async (req) => {
+    const u = new URL(req.url);
+    const method = req.method;
+    const body = method === "GET" || method === "HEAD" ? void 0 : await req.text();
+    return fetch(base + u.pathname + u.search, { method, headers: req.headers, body });
+  };
+  let closed = false;
+  return {
+    app,
+    port,
+    async close() {
+      if (closed) return;
+      closed = true;
+      server.close();
+    },
+    inject: (opts) => doInject(fetchFn, opts),
+    get: (url, opts = {}) => doInject(fetchFn, { ...opts, method: "GET", url }),
+    post: (url, body, opts = {}) => doInject(fetchFn, { ...opts, method: "POST", url, body }),
+    put: (url, body, opts = {}) => doInject(fetchFn, { ...opts, method: "PUT", url, body }),
+    patch: (url, body, opts = {}) => doInject(fetchFn, { ...opts, method: "PATCH", url, body }),
+    delete: (url, opts = {}) => doInject(fetchFn, { ...opts, method: "DELETE", url })
+  };
+}
 export {
+  createNativeTestClient,
   createTestApp,
   createTestClient
 };

@@ -20,7 +20,8 @@ export interface KozoAppDefinition<
 > {
   routesDir: string;
   services: () => TServices | Promise<TServices>;
-  types: KozoAppTypesRef;
+  /** Optional — only used by the augmentation-based typegen (`kozo types`). */
+  types?: KozoAppTypesRef;
   configure?: (ctx: KozoAppHooks<TServices>) => void | Promise<void>;
   onReady?: (ctx: Pick<KozoAppHooks<TServices>, 'app'>) => void | Promise<void>;
   kozo?: Omit<KozoConfig<TServices, TScoped>, 'services' | 'routesDir'>;
@@ -33,7 +34,12 @@ export interface DefineKozoAppOptions<
 > {
   routesDir?: string;
   services: () => TServices | Promise<TServices>;
-  types: KozoAppTypesRef;
+  /**
+   * Optional — only needed for the augmentation-based typegen
+   * (`kozo types` / `renderKozoTypesDts`). Apps using
+   * `createRouteFactory` + a `#kozo` subpath import don't need it.
+   */
+  types?: KozoAppTypesRef;
   configure?: (ctx: KozoAppHooks<TServices>) => void | Promise<void>;
   onReady?: (ctx: Pick<KozoAppHooks<TServices>, 'app'>) => void | Promise<void>;
 }

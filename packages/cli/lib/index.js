@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+(() => {
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  if (major < 20 || (major === 20 && minor < 19)) {
+    console.error("@kozojs/cli requires Node >= 20.19 (current: " + process.version + ").");
+    process.exit(1);
+  }
+})();
 "use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -234,7 +241,7 @@ async function scaffoldCompleteTemplate(projectDir, projectName, kozoCoreDep, ru
     },
     dependencies: {
       "@kozojs/core": kozoCoreDep,
-      ...auth && { "@kozojs/auth": kozoCoreDep === "workspace:*" ? "workspace:*" : "^0.1.0" },
+      ...auth && { "@kozojs/auth": kozoCoreDep === "workspace:*" ? "workspace:*" : "^0.5.21" },
       "@hono/node-server": "^1.19.10",
       ...runtime === "node" && { "uWebSockets.js": "github:uNetworking/uWebSockets.js#6609a88ffa9a16ac5158046761356ce03250a0df" },
       hono: "^4.12.5",
@@ -316,8 +323,8 @@ export default defineConfig({
 `;
     await import_fs_extra.default.writeFile(import_node_path.default.join(projectDir, "drizzle.config.ts"), drizzleConfig);
   }
-  const indexTs = `import { createKozo, cors, logger, rateLimit } from '@kozojs/core';
-${auth ? "import { authenticateJWT } from '@kozojs/auth';" : ""}
+  const indexTs = `import { createKozo, rateLimitGuard } from '@kozojs/core';
+${auth ? "import { jwtGuard } from '@kozojs/auth';" : ""}
 ${auth ? "import { registerAuthRoutes } from './routes/auth/index.js';" : ""}
 import { registerUserRoutes } from './routes/users/index.js';
 import { registerPostRoutes } from './routes/posts/index.js';
@@ -345,11 +352,10 @@ const app = createKozo({
   },
 });
 
-// \u2500\u2500\u2500 Middleware (Hono layer) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-app.getApp().use('*', logger());
-app.getApp().use('*', cors({ origin: CORS_ORIGIN }));
-app.getApp().use('/api/*', rateLimit({ max: RATE_LIMIT_MAX, windowMs: RATE_LIMIT_WINDOW }));
-${auth ? `app.getApp().use('/api/*', authenticateJWT(JWT_SECRET, { prefix: '/api' }));` : ""}
+// \u2500\u2500\u2500 Security (transport-agnostic guards \u2014 native speed under uWS) \u2500\u2500\u2500\u2500
+// Guards run on BOTH transports: listen() (Hono) and nativeListen() (uWS).
+app.guard('/*', rateLimitGuard({ max: RATE_LIMIT_MAX, window: RATE_LIMIT_WINDOW / 1000 }));
+${auth ? `app.guard('/auth/me', jwtGuard(JWT_SECRET));` : ""}
 
 // \u2500\u2500\u2500 Routes (native compiled \u2014 zero overhead) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 registerHealthRoute(app);
@@ -369,7 +375,8 @@ console.log('');
 console.log('\u{1F525} Kozo server starting\u2026');
 console.log('');
 
-await app.nativeListen(PORT);
+// CORS is handled at the transport level (works for preflight too)
+await app.nativeListen({ port: PORT, cors: { origin: CORS_ORIGIN } });
 console.log('');
 console.log('\u{1F4DA} Endpoints:');
 console.log('   GET  /health               Health check');
@@ -408,8 +415,8 @@ Built with \u{1F525} **Kozo Framework** \u2014 Production-ready server template
 \u26A1 **Maximum Performance**
 - uWebSockets.js transport with native per-route C++ matching (zero JS routing overhead)
 - Compiled handlers write directly to uWS response via cork() \u2014 zero shim objects
-- Pre-compiled Zod schemas (Ajv fast-path)
-- fast-json-stringify serialization
+- Pre-compiled Zod validators (compiled once at startup)
+- fast-json-stringify response serialization when schema.response is set
 
 \u{1F512} **Production Middleware**
 - CORS with configurable origins
@@ -797,12 +804,13 @@ export function registerAuthRoutes(app: Kozo) {
     return { success: true, token, user };
   });
 
-  // GET /auth/me \u2014 requires valid JWT (middleware handles verification)
+  // GET /auth/me \u2014 requires valid JWT (jwtGuard handles verification)
   app.get('/auth/me', {
     response: UserSchema,
   }, (c) => {
-    // user payload set by authenticateJWT middleware
-    return users[0];
+    // user payload attached by jwtGuard \u2192 ctx.user
+    const payload = c.user as { sub?: string } | null;
+    return users.find(u => u.id === payload?.sub) ?? users[0];
   });
 }
 `;
@@ -2728,7 +2736,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 async function scaffoldFullstackReadme(projectDir, projectName) {
   const readme = `# ${projectName}
 
-Full-stack application built with **[Kozo](https://github.com/zazzo9039/kozojs)** \u2014 React + Vite frontend with SSR support and a Kozo/Hono API backend.
+Full-stack application built with **[Kozo](https://github.com/zazzo9039/kozo)** \u2014 React + Vite frontend with SSR support and a Kozo/Hono API backend.
 
 ## Stack
 
@@ -2925,7 +2933,7 @@ ${auth ? "JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars\n" : ""}`;
     },
     dependencies: {
       "@kozojs/core": kozoCoreDep,
-      ...auth && { "@kozojs/auth": kozoCoreDep === "workspace:*" ? "workspace:*" : "^0.1.0" },
+      ...auth && { "@kozojs/auth": kozoCoreDep === "workspace:*" ? "workspace:*" : "^0.5.21" },
       hono: "^4.12.5",
       zod: "^4.0.0",
       dotenv: "^16.4.0",
@@ -2961,17 +2969,15 @@ ${auth ? "JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars\n" : ""}`;
     exclude: ["node_modules", "dist"]
   };
   await import_fs_extra4.default.writeJSON(import_node_path4.default.join(apiDir, "tsconfig.json"), tsconfig, { spaces: 2 });
-  const authImport = auth ? `import { authenticateJWT } from '@kozojs/auth';
+  const authImport = auth ? `import { jwtGuard } from '@kozojs/auth';
 ` : "";
   const authMiddleware = auth ? `
-// JWT protects all /api/* routes except public ones
+// JWT protects all /api/* routes except public ones.
+// app.guard runs on BOTH transports (listen + nativeListen) at native speed.
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
-const _jwt = authenticateJWT(JWT_SECRET, { prefix: '' });
-const publicPaths = ['/api/auth/', '/api/health', '/api/stats'];
-app.getApp().use('/api/*', (c, next) => {
-  if (publicPaths.some(p => c.req.path.startsWith(p))) return next();
-  return _jwt(c, next);
-});
+app.guard('/api/*', jwtGuard(JWT_SECRET, {
+  publicPaths: ['/api/auth', '/api/health', '/api/stats'],
+}));
 ` : "";
   const listenCode = ssr ? `await app.listenSsr(PORT, {
   root: join(__dirname, '../../web'),
@@ -3505,7 +3511,7 @@ export default async ({ body }: { body: { email: string; password: string } }) =
 async function scaffoldProject(options) {
   const { projectName, runtime, database, dbPort, auth, packageSource, template, frontend, ssr, extras } = options;
   const projectDir = import_node_path5.default.resolve(process.cwd(), projectName);
-  const kozoCoreDep = packageSource === "local" ? "workspace:*" : "^0.3.24";
+  const kozoCoreDep = packageSource === "local" ? "workspace:*" : "^0.5.21";
   if (frontend !== "none") {
     await scaffoldFullstackProject(projectDir, projectName, kozoCoreDep, runtime, database, dbPort, auth, frontend, extras, template, ssr);
     return;
@@ -3917,8 +3923,11 @@ var import_glob = require("glob");
 var import_node_path6 = require("path");
 var import_node_fs = require("fs");
 var HTTP_METHODS = ["get", "post", "put", "patch", "delete"];
+function normalizeRouteFilePath(filePath) {
+  return filePath.replace(/\\/g, "/");
+}
 function fileToRoute(filePath) {
-  const normalized = filePath.replace(/\\/g, "/");
+  const normalized = normalizeRouteFilePath(filePath);
   const lastDot = normalized.lastIndexOf(".");
   const withoutExt = lastDot !== -1 ? normalized.slice(0, lastDot) : normalized;
   const parts = withoutExt.split("/").filter(Boolean);
@@ -3990,7 +3999,7 @@ async function scanRoutes(options) {
       path: parsed.path,
       method: parsed.method,
       handler: absolutePath,
-      relativePath: file,
+      relativePath: normalizeRouteFilePath(file),
       params,
       hasBodySchema,
       hasQuerySchema
@@ -4012,12 +4021,13 @@ async function scanMiddleware(options) {
     nodir: true
   });
   const middlewares = files.map((file) => {
-    const dir = file.replace(/\\/g, "/").replace(/\/_middleware\.(ts|js)$/, "").replace(/_middleware\.(ts|js)$/, "");
+    const normalized = normalizeRouteFilePath(file);
+    const dir = normalized.replace(/\/_middleware\.(ts|js)$/, "").replace(/_middleware\.(ts|js)$/, "");
     const pathPrefix = dir ? `/${dir}/*` : "/*";
     return {
       pathPrefix,
       handler: (0, import_node_path6.join)(routesDir, file),
-      relativePath: file
+      relativePath: normalized
     };
   });
   middlewares.sort((a, b) => {
@@ -4231,7 +4241,7 @@ async function resolveKozoConfig(cwd = process.cwd()) {
     if (!await import_fs_extra7.default.pathExists(configPath)) continue;
     const mod = await import((0, import_node_url.pathToFileURL)(configPath).href);
     const definition = mod.default ?? mod.kozoApp;
-    if (!(definition == null ? void 0 : definition.types) || typeof definition.build !== "function") continue;
+    if (!definition?.types || typeof definition.build !== "function") continue;
     return { configPath, definition };
   }
   return null;
@@ -4242,10 +4252,10 @@ async function resolveKozoTypesRef(cwd) {
     if (!await import_fs_extra7.default.pathExists(full)) continue;
     const mod = await import((0, import_node_url.pathToFileURL)(full).href);
     const ref = mod.kozoTypes ?? mod.default;
-    if ((ref == null ? void 0 : ref.from) && (ref == null ? void 0 : ref.name)) return ref;
+    if (ref?.from && ref?.name) return ref;
   }
   const fromConfig = await resolveKozoConfig(cwd);
-  return (fromConfig == null ? void 0 : fromConfig.definition.types) ?? null;
+  return fromConfig?.definition.types ?? null;
 }
 async function generateKozoTypes(cwd = process.cwd()) {
   const types = await resolveKozoTypesRef(cwd);
@@ -4257,7 +4267,6 @@ async function generateKozoTypes(cwd = process.cwd()) {
   return outPath;
 }
 async function resolveBuildApp(cwd = process.cwd()) {
-  var _a;
   const fromConfig = await resolveKozoConfig(cwd);
   if (fromConfig) return () => fromConfig.definition.build();
   const legacy = ["src/app.ts", "src/app.js", "src/index.ts", "src/index.js"];
@@ -4265,7 +4274,7 @@ async function resolveBuildApp(cwd = process.cwd()) {
     const full = import_node_path9.default.join(cwd, rel);
     if (!await import_fs_extra7.default.pathExists(full)) continue;
     const mod = await import((0, import_node_url.pathToFileURL)(full).href);
-    const buildApp = mod.buildApp ?? ((_a = mod.default) == null ? void 0 : _a.build) ?? mod.default;
+    const buildApp = mod.buildApp ?? mod.default?.build ?? mod.default;
     if (typeof buildApp === "function") return buildApp;
   }
   return null;
@@ -4280,29 +4289,31 @@ async function devCommand() {
       throw new Error("No package.json found. Run this command in a Kozo project.");
     }
   });
-  await runStep(2, 5, "Checking dependencies...", async () => {
+  await runStep(2, 4, "Checking dependencies...", async () => {
     if (!import_fs_extra8.default.existsSync(import_path.default.join(process.cwd(), "node_modules"))) {
       throw new Error("Dependencies not installed. Run: pnpm install");
     }
-    await sleep(300);
   });
-  await runStep(3, 5, "Generating route types...", async () => {
-    const out = await generateKozoTypes(process.cwd());
-    if (out) await sleep(100);
+  await runStep(3, 4, "Generating route types...", async () => {
+    await generateKozoTypes(process.cwd());
   });
   const routesDir = resolveRoutesDir(process.cwd());
-  await runStep(4, 5, "Scanning routes...", async () => {
+  await runStep(4, 4, "Scanning routes...", async () => {
     if (routesDir) {
       await generateManifest({ routesDir, projectRoot: process.cwd(), cache: false, verbose: false });
     }
-    await sleep(300);
   });
-  await runStep(5, 5, "Starting server on port 3000...", async () => {
-    await sleep(200);
-  });
-  console.log(import_picocolors4.default.gray("\n\u2139  \u{1F440} Watching for file changes... (Ctrl+C to stop)\n"));
+  const entry = resolveEntry(process.cwd());
+  if (!entry) {
+    console.error(import_picocolors4.default.red('\n\u274C No dev entry found. Expected src/index.ts, src/main.ts, src/server.ts or index.ts (or a source-file "main" in package.json).'));
+    process.exit(1);
+  }
+  const entryRel = import_path.default.relative(process.cwd(), entry);
+  console.log(import_picocolors4.default.gray(`
+\u2139  Starting ${import_picocolors4.default.bold(entryRel)} (tsx watch) \u2014 the app prints its own URL.`));
+  console.log(import_picocolors4.default.gray("\u{1F440} Watching for file changes... (Ctrl+C to stop)\n"));
   console.log(import_picocolors4.default.dim("\u2500".repeat(50)) + "\n");
-  const child = (0, import_child_process.spawn)("npx", ["tsx", "watch", "src/index.ts"], {
+  const child = (0, import_child_process.spawn)("npx", ["tsx", "watch", entryRel], {
     stdio: "inherit",
     shell: true,
     cwd: process.cwd(),
@@ -4380,6 +4391,24 @@ function resolveRoutesDir(cwd) {
   }
   return null;
 }
+function resolveEntry(cwd) {
+  try {
+    const pkg = JSON.parse(import_fs_extra8.default.readFileSync(import_path.default.join(cwd, "package.json"), "utf-8"));
+    for (const field of [pkg.main, pkg.module]) {
+      if (typeof field === "string" && /\.(t|j)sx?$/.test(field)) {
+        const p3 = import_path.default.join(cwd, field);
+        if (import_fs_extra8.default.existsSync(p3)) return p3;
+      }
+    }
+  } catch {
+  }
+  const candidates = ["src/index.ts", "src/main.ts", "src/server.ts", "index.ts", "src/index.js"];
+  for (const c of candidates) {
+    const p3 = import_path.default.join(cwd, c);
+    if (import_fs_extra8.default.existsSync(p3)) return p3;
+  }
+  return null;
+}
 function printBox2(title) {
   const width = 50;
   const pad = Math.floor((width - title.length) / 2);
@@ -4401,9 +4430,6 @@ async function runStep(step2, total, label, fn) {
   Error: ${err.message}`));
     process.exit(1);
   }
-}
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // src/commands/generate.ts
@@ -4706,7 +4732,7 @@ async function routesCommand(opts) {
   );
   for (const r of routes.sort((a, b) => a.path.localeCompare(b.path))) {
     const meta = readMeta(r.handler);
-    const auth = (meta == null ? void 0 : meta.auth) === false ? import_picocolors6.default.green("public") : (meta == null ? void 0 : meta.auth) === true ? import_picocolors6.default.yellow("required") : import_picocolors6.default.dim("jwt*");
+    const auth = meta?.auth === false ? import_picocolors6.default.green("public") : meta?.auth === true ? import_picocolors6.default.yellow("required") : import_picocolors6.default.dim("jwt*");
     console.log(
       import_picocolors6.default.cyan(r.method.toUpperCase().padEnd(colMethod)) + r.path.padEnd(colPath) + auth.padEnd(12) + import_picocolors6.default.dim(r.relativePath)
     );
@@ -4827,7 +4853,9 @@ async function copyTemplate(template, dest, projectName) {
   if (await import_fs_extra12.default.pathExists(dest)) {
     throw new Error(`Destination already exists: ${dest}`);
   }
-  await import_fs_extra12.default.copy(src, dest, { filter: (p3) => !p3.includes("node_modules") });
+  await import_fs_extra12.default.copy(src, dest, {
+    filter: (p3) => !import_node_path14.default.relative(src, p3).split(import_node_path14.default.sep).includes("node_modules")
+  });
   await replaceInTree(dest, "{{PROJECT_NAME}}", projectName);
 }
 
@@ -4861,8 +4889,9 @@ ${import_picocolors9.default.dim("Generate client:")} ${import_picocolors9.defau
 // package.json
 var package_default = {
   name: "@kozojs/cli",
-  version: "0.5.8",
-  description: "CLI to scaffold new Kozo Framework projects - The next-gen TypeScript Backend Framework",
+  version: "0.5.21",
+  description: "Scaffold a Kozo backend \u2014 file-system routes, services and auth, structured from day one.",
+  type: "commonjs",
   bin: {
     "create-kozo": "./lib/index.js",
     kozo: "./lib/index.js"
@@ -4897,16 +4926,16 @@ var package_default = {
   license: "MIT",
   repository: {
     type: "git",
-    url: "https://github.com/zazzo9039/kozojs.git"
+    url: "https://github.com/zazzo9039/kozo.git"
   },
-  homepage: "https://github.com/zazzo9039/kozojs#readme",
-  bugs: "https://github.com/zazzo9039/kozojs/issues",
+  homepage: "https://github.com/zazzo9039/kozo#readme",
+  bugs: "https://github.com/zazzo9039/kozo/issues",
   engines: {
-    node: ">=18.0.0"
+    node: ">=20.19.0"
   },
   dependencies: {
     "@clack/prompts": "^0.8.0",
-    "@kozojs/core": "workspace:*",
+    "@kozojs/core": "workspace:^",
     commander: "^12.0.0",
     picocolors: "^1.1.0",
     execa: "^9.5.0",
@@ -4927,7 +4956,7 @@ var package_default = {
 var program = new import_commander.Command();
 program.name("kozo").description("CLI to scaffold new Kozo Framework projects").version(package_default.version);
 program.argument("[project-name]", "Name of the project").option("-t, --template <name>", `Starter template: ${["minimal", "file-routing", "fullstack-ssr"].join(", ")}`).option("--no-install", "Skip pnpm install after scaffolding").action(async (projectName, opts) => {
-  if (opts == null ? void 0 : opts.template) {
+  if (opts?.template) {
     if (!projectName) {
       console.error("Project name is required with --template");
       process.exit(1);

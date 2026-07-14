@@ -25,9 +25,9 @@
 //   else      { /* fall back to node:http */ }
 // ============================================================================
 
-import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer as netCreateServer } from 'node:net';
-import { KozoError } from './errors.js';
+import { UTF8_DECODER, chunksToUtf8 } from './body-read.js';
+import { KozoError, bodyTooLargeJson } from './errors.js';
 import type { KozoWebSocket, WebSocketHandler, WsRouteEntry } from './ws.js';
 
 // ── Minimal uWS type surface ─────────────────────────────────────────────────
@@ -58,6 +58,8 @@ export interface UwsHttpRes {
   onData(cb: (chunk: ArrayBuffer, isLast: boolean) => void): UwsHttpRes;
   onAborted(cb: () => void): UwsHttpRes;
   upgrade(userData: any, secWsKey: string, secWsProtocol: string, secWsExtensions: string, context: unknown): void;
+  /** Valid only during the current uWS callback — decode synchronously. */
+  getRemoteAddressAsText(): ArrayBuffer;
 }
 
 /**
@@ -139,13 +141,6 @@ const BODY_503 = JSON.stringify({
   title: 'Service Unavailable',
   status: 503,
   detail: 'Server is shutting down, please retry later',
-});
-
-const BODY_413 = JSON.stringify({
-  type: 'about:blank',
-  title: 'Payload Too Large',
-  status: 413,
-  detail: 'Request body exceeds maximum allowed size',
 });
 
 /** Default max request body size (1 MB). Can be overridden via UwsDispatchOptions. */
@@ -316,93 +311,13 @@ export function uwsWrite404(uwsRes: UwsHttpRes): void {
   });
 }
 
-// ============================================================================
-// Shim factories
-// ============================================================================
-
-/**
- * Lightweight fake ServerResponse.
- *
- * Our compiled handlers call:
- *   res.writeHead(status, [key, val, key, val, …])
- *   res.end(body)
- *
- * We capture the status + flat header array and flush everything via a single
- * uWS cork() call — zero extra syscalls.
- */
-export function makeShimRes(uwsRes: UwsHttpRes): ServerResponse {
-  let _status = 200;
-  let _headers: string[] = [];
-
-  return {
-    writeHead(status: number, headers: string[]) {
-      _status = status;
-      _headers = headers;
-    },
-    end(body: string = '') {
-      uwsCorkWrite(uwsRes, () => {
-        uwsRes.writeStatus(STATUS_TEXT[_status] ?? String(_status));
-        for (let i = 0; i + 1 < _headers.length; i += 2) {
-          // Skip Content-Length — uWS auto-computes it from the body passed to end().
-          // Writing it manually would cause a "Duplicate Content-Length" parse error.
-          if (_headers[i] === 'Content-Length') continue;
-          uwsRes.writeHeader(_headers[i], _headers[i + 1]);
-        }
-        uwsSafeEnd(uwsRes, body);
-      });
-    },
-  } as unknown as ServerResponse;
-}
-
-/**
- * Lightweight fake IncomingMessage for no-body routes (GET, DELETE, …).
- *
- * The compiled S1/S2 handlers only access req.method and req.url — nothing
- * else. We allocate a plain object with just those two fields.
- */
-export function makeShimReqNoBody(method: string, url: string): IncomingMessage {
-  return { method, url } as unknown as IncomingMessage;
-}
-
-/**
- * Lightweight fake IncomingMessage for body routes (POST, PUT, PATCH).
- *
- * readNativeBody() in compiler.ts does:
- *   req.on('data', chunk => …)
- *   req.on('end',  ()    => …)
- *   req.on('error', e   => …)
- *
- * We pre-buffer the body from uWS's onData, then replay it as a Node stream
- * using queueMicrotask so the Promise in readNativeBody resolves correctly.
- */
-export function makeShimReqWithBody(method: string, url: string, rawBody: string): IncomingMessage {
-  const dataListeners: Array<(chunk: Buffer) => void> = [];
-  const endListeners: Array<() => void> = [];
-  let scheduled = false;
-
-  function scheduleEmit() {
-    if (scheduled) return;
-    scheduled = true;
-    queueMicrotask(() => {
-      const buf = rawBody ? Buffer.from(rawBody, 'utf8') : null;
-      if (buf) for (const l of dataListeners) l(buf);
-      for (const l of endListeners) l();
-      // Clear listener arrays after emit to prevent memory leaks
-      dataListeners.length = 0;
-      endListeners.length = 0;
-    });
+/** Capture client IP synchronously — uWS invalidates the buffer after the callback. */
+export function readUwsRemoteAddress(uwsRes: UwsHttpRes): string {
+  try {
+    return UTF8_DECODER.decode(uwsRes.getRemoteAddressAsText());
+  } catch {
+    return '';
   }
-
-  return {
-    method,
-    url,
-    on(event: string, listener: Function) {
-      if (event === 'data') { dataListeners.push(listener as any); scheduleEmit(); }
-      else if (event === 'end') { endListeners.push(listener as any); scheduleEmit(); }
-      // 'error' listeners intentionally ignored — uWS aborts are handled separately
-      return this;
-    },
-  } as unknown as IncomingMessage;
 }
 
 // ============================================================================
@@ -425,6 +340,11 @@ export type UwsNativeHandler = (
   rawBody: string,
   params: Record<string, string>,
   corsHeaders?: CorsHeaders,
+  reqHeaders?: Record<string, string>,
+  /** Client IP captured synchronously from uWS (empty when unavailable). */
+  remoteAddress?: string,
+  /** Authenticated user attached by a guard chain (see guard.ts). */
+  user?: unknown,
 ) => void | Promise<void>;
 
 export interface UwsRouteEntry {
@@ -434,8 +354,104 @@ export interface UwsRouteEntry {
   handler: UwsNativeHandler;
 }
 
+// ============================================================================
+// Hono middleware bridge
+// ============================================================================
+
+/**
+ * True when a Hono middleware pattern can match requests served by a route
+ * pattern. Used by `nativeListen()` to decide which routes must be bridged
+ * through the Hono pipeline so `app.middleware()` handlers (auth, rate
+ * limits, CORS, …) keep running under the uWS transport.
+ *
+ * Conservative by design: `:params` on either side match anything, so a
+ * route is bridged whenever the pattern COULD apply to one of its requests.
+ */
+export function middlewarePatternOverlaps(pattern: string, routePath: string): boolean {
+  if (pattern === '*' || pattern === '/*') return true;
+  const p = pattern.split('/').filter(Boolean);
+  const r = routePath.split('/').filter(Boolean);
+  for (let i = 0; i < p.length; i++) {
+    const ps = p[i];
+    if (ps === '*') return true; // wildcard consumes the rest of the path
+    const rs = r[i];
+    if (rs === undefined) return false; // route is shorter than the pattern
+    if (ps.startsWith(':') || rs.startsWith(':')) continue;
+    if (ps !== rs) return false;
+  }
+  return p.length === r.length;
+}
+
+/** Copy Fetch response headers onto uWS — one writeHeader per Set-Cookie value. */
+function writeFetchHeadersToUws(uwsRes: UwsHttpRes, responseHeaders: Headers): void {
+  const setCookies =
+    typeof responseHeaders.getSetCookie === 'function'
+      ? responseHeaders.getSetCookie()
+      : [];
+
+  responseHeaders.forEach((v, k) => {
+    const lower = k.toLowerCase();
+    if (lower === 'content-length' || lower === 'set-cookie') return;
+    uwsRes.writeHeader(k, v);
+  });
+
+  if (setCookies.length > 0) {
+    for (const cookie of setCookies) uwsRes.writeHeader('Set-Cookie', cookie);
+    return;
+  }
+
+  const legacy = responseHeaders.get('set-cookie');
+  if (legacy) uwsRes.writeHeader('Set-Cookie', legacy);
+}
+
+/**
+ * UwsNativeHandler that forwards the request to the Hono fetch pipeline —
+ * middlewares included — and writes the Response back through cork().
+ *
+ * This is the correctness path: routes covered by `app.middleware()` get the
+ * exact same semantics as `listen()`. Uncovered routes keep the zero-shim
+ * native path, so the bridge costs nothing where no middleware applies.
+ *
+ * Limitations (by design): request and response bodies are buffered in full
+ * before/after the Hono pipeline — no SSE or chunked streaming. Prefer
+ * `listen()` or a zero-shim native route for streaming responses.
+ */
+export function makeUwsHonoBridge(
+  method: string,
+  honoFetch: (req: Request) => Response | Promise<Response>,
+): UwsNativeHandler {
+  const canHaveBody = !NO_BODY_METHODS.has(method);
+  return async (uwsRes, url, rawBody, _params, corsHeaders, reqHeaders) => {
+    try {
+      const headers = new Headers();
+      if (reqHeaders) for (const k in reqHeaders) headers.set(k, reqHeaders[k]);
+      const request = new Request(`http://kozo.uws${url}`, {
+        method,
+        headers,
+        body: canHaveBody && rawBody.length > 0 ? rawBody : undefined,
+      });
+      const response = await honoFetch(request);
+      const body =
+        response.status === 204 || response.status === 304 ? undefined : await response.text();
+      uwsCorkWrite(uwsRes, () => {
+        uwsRes.writeStatus(STATUS_TEXT[response.status] ?? String(response.status));
+        writeFetchHeadersToUws(uwsRes, response.headers);
+        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        uwsSafeEnd(uwsRes, body);
+      });
+    } catch {
+      uwsFastWrite500(uwsRes, corsHeaders);
+    }
+  };
+}
+
 export interface UwsCorsConfig {
-  origin?: string;
+  /**
+   * Allowed origin. A single string is injected statically; an array enables
+   * per-request origin echo (the request's Origin header is reflected when it
+   * is in the list, with `Vary: Origin`).
+   */
+  origin?: string | string[];
   methods?: string;
   headers?: string;
   maxAge?: number;
@@ -483,15 +499,32 @@ const UWS_METHOD: Record<string, string> = {
 
 // ── CORS + shutdown helpers ──────────────────────────────────────────────────
 
-function buildCorsHeaders(cfg: UwsCorsConfig): [string, string][] {
-  const h: [string, string][] = [
-    ['Access-Control-Allow-Origin', cfg.origin ?? '*'],
+function buildCorsHeadersFor(cfg: UwsCorsConfig, origin: string): CorsHeaders {
+  const h: CorsHeaders = [
+    ['Access-Control-Allow-Origin', origin],
     ['Access-Control-Allow-Methods', cfg.methods ?? 'GET,POST,PUT,PATCH,DELETE,OPTIONS'],
     ['Access-Control-Allow-Headers', cfg.headers ?? 'Content-Type,Authorization'],
   ];
+  if (Array.isArray(cfg.origin)) h.push(['Vary', 'Origin']);
   if (cfg.maxAge != null) h.push(['Access-Control-Max-Age', String(cfg.maxAge)]);
   if (cfg.credentials) h.push(['Access-Control-Allow-Credentials', 'true']);
   return h;
+}
+
+/**
+ * Per-request CORS resolver for origin lists: echoes the request Origin when
+ * allowed, otherwise emits no CORS headers (browser blocks the response).
+ * Header arrays are cached per origin — the list is small and static.
+ */
+function makeCorsResolver(cfg: UwsCorsConfig): (origin: string | undefined) => CorsHeaders | undefined {
+  const allowed = cfg.origin as string[];
+  const cache = new Map<string, CorsHeaders>();
+  return (origin) => {
+    if (!origin || !allowed.includes(origin)) return undefined;
+    let h = cache.get(origin);
+    if (!h) { h = buildCorsHeadersFor(cfg, origin); cache.set(origin, h); }
+    return h;
+  };
 }
 
 /**
@@ -512,34 +545,44 @@ function attachAbortGuard(uwsRes: UwsHttpRes): void {
   });
 }
 
+function collectReqHeaders(uwsReq: UwsHttpReq): Record<string, string> {
+  const headers: Record<string, string> = {};
+  uwsReq.forEach((k, v) => { headers[k.toLowerCase()] = v; });
+  return headers;
+}
+
 function wrapHandler(
   h: UwsNativeHandler,
-  corsHeaders: [string, string][] | null,
+  corsHeaders: CorsHeaders | null,
   isShuttingDown?: () => boolean,
   trackRequest?: () => () => void,
+  corsResolver?: ((origin: string | undefined) => CorsHeaders | undefined) | null,
 ): UwsNativeHandler {
-  return (uwsRes, url, rawBody, params, corsHeadersArg) => {
+  return (uwsRes, url, rawBody, params, corsHeadersArg, reqHeaders, remoteAddress, user) => {
+    const cors =
+      corsHeadersArg ??
+      (corsResolver ? corsResolver(reqHeaders?.origin) : corsHeaders ?? undefined);
+
     // Reject during graceful shutdown
     if (isShuttingDown?.()) {
       uwsCorkWrite(uwsRes, () => {
         uwsRes.writeStatus('503 Service Unavailable');
         uwsRes.writeHeader('Content-Type', CT_PROBLEM);
-        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        if (cors) for (const [k, v] of cors) uwsRes.writeHeader(k, v);
         uwsSafeEnd(uwsRes, BODY_503);
       });
       return;
     }
 
     attachAbortGuard(uwsRes);
-    const cors = corsHeadersArg ?? corsHeaders ?? undefined;
 
     if (!trackRequest) {
-      return h(uwsRes, url, rawBody, params, cors);
+      return h(uwsRes, url, rawBody, params, cors, reqHeaders, remoteAddress, user);
     }
 
     const untrack = trackRequest();
     try {
-      const result = h(uwsRes, url, rawBody, params, cors);
+      const result = h(uwsRes, url, rawBody, params, cors, reqHeaders, remoteAddress, user);
       if (result && typeof (result as any).then === 'function') {
         (result as Promise<void>).then(untrack, untrack);
       } else {
@@ -665,13 +708,13 @@ function buildWsBehavior<T>(handler: WebSocketHandler<T>): UwsWebSocketBehavior 
       // Capture remoteAddress SYNCHRONOUSLY in the 'open' callback.
       // The ArrayBuffer from getRemoteAddressAsText() is only valid during this callback.
       // Storing it lazily in a getter would cause memory corruption if accessed after an await.
-      const remoteAddress = new TextDecoder().decode(ws.getRemoteAddressAsText());
+      const remoteAddress = UTF8_DECODER.decode(ws.getRemoteAddressAsText());
 
       if (handler.open) handler.open(getOrCreateWrapper<T>(ws, remoteAddress));
     },
     message(ws, message, isBinary) {
       if (handler.message) {
-        const data = isBinary ? message : new TextDecoder().decode(message);
+        const data = isBinary ? message : UTF8_DECODER.decode(message);
         // remoteAddress was already captured in 'open', wrapper is cached
         const wrapped = wsWrappers.get(ws);
         if (wrapped && handler.message) {
@@ -705,21 +748,96 @@ function buildWsBehavior<T>(handler: WebSocketHandler<T>): UwsWebSocketBehavior 
  * Returns { port, server } matching the nativeListen contract.
  */
 export async function createUwsServer(opts: UwsDispatchOptions): Promise<{ port: number; server: { close(): void } }> {
+  // uWS does not support ephemeral port 0 — we grab a free port via node:net
+  // first. That is inherently racy (another process can claim the port between
+  // release and uWS bind), so ephemeral binds retry with a fresh port.
+  const ephemeral = opts.port === 0;
+  const attempts = ephemeral ? 5 : 1;
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    const port = ephemeral ? await getFreePort() : opts.port;
+    try {
+      return await listenUwsOnPort(opts, port);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+/** One concrete uWS registration derived from a route pattern. */
+export interface UwsPatternVariant {
+  /** uWS-compatible pattern (no `?` — uWS has no optional-param syntax). */
+  pattern: string;
+  /** Param names aligned with `pattern`, with any trailing `?` stripped. */
+  paramNames: string[];
+}
+
+/**
+ * Expand a route pattern into the concrete uWS registrations needed to mirror
+ * Hono's optional-param (`:id?`) semantics.
+ *
+ * uWS's C++ radix router has no optional-param syntax: `/opt/:id?` is taken
+ * literally, so the param name becomes `id?` (never read as `id`) and the
+ * id-absent form (`/opt`) never matches → 404. To match `listen()` we:
+ *   1. strip the trailing `?` from param names, and
+ *   2. emit one variant per trailing optional segment — both the form that
+ *      includes the segment (`/opt/:id`) and the form that omits it (`/opt`).
+ *
+ * Patterns without an optional param take a zero-cost fast path (the same
+ * `paramNames` reference is returned). Only *trailing* optional segments are
+ * made truly optional; a `?` on a non-trailing segment still has its name
+ * normalized but is not expanded into an absent form.
+ */
+export function expandUwsPatterns(path: string, paramNames: string[]): UwsPatternVariant[] {
+  if (!path.includes('?')) return [{ pattern: path, paramNames }];
+
+  const segs = path.split('/');
+  const isOptional = (seg: string): boolean => seg.startsWith(':') && seg.endsWith('?');
+  const patternOf = (slice: string[]): string =>
+    slice.map((s) => (isOptional(s) ? s.slice(0, -1) : s)).join('/') || '/';
+  const namesOf = (slice: string[]): string[] => {
+    const out: string[] = [];
+    for (const s of slice) {
+      if (s.startsWith(':')) out.push(s.slice(1, isOptional(s) ? -1 : undefined));
+    }
+    return out;
+  };
+
+  const variants: UwsPatternVariant[] = [];
+  let end = segs.length;
+  while (end > 0) {
+    const slice = segs.slice(0, end);
+    variants.push({ pattern: patternOf(slice), paramNames: namesOf(slice) });
+    if (isOptional(segs[end - 1])) end--;
+    else break;
+  }
+  return variants;
+}
+
+function listenUwsOnPort(opts: UwsDispatchOptions, port: number): Promise<{ port: number; server: { close(): void } }> {
   const { uws, routes, cors: corsConfig, isShuttingDown, trackRequest } = opts;
-  // uWS does not support ephemeral port 0 — find a free port via node:net first
-  const port = opts.port === 0 ? await getFreePort() : opts.port;
   const emptyParams = Object.freeze({}) as Record<string, string>;
-  const corsHeaders = corsConfig ? buildCorsHeaders(corsConfig) : null;
+  // Single origin (or '*') → static headers; origin list → per-request echo.
+  const corsResolver = corsConfig && Array.isArray(corsConfig.origin)
+    ? makeCorsResolver(corsConfig)
+    : null;
+  const corsHeaders = corsConfig && !corsResolver
+    ? buildCorsHeadersFor(corsConfig, (corsConfig.origin as string | undefined) ?? '*')
+    : null;
 
   return new Promise((resolve, reject) => {
     const uwsApp = uws.App();
 
     // ── CORS preflight handler ──────────────────────────────────────────
-    if (corsHeaders) {
-      uwsApp.options('/*', (uwsRes) => {
+    if (corsConfig) {
+      uwsApp.options('/*', (uwsRes, uwsReq) => {
+        const headers = corsResolver
+          ? corsResolver(uwsReq.getHeader('origin') || undefined)
+          : corsHeaders;
         uwsCorkWrite(uwsRes, () => {
           uwsRes.writeStatus('204 No Content');
-          for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+          if (headers) for (const [k, v] of headers) uwsRes.writeHeader(k, v);
           uwsSafeEnd(uwsRes);
         });
       });
@@ -730,31 +848,43 @@ export async function createUwsServer(opts: UwsDispatchOptions): Promise<{ port:
       const fn = UWS_METHOD[route.method];
       if (!fn) continue;
 
-      const h = wrapHandler(route.handler, corsHeaders, isShuttingDown, trackRequest);
-      const names = route.paramNames;
-      const hasParams = names.length > 0;
+      const h = wrapHandler(route.handler, corsHeaders, isShuttingDown, trackRequest, corsResolver);
       const noBody = NO_BODY_METHODS.has(route.method);
 
-      if (noBody && !hasParams) {
+      // A route with an optional param (`:id?`) expands into multiple uWS
+      // registrations — see expandUwsPatterns(). Non-optional routes yield a
+      // single variant, so this loop is zero-overhead for the common case.
+      for (const variant of expandUwsPatterns(route.path, route.paramNames)) {
+        const pattern = variant.pattern;
+        const names = variant.paramNames;
+        const hasParams = names.length > 0;
+
+        if (noBody && !hasParams) {
         // ── Fastest path: static GET/HEAD/DELETE/OPTIONS, no params ──────
-        (uwsApp as any)[fn](route.path, (uwsRes: UwsHttpRes, uwsReq: UwsHttpReq) => {
+        (uwsApp as any)[fn](pattern, (uwsRes: UwsHttpRes, uwsReq: UwsHttpReq) => {
+          const remoteAddress = readUwsRemoteAddress(uwsRes);
+          const reqHeaders = collectReqHeaders(uwsReq);
           const query = uwsReq.getQuery();
-          h(uwsRes, query ? `${uwsReq.getUrl()}?${query}` : uwsReq.getUrl(), '', emptyParams);
+          h(uwsRes, query ? `${uwsReq.getUrl()}?${query}` : uwsReq.getUrl(), '', emptyParams, undefined, reqHeaders, remoteAddress);
         });
 
       } else if (noBody && hasParams) {
         // ── GET/HEAD/DELETE with path params ─────────────────────────────
-        (uwsApp as any)[fn](route.path, (uwsRes: UwsHttpRes, uwsReq: UwsHttpReq) => {
+        (uwsApp as any)[fn](pattern, (uwsRes: UwsHttpRes, uwsReq: UwsHttpReq) => {
+          const remoteAddress = readUwsRemoteAddress(uwsRes);
+          const reqHeaders = collectReqHeaders(uwsReq);
           const rawPath = uwsReq.getUrl();
           const query   = uwsReq.getQuery();
           const params: Record<string, string> = {};
           for (let i = 0; i < names.length; i++) params[names[i]] = uwsReq.getParameter(i);
-          h(uwsRes, query ? `${rawPath}?${query}` : rawPath, '', params);
+          h(uwsRes, query ? `${rawPath}?${query}` : rawPath, '', params, undefined, reqHeaders, remoteAddress);
         });
 
       } else if (!hasParams) {
         // ── POST/PUT/PATCH without path params ──────────────────────────
-        (uwsApp as any)[fn](route.path, (uwsRes: UwsHttpRes, uwsReq: UwsHttpReq) => {
+        (uwsApp as any)[fn](pattern, (uwsRes: UwsHttpRes, uwsReq: UwsHttpReq) => {
+          const remoteAddress = readUwsRemoteAddress(uwsRes);
+          const reqHeaders = collectReqHeaders(uwsReq);
           const rawPath = uwsReq.getUrl();
           const query   = uwsReq.getQuery();
           const url     = query ? `${rawPath}?${query}` : rawPath;
@@ -772,22 +902,24 @@ export async function createUwsServer(opts: UwsDispatchOptions): Promise<{ port:
                 uwsCorkWrite(uwsRes, () => {
                   uwsRes.writeStatus('413 Payload Too Large');
                   uwsRes.writeHeader('Content-Type', CT_PROBLEM);
-                  uwsSafeEnd(uwsRes, BODY_413);
+                  uwsSafeEnd(uwsRes, bodyTooLargeJson(maxBody));
                 });
                 return;
               }
               chunks.push(Buffer.from(chunk));
             }
             if (isLast) {
-              const bodyStr = chunks.length ? Buffer.concat(chunks).toString('utf8') : '';
-              h(uwsRes, url, bodyStr, emptyParams);
+              const bodyStr = chunksToUtf8(chunks);
+              h(uwsRes, url, bodyStr, emptyParams, undefined, reqHeaders, remoteAddress);
             }
           });
         });
 
       } else {
         // ── POST/PUT/PATCH with path params ─────────────────────────────
-        (uwsApp as any)[fn](route.path, (uwsRes: UwsHttpRes, uwsReq: UwsHttpReq) => {
+        (uwsApp as any)[fn](pattern, (uwsRes: UwsHttpRes, uwsReq: UwsHttpReq) => {
+          const remoteAddress = readUwsRemoteAddress(uwsRes);
+          const reqHeaders = collectReqHeaders(uwsReq);
           const rawPath = uwsReq.getUrl();
           const query   = uwsReq.getQuery();
           const url     = query ? `${rawPath}?${query}` : rawPath;
@@ -807,18 +939,19 @@ export async function createUwsServer(opts: UwsDispatchOptions): Promise<{ port:
                 uwsCorkWrite(uwsRes, () => {
                   uwsRes.writeStatus('413 Payload Too Large');
                   uwsRes.writeHeader('Content-Type', CT_PROBLEM);
-                  uwsSafeEnd(uwsRes, BODY_413);
+                  uwsSafeEnd(uwsRes, bodyTooLargeJson(maxBody));
                 });
                 return;
               }
               chunks.push(Buffer.from(chunk));
             }
             if (isLast) {
-              const bodyStr = chunks.length ? Buffer.concat(chunks).toString('utf8') : '';
-              h(uwsRes, url, bodyStr, params);
+              const bodyStr = chunksToUtf8(chunks);
+              h(uwsRes, url, bodyStr, params, undefined, reqHeaders, remoteAddress);
             }
           });
         });
+      }
       }
     }
 
@@ -830,11 +963,12 @@ export async function createUwsServer(opts: UwsDispatchOptions): Promise<{ port:
     }
 
     // ── Catch-all 404 for unmatched routes ──────────────────────────────
-    uwsApp.any('/*', (uwsRes) => {
+    uwsApp.any('/*', (uwsRes, uwsReq) => {
+      const ch = corsResolver ? corsResolver(uwsReq.getHeader('origin') || undefined) : corsHeaders;
       uwsCorkWrite(uwsRes, () => {
         uwsRes.writeStatus('404 Not Found');
         uwsRes.writeHeader('Content-Type', CT_PROBLEM);
-        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        if (ch) for (const [k, v] of ch) uwsRes.writeHeader(k, v);
         uwsSafeEnd(uwsRes, BODY_404);
       });
     });

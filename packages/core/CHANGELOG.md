@@ -1,5 +1,19 @@
 # @kozojs/core
 
+## 0.5.10
+
+### Patch Changes
+
+- efefc5e: Restore compiled response serialization (`fast-json-stringify`) with defensive fallback, response contract enforcement for undeclared fields, and uWS body-read optimizations. Document behavior in README and CHANGELOG.
+
+## 0.5.10
+
+### Patch Changes
+
+- Restore **compiled response serialization** via `fast-json-stringify` when the Zod `response` schema is JSON-serializable; transparent `JSON.stringify` fallback for `z.any()`, `.transform()`, `z.date()`, and other schemas where `z.toJSONSchema` throws.
+- **Response contract enforcement:** routes with a `response` schema omit undeclared fields from JSON output — declare every field you return, or remove `response` for pass-through serialization.
+- Optimize uWS body reads (`chunksToUtf8` fast-path) and hoist `TextDecoder` for WebSocket handlers.
+
 ## 0.5.9
 
 ### Patch Changes

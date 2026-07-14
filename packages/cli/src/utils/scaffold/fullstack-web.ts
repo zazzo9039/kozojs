@@ -382,7 +382,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 export async function scaffoldFullstackReadme(projectDir: string, projectName: string): Promise<void> {
   const readme = `# ${projectName}
 
-Full-stack application built with **[Kozo](https://github.com/zazzo9039/kozojs)** — React + Vite frontend with SSR support and a Kozo/Hono API backend.
+Full-stack application built with **[Kozo](https://github.com/zazzo9039/kozo)** — React + Vite frontend with SSR support and a Kozo/Hono API backend.
 
 ## Stack
 

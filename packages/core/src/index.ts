@@ -4,7 +4,7 @@
 
 // Main exports
 export { Kozo, createKozo } from './app.js';
-export type { Plugin } from './app.js';
+export type { Plugin, MountDocsOptions } from './app.js';
 export { KozoGroup } from './app.js';
 export {
   defineKozoApp,
@@ -44,7 +44,7 @@ export type {
   InferResponse,
   Infer,
 } from './types.js';
-export { defineRoute } from './types.js';
+export { defineRoute, createRouteFactory } from './types.js';
 
 // Client SDK Generation
 export { generateTypedClient } from './client-generator.js';
@@ -134,6 +134,20 @@ export type {
   WebSocketHandler,
   WsUpgradeRequest,
 } from './ws.js';
+
+// Guards (transport-agnostic security — native speed under uWS)
+export {
+  guardToHonoMiddleware,
+  compileGuardPattern,
+} from './guard.js';
+export type {
+  KozoGuard,
+  GuardRequest,
+  GuardResult,
+  GuardOutcome,
+  GuardDeny,
+  GuardEntry,
+} from './guard.js';
 
 // Middleware
 export * from './middleware/index.js';

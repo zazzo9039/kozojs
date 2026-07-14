@@ -116,18 +116,23 @@ describe('Redis adapter: add + process', () => {
 
 describe('Redis adapter: events', () => {
   it('fires "completed" when job finishes', async () => {
-    const q = tracked(createRedisAdapter('evt-completed', { connection: REDIS_URL }));
+    const q = tracked(createRedisAdapter('evt-completed-' + Date.now(), { connection: REDIS_URL }));
 
     const completedPromise = new Promise<string>((resolve) => {
       q.on('completed', (job) => resolve(job.name));
     });
 
     await q.process(async () => 'done' as any);
+
+    // Small delay to let QueueEvents connect to Redis stream — without it the
+    // job can complete before the events consumer is attached and the event
+    // is lost (stream consumers only see events emitted after they connect).
+    await new Promise((r) => setTimeout(r, 200));
     await q.add('my-job', {});
 
     const name = await completedPromise;
     expect(name).toBe('my-job');
-  });
+  }, 15_000);
 
   it('fires "failed" when job exhausts retries', async () => {
     const q = tracked(

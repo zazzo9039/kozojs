@@ -1,16 +1,19 @@
 {
   "name": "@kozojs/db",
-  "version": "0.5.9",
-  "description": "Database utilities for Kozo Framework - Drizzle ORM integration",
+  "version": "0.5.21",
+  "description": "Drizzle ORM integration for Kozo — PostgreSQL & SQLite (query helpers); MySQL connection-only in 0.5.x",
   "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "license": "MIT",
   "author": "Kozo Team",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zazzo9039/kozojs.git"
+    "url": "https://github.com/zazzo9039/kozo.git"
   },
-  "homepage": "https://github.com/zazzo9039/kozojs#readme",
-  "bugs": "https://github.com/zazzo9039/kozojs/issues",
+  "homepage": "https://github.com/zazzo9039/kozo#readme",
+  "bugs": "https://github.com/zazzo9039/kozo/issues",
   "files": [
     "lib",
     "README.md"
@@ -19,9 +22,10 @@
   "types": "./lib/index.d.ts",
   "exports": {
     ".": {
-      "import": "./lib/index.js",
-      "types": "./lib/index.d.ts"
-    }
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build": "tsup",
@@ -36,6 +40,7 @@
     "drizzle-zod": "^0.8.3"
   },
   "devDependencies": {
+    "@kozojs/core": "workspace:*",
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
     "better-sqlite3": "^11.0.0",
@@ -47,6 +52,7 @@
     "vitest": "^2.1.0"
   },
   "peerDependencies": {
+    "@kozojs/core": "^0.5.21",
     "better-sqlite3": "^11.0.0",
     "mysql2": "^3.11.0",
     "postgres": "^3.4.0",

@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { createKozo } from '../src/app.js';
+import { NotFoundError } from '../src/errors.js';
 
 // ── Schema normalization ─────────────────────────────────────────────────
 
@@ -107,6 +108,33 @@ describe('Hono fetch integration', () => {
     expect(body).toEqual({ message: 'hi' });
   });
 
+  it('applies Zod coercion/transform on an array body', async () => {
+    const app = createKozo();
+    app.post('/nums', { body: z.array(z.coerce.number()) }, (ctx) => ({ sum: ctx.body.reduce((a, b) => a + b, 0) }));
+
+    const res = await app.fetch(new Request('http://localhost/nums', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(['1', '2', '3']),
+    }));
+    expect(res.status).toBe(200);
+    // Without in-place array rewrite the handler would see strings → '123' concat / NaN.
+    expect(await res.json()).toEqual({ sum: 6 });
+  });
+
+  it('applies ctx.header() even when the handler returns a value', async () => {
+    const app = createKozo();
+    app.get('/with-header', (ctx) => {
+      ctx.header('X-Custom', 'kozo');
+      return { ok: true };
+    });
+
+    const res = await app.fetch(new Request('http://localhost/with-header'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-custom')).toBe('kozo');
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
   it('validates body and returns 422 on invalid input', async () => {
     const app = createKozo();
     app.post('/users', { body: z.object({ name: z.string() }) }, (ctx) => ctx.json({ ok: true }));
@@ -156,5 +184,46 @@ describe('Hono fetch integration', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual({ name: 'Alice' });
+  });
+});
+
+// ── KozoConfig hooks ────────────────────────────────────────────────────────
+
+describe('KozoConfig hooks', () => {
+  it('onError can override the response', async () => {
+    const app = createKozo({
+      onError: (err) =>
+        new Response(JSON.stringify({ custom: err.message }), {
+          status: 418,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+    app.get('/fail', () => {
+      throw new Error('teapot');
+    });
+
+    const res = await app.fetch(new Request('http://localhost/fail'));
+    expect(res.status).toBe(418);
+    expect(await res.json()).toEqual({ custom: 'teapot' });
+  });
+
+  it('onError falls through to KozoError handling when hook returns undefined', async () => {
+    const app = createKozo({ onError: () => undefined });
+    app.get('/missing', () => {
+      throw new NotFoundError('gone');
+    });
+
+    const res = await app.fetch(new Request('http://localhost/missing'));
+    expect(res.status).toBe(404);
+  });
+
+  it('onNotFound can override the 404 response', async () => {
+    const app = createKozo({
+      onNotFound: () => new Response('custom-not-found', { status: 404 }),
+    });
+
+    const res = await app.fetch(new Request('http://localhost/does-not-exist'));
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe('custom-not-found');
   });
 });

@@ -1,7 +1,8 @@
 # @kozojs/db
 
-Drizzle ORM integration for [Kozo Framework](https://github.com/zazzo9039/kozojs).  
-Supports PostgreSQL, MySQL, and SQLite with a single unified API.
+Drizzle ORM integration for [Kozo Framework](https://github.com/zazzo9039/kozo).  
+Supports **PostgreSQL** and **SQLite** for production use (including query helpers).  
+**MySQL** is connection-only in 0.5.x — use raw Drizzle, not the built-in CRUD helpers.
 
 ## Install
 
@@ -30,11 +31,36 @@ await app.nativeListen(3000);
 
 ## Supported Providers
 
-| Provider | Config |
-|---|---|
-| **PostgreSQL** | `{ provider: 'postgresql', url: 'postgres://...' }` |
-| **MySQL** | `{ provider: 'mysql', url: 'mysql://...' }` |
-| **SQLite** | `{ provider: 'sqlite', file: './db.sqlite' }` |
+| Provider | Status in 0.5.x | Config |
+|---|---|---|
+| **PostgreSQL** | ✅ Production — full Drizzle + query helpers | `{ provider: 'postgresql', url: 'postgres://...' }` |
+| **SQLite** | ✅ Production — tests, local dev, embedded | `{ provider: 'sqlite', file: './db.sqlite' }` |
+| **MySQL** | ⚠️ **Connection only** — raw Drizzle queries | `{ provider: 'mysql', url: 'mysql://...' }` |
+
+### Query helpers: PostgreSQL & SQLite only
+
+The CRUD helpers (`insertOne`, `updateById`, `upsertOne`, `paginateTable`, …) target
+**PostgreSQL and SQLite**. They rely on Drizzle `.returning()` and Postgres-style
+`onConflictDoUpdate` — patterns MySQL does not support the same way.
+
+| Feature | PostgreSQL | SQLite | MySQL |
+|---|---|---|---|
+| `createDatabase()` + Drizzle queries | ✅ | ✅ | ✅ |
+| Query helpers (`insertOne`, …) | ✅ | ✅ | ❌ use raw Drizzle |
+| `upsertOne` | ✅ | ✅ | ❌ |
+| `isUniqueViolation` / conflict mapping | ✅ | ✅ | ✅ `ER_DUP_ENTRY` (0.5.20+) |
+
+**If you need MySQL today:** call `createDatabase({ provider: 'mysql', … })` and use
+Drizzle directly (`db.insert`, `db.select`, …). Do not use `@kozojs/db` write helpers
+until a future release adds a MySQL-specific path.
+
+Optional local smoke test (running MySQL instance):
+
+```bash
+MYSQL_TEST_URL=mysql://user:pass@127.0.0.1:3306/test pnpm --filter @kozojs/db test
+```
+
+When `MYSQL_TEST_URL` is set, `__tests__/mysql-integration.test.ts` runs `SELECT 1`.
 
 ## Testing
 

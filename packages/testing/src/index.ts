@@ -156,3 +156,69 @@ export function createTestApp<TServices extends Services = Services>(
 ): TestClient<TServices> {
   return createTestClient(createKozo(config));
 }
+
+// ============================================================================
+// Native (uWebSockets.js) transport test client
+// ============================================================================
+
+export interface NativeTestClient<TServices extends Services = Services>
+  extends TestClient<TServices> {
+  /** Port the native (uWebSockets.js) server is listening on. */
+  port: number;
+  /** Shut the native server down. Always call this (e.g. in afterEach/afterAll). */
+  close(): Promise<void>;
+}
+
+/**
+ * Boot the app on the native uWebSockets.js transport (`nativeListen`) and
+ * return a client that makes REAL HTTP requests to it.
+ *
+ * `createTestClient` exercises only the Hono (`listen()`) pipeline via
+ * `app.fetch`. Use this to test behavior that is specific to the native path —
+ * guards, `ctx.header()`, optional params, CORS — the way it actually runs in
+ * production under `nativeListen()`.
+ *
+ * Requires `uWebSockets.js` to be installed. Remember to call `close()`.
+ *
+ * @example
+ * ```ts
+ * const client = await createNativeTestClient(app);
+ * try {
+ *   const res = await client.get('/ping');
+ *   expect(res.status).toBe(200);
+ * } finally {
+ *   await client.close();
+ * }
+ * ```
+ */
+export async function createNativeTestClient<TServices extends Services = Services>(
+  app: Kozo<TServices>,
+): Promise<NativeTestClient<TServices>> {
+  const { port, server } = await app.nativeListen({ port: 0 });
+  const base = `http://127.0.0.1:${port}`;
+
+  // Rewrite the in-process Request onto the real server and use global fetch.
+  const fetchFn = async (req: Request): Promise<Response> => {
+    const u = new URL(req.url);
+    const method = req.method;
+    const body = method === 'GET' || method === 'HEAD' ? undefined : await req.text();
+    return fetch(base + u.pathname + u.search, { method, headers: req.headers, body });
+  };
+
+  let closed = false;
+  return {
+    app,
+    port,
+    async close() {
+      if (closed) return;
+      closed = true;
+      server.close();
+    },
+    inject: (opts) => doInject(fetchFn, opts),
+    get: (url, opts = {}) => doInject(fetchFn, { ...opts, method: 'GET', url }),
+    post: (url, body?, opts = {}) => doInject(fetchFn, { ...opts, method: 'POST', url, body }),
+    put: (url, body?, opts = {}) => doInject(fetchFn, { ...opts, method: 'PUT', url, body }),
+    patch: (url, body?, opts = {}) => doInject(fetchFn, { ...opts, method: 'PATCH', url, body }),
+    delete: (url, opts = {}) => doInject(fetchFn, { ...opts, method: 'DELETE', url }),
+  };
+}

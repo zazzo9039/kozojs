@@ -1,26 +1,44 @@
 # @kozojs/cli
 
-🔥 **Scaffolding CLI for the [Kozo Framework](https://github.com/zazzo9039/kozojs)** — the next-gen TypeScript backend framework with Zod-native validation and an optional uWebSockets.js transport.
+🔥 **Scaffold a [Kozo](https://github.com/zazzo9039/kozo) backend** — file-system routes, services and auth, structured from day one.
 
 ## Quick Start
 
 ```bash
-# One-shot (no install)
+# One-shot (no install) — interactive wizard
 npx @kozojs/cli my-app
+
+# Bundled starter (no prompts)
+npx @kozojs/cli my-app --template minimal
+npx @kozojs/cli my-app --template file-routing
+npx @kozojs/cli my-app --template fullstack-ssr
 
 # Or install globally
 npm install -g @kozojs/cli
 kozo my-app
 ```
 
+### Bundled templates (`--template`)
+
+| Template | Description |
+|---|---|
+| `minimal` | Smallest Kozo app — single entry, `nativeListen()` |
+| `file-routing` | File-system routes under `src/routes/` |
+| `fullstack-ssr` | React + Vite frontend with SSR and API backend |
+
+These ship inside the CLI package (`packages/cli/templates/`) and are copied as-is — no database/auth wizard.
+
 ## Commands
 
 ```bash
-kozo [project-name]        # scaffold a new project (interactive)
-kozo dev                   # dev server with hot reload + route watcher
-kozo build                 # build with tsup + optional routes manifest
-kozo generate <type> <name># scaffold route or middleware
-kozo g <type> <name>       # alias for generate
+kozo [project-name]              # scaffold (interactive or --template)
+kozo dev                         # dev server with hot reload + route watcher
+kozo build                       # tsup build + optional routes manifest
+kozo generate <type> <name>      # scaffold route or middleware
+kozo g <type> <name>             # alias for generate
+kozo routes                      # list discovered file-system routes
+kozo types                       # generate .kozo/types.d.ts from kozo.config.ts
+kozo gen:client                  # typed API client from registered routes
 ```
 
 ### `kozo build` flags
@@ -36,7 +54,7 @@ Any unrecognized flag is forwarded to `tsup`.
 
 ## Interactive Setup
 
-When you run `npx @kozojs/cli`, you'll be asked:
+When you run `npx @kozojs/cli` **without** `--template`, the wizard asks:
 
 1. **Project name** — lowercase letters, digits, hyphens
 2. **Target runtime** — `node` (default) / `cloudflare` / `bun`
@@ -50,6 +68,8 @@ When you run `npx @kozojs/cli`, you'll be asked:
 7. **SSR** — yes/no (when a frontend is selected)
 8. **Extras** — `docker`, `github-actions`
 9. **Install dependencies** — auto-runs `pnpm install`
+
+> **MySQL in scaffolds:** the wizard can scaffold MySQL, but `@kozojs/db` **query helpers are PostgreSQL/SQLite only** in 0.5.x — use raw Drizzle on MySQL or pick PostgreSQL. See [`@kozojs/db` README](../db/README.md#query-helpers-postgresql--sqlite-only).
 
 ## Generated Layout (Starter)
 
@@ -104,61 +124,25 @@ my-app/
 - `GET  /stats` — System stats
 - `GET  /health` — Health check
 
-## Zod-native API
-
-Kozo compiles your Zod schemas **once at startup** — no Ajv, no `eval`, no JSON-Schema intermediate step. The handler context (`ctx.body`, `ctx.query`, `ctx.params`) is fully typed.
-
-```typescript
-import { createKozo, z } from '@kozojs/core';
-
-const app = createKozo();
-
-const UserSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  email: z.string(),
-});
-
-const CreateUserSchema = z.object({
-  name: z.string().min(2),
-  email: z.string().email(),
-});
-
-app.get('/users', {
-  response: z.array(UserSchema),
-}, () => users);
-
-app.post('/users', {
-  body: CreateUserSchema,
-  response: UserSchema,
-}, (ctx) => ({
-  id: crypto.randomUUID(),
-  name: ctx.body.name,    // ✅ string
-  email: ctx.body.email,  // ✅ string
-}));
-
-app.get('/users/:id', {
-  params: z.object({ id: z.string() }),
-  response: UserSchema,
-}, (ctx) => users.find((u) => u.id === ctx.params.id));
-
-await app.listen(3000);
-```
-
 ## What you get out of the box
 
-- ✅ Zod-native validation (compiled at startup, no runtime parser hops)
+- ✅ Zod-native validation (compiled at startup)
 - ✅ Auto-generated OpenAPI 3.1 spec from your schemas
 - ✅ RFC 7807 problem-details error responses
 - ✅ File-system routing with per-directory `_middleware.ts`
 - ✅ Optional native C++ transport via `app.nativeListen()` (uWebSockets.js)
 - ✅ Graceful shutdown with database cleanup hooks
-- ✅ Typed client SDK generation via `app.generateClient()`
+- ✅ Typed client SDK generation via `kozo gen:client`
 
 ## Requirements
 
-- Node.js >= 18.0.0
+- Node.js >= 20.19.0 (matches `@kozojs/core`)
 - pnpm (recommended) or npm
+
+## See also
+
+- [`@kozojs/core`](../core/README.md) — API, guards, middleware, OpenAPI
+- [`@kozojs/auth`](../auth/README.md) — JWT guards for `nativeListen()`
 
 ## License
 

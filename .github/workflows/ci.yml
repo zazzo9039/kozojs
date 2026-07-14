@@ -1,32 +1,65 @@
 name: CI
 
+# Single workflow per push/PR: tests + integration + npm publish gate (pack/publint/smoke).
+# Publish to npm: gh workflow run ci.yml -f publish=true
+# Requires NPM_TOKEN secret for the publish job.
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish gate-validated tarballs to npm (skip versions already on the registry)'
+        type: boolean
+        default: false
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
+  changes:
+    name: Detect publishable changes
+    runs-on: ubuntu-latest
+    outputs:
+      publishable: ${{ steps.filter.outputs.publishable }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            publishable:
+              - 'packages/**'
+              - 'scripts/**'
+              - 'templates/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - '.github/workflows/ci.yml'
+
   test:
     name: Test (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node: ['20', '22']
+        node: ['20', '22', '24']
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.14.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
@@ -68,13 +101,13 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9.14.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: pnpm
@@ -90,3 +123,166 @@ jobs:
           REDIS_URL: redis://localhost:6379
           RABBITMQ_URL: amqp://guest:guest@localhost:5672
         run: pnpm --filter @kozojs/queue exec vitest run --config vitest.integration.config.ts
+
+  pack:
+    name: Pack · manifest check · publint · attw
+    needs: [changes, test, integration]
+    if: needs.changes.outputs.publishable == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.14.2
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build publishable packages
+        run: pnpm exec turbo run build --filter='./packages/*'
+
+      - name: Pack with pnpm (rewrites workspace:* — npm pack does NOT)
+        run: |
+          mkdir -p tarballs
+          for pkg in core db cli auth queue redis testing; do
+            (cd "packages/$pkg" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/tarballs")
+          done
+          ls -l tarballs
+
+      - name: 'No workspace:/file:/link: protocol left in packed manifests'
+        run: |
+          fail=0
+          for t in tarballs/*.tgz; do
+            tar -xOzf "$t" package/package.json > /tmp/manifest.json
+            node -e '
+              const m = require("/tmp/manifest.json");
+              const bad = [];
+              for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+                for (const [dep, spec] of Object.entries(m[field] ?? {})) {
+                  if (/^(workspace|file|link|portal):/.test(spec)) bad.push(field + "." + dep + " = " + spec);
+                }
+              }
+              if (bad.length) {
+                console.error("FAIL " + m.name + "@" + m.version);
+                for (const b of bad) console.error("  " + b);
+                process.exit(1);
+              }
+              console.log("ok - " + m.name + "@" + m.version);
+            ' || fail=1
+          done
+          exit $fail
+
+      - name: publint
+        run: |
+          fail=0
+          for t in tarballs/*.tgz; do
+            dir="$(mktemp -d)"
+            tar -xzf "$t" -C "$dir"
+            echo "---- publint: $(basename "$t")"
+            pnpm dlx publint@0.3 "$dir/package" || fail=1
+          done
+          exit $fail
+
+      - name: arethetypeswrong
+        run: |
+          fail=0
+          for t in tarballs/*.tgz; do
+            echo "---- attw: $(basename "$t")"
+            pnpm dlx @arethetypeswrong/cli@0.18 --profile esm-only "$t" || fail=1
+          done
+          exit $fail
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tarballs
+          path: tarballs/*.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke install (Node ${{ matrix.node }})
+    needs: pack
+    if: needs.pack.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: tarballs
+          path: tarballs
+
+      - name: Smoke @kozojs/core — install tarball in empty project, boot in-process
+        run: |
+          smoke="$RUNNER_TEMP/smoke-core"
+          mkdir -p "$smoke"
+          cp scripts/smoke-core.mjs "$smoke/"
+          cd "$smoke"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/tarballs/kozojs-core-*.tgz
+          node smoke-core.mjs
+
+      - name: Smoke @kozojs/cli — bin starts and scaffolds
+        run: |
+          smoke="$RUNNER_TEMP/smoke-cli"
+          mkdir -p "$smoke"
+          cd "$smoke"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund \
+            "$GITHUB_WORKSPACE"/tarballs/kozojs-cli-*.tgz \
+            "$GITHUB_WORKSPACE"/tarballs/kozojs-core-*.tgz
+          npx create-kozo --version
+          npx kozo --help > /dev/null
+          npx create-kozo smoke-app --template minimal --no-install
+          test -f smoke-app/package.json
+          echo "ok - scaffold produced smoke-app/package.json"
+
+  publish:
+    name: Publish to npm (gate-validated tarballs)
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: [pack, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: tarballs
+          path: tarballs
+
+      - name: Publish in dependency order (skip versions already on npm)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for pkg in core db auth queue redis testing cli; do
+            t="$(ls "$GITHUB_WORKSPACE"/tarballs/kozojs-"$pkg"-*.tgz)"
+            tar -xOzf "$t" package/package.json > /tmp/manifest.json
+            name=$(node -p 'require("/tmp/manifest.json").name')
+            version=$(node -p 'require("/tmp/manifest.json").version')
+            if [ -n "$(npm view "$name@$version" version 2>/dev/null || true)" ]; then
+              echo "skip - $name@$version already on the registry"
+              continue
+            fi
+            echo "publish - $name@$version"
+            npm publish "$t" --access public --provenance
+          done

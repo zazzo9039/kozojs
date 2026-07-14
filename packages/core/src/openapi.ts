@@ -1,5 +1,6 @@
 import type { RouteDefinition, RouteSchema, RouteMeta, HttpMethod } from './types.js';
 import { z } from 'zod';
+import { zodToJsonSchema } from './json-schema.js';
 
 // ============================================
 // OPENAPI TYPES
@@ -112,16 +113,6 @@ interface SecurityScheme {
 }
 
 // ============================================
-// ZOD TO JSON SCHEMA CONVERTER
-// Uses Zod v4 native z.toJSONSchema() — no external dependency needed
-// ============================================
-
-function zodToJsonSchema(zodSchema: z.ZodType): SchemaObject {
-  const { $schema, ...rest } = z.toJSONSchema(zodSchema) as Record<string, unknown>;
-  return rest as SchemaObject;
-}
-
-// ============================================
 // OPENAPI GENERATOR
 // ============================================
 
@@ -225,7 +216,7 @@ export class OpenAPIGenerator {
 
     // Add query parameters from schema
     if (schema?.query) {
-      const querySchema = zodToJsonSchema(schema.query as z.ZodType);
+      const querySchema = zodToJsonSchema(schema.query as z.ZodType) as SchemaObject;
       if (querySchema.properties) {
         for (const [name, propSchema] of Object.entries(querySchema.properties)) {
           operation.parameters!.push({
@@ -240,7 +231,7 @@ export class OpenAPIGenerator {
 
     // Add params schema override
     if (schema?.params) {
-      const paramsSchema = zodToJsonSchema(schema.params as z.ZodType);
+      const paramsSchema = zodToJsonSchema(schema.params as z.ZodType) as SchemaObject;
       if (paramsSchema.properties) {
         for (const [name, propSchema] of Object.entries(paramsSchema.properties)) {
           // Find and update existing param
@@ -260,7 +251,7 @@ export class OpenAPIGenerator {
         required: true,
         content: {
           'application/json': {
-            schema: zodToJsonSchema(schema.body as z.ZodType)
+            schema: zodToJsonSchema(schema.body as z.ZodType) as SchemaObject
           }
         }
       };
@@ -273,7 +264,7 @@ export class OpenAPIGenerator {
           description: this.getStatusDescription(parseInt(status)),
           content: {
             'application/json': {
-              schema: zodToJsonSchema(responseSchema as z.ZodType)
+              schema: zodToJsonSchema(responseSchema as z.ZodType) as SchemaObject
             }
           }
         };

@@ -10,5 +10,9 @@ app.get('/hello/:name', {
 }, (ctx) => ({ message: `Hello, ${ctx.params.name}!` }));
 
 const PORT = Number(process.env.PORT) || 3000;
-await app.listen(PORT);
+try {
+  await app.nativeListen(PORT);
+} catch {
+  await app.listen(PORT);
+}
 console.log(`🚀 {{PROJECT_NAME}} → http://localhost:${PORT}`);

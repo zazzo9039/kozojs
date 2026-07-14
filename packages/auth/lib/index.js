@@ -179,15 +179,104 @@ async function registerAuthBeforeLoadRoutes(app, secretOrPublicKey, options) {
     return jwtFn(c, next);
   });
 }
-function decodeTokenPayload(token) {
-  try {
-    const base64Payload = token.split(".")[1];
-    if (!base64Payload) return null;
-    const json = atob(base64Payload.replace(/-/g, "+").replace(/_/g, "/"));
-    return JSON.parse(json);
-  } catch {
-    return null;
+var UNAUTHORIZED = (detail) => ({
+  deny: {
+    status: 401,
+    body: { type: "about:blank", title: "Unauthorized", status: 401, detail }
   }
+});
+function jwtErrorDetail(error) {
+  switch (error?.code) {
+    case "ERR_JWT_EXPIRED":
+      return "Token has expired";
+    case "ERR_JWS_SIGNATURE_VERIFICATION_FAILED":
+      return "Invalid token signature";
+    case "ERR_JWT_CLAIM_VALIDATION_FAILED":
+      return error.message || "Token claim validation failed";
+    default:
+      return "Invalid or expired token";
+  }
+}
+function jwtGuard(secretOrPublicKey, options = {}) {
+  const {
+    publicPaths,
+    allowedAlgorithms = ["HS256", "HS384", "HS512"],
+    expectedClaims,
+    getKey
+  } = options;
+  const key = typeof secretOrPublicKey === "string" ? new TextEncoder().encode(secretOrPublicKey) : secretOrPublicKey;
+  const publicSet = publicPaths ? new Set(publicPaths) : null;
+  return async (req) => {
+    const isPublic = publicSet !== null && isPublicPath(req.path, publicSet);
+    const authHeader = req.header("authorization");
+    let token;
+    if (authHeader) {
+      const parts = authHeader.split(" ");
+      if (parts.length === 2 && parts[0]?.toLowerCase() === "bearer") token = parts[1];
+    }
+    if (!token) {
+      return isPublic ? void 0 : UNAUTHORIZED("Missing authentication token");
+    }
+    try {
+      const verifyOpts = { algorithms: allowedAlgorithms };
+      const { payload } = getKey ? await jwtVerify(token, getKey, verifyOpts) : await jwtVerify(token, key, verifyOpts);
+      if (expectedClaims) {
+        for (const [claim, value] of Object.entries(expectedClaims)) {
+          if (payload[claim] !== value) return UNAUTHORIZED(`Invalid claim: ${claim}`);
+        }
+      }
+      return { user: payload };
+    } catch (error) {
+      return UNAUTHORIZED(jwtErrorDetail(error));
+    }
+  };
+}
+function roleGuard(role) {
+  const allowed = Array.isArray(role) ? role : [role];
+  return (req) => {
+    const user = req.user;
+    if (!user) {
+      return {
+        deny: {
+          status: 401,
+          body: {
+            type: "https://kozo-docs.vercel.app/docs/core/errors#unauthorized",
+            title: "Unauthorized",
+            status: 401,
+            detail: "Authentication required"
+          }
+        }
+      };
+    }
+    const userRole = typeof user.role === "string" ? user.role : null;
+    const userRoles = Array.isArray(user.roles) ? user.roles : [];
+    if (allowed.some((r) => r === userRole || userRoles.includes(r))) return;
+    return {
+      deny: {
+        status: 403,
+        body: {
+          type: "https://kozo-docs.vercel.app/docs/core/errors#forbidden",
+          title: "Forbidden",
+          status: 403,
+          detail: "You do not have permission to access this resource"
+        }
+      }
+    };
+  };
+}
+async function registerAuthGuard(app, secretOrPublicKey, options) {
+  const { routesDir, extraPublicPaths = [], prefix = "/api", getToken: _ignored, optional: _ignored2, ...rest } = options;
+  const publicPaths = await collectPublicPaths(routesDir, extraPublicPaths);
+  app.guard(`${prefix}/*`, jwtGuard(secretOrPublicKey, {
+    publicPaths,
+    allowedAlgorithms: rest.allowedAlgorithms,
+    expectedClaims: rest.expectedClaims,
+    getKey: rest.getKey
+  }));
+}
+function decodeTokenPayload(token) {
+  const payload = decodeJWT(token);
+  return payload;
 }
 export {
   KozoError,
@@ -202,5 +291,8 @@ export {
   hasRole,
   isAuthenticated,
   isSelf,
-  registerAuthBeforeLoadRoutes
+  jwtGuard,
+  registerAuthBeforeLoadRoutes,
+  registerAuthGuard,
+  roleGuard
 };

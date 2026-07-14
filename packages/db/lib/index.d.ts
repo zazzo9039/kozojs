@@ -5,6 +5,7 @@ import * as drizzle_orm from 'drizzle-orm';
 import { SQL } from 'drizzle-orm';
 export { SQL, and, asc, avg, between, count, desc, eq, getTableColumns, gt, gte, ilike, inArray, isNotNull, isNull, like, lt, lte, max, min, ne, not, notBetween, notInArray, notLike, or, sql, sum } from 'drizzle-orm';
 export { createInsertSchema, createSchemaFactory, createSelectSchema, createUpdateSchema } from 'drizzle-zod';
+import { NotFoundError, ConflictError } from '@kozojs/core';
 
 /** Drizzle client — intentionally loose for cross-dialect compatibility. */
 type DbClient = any;
@@ -58,16 +59,15 @@ interface DeleteByIdResult {
     deleted: unknown;
 }
 
-/** Thrown when a expected row is not found (maps to HTTP 404 in app layer). */
-declare class RowNotFoundError extends Error {
+/** Thrown when an expected row is not found — maps to HTTP 404 via {@link NotFoundError}. */
+declare class RowNotFoundError extends NotFoundError {
     constructor(message?: string);
 }
-/** Thrown on unique constraint violations (maps to HTTP 409 in app layer). */
-declare class RowConflictError extends Error {
-    readonly code = "23505";
+/** Thrown on unique constraint violations — maps to HTTP 409 via {@link ConflictError}. */
+declare class RowConflictError extends ConflictError {
     constructor(message?: string);
 }
-/** Detect Postgres/SQLite unique constraint errors from Drizzle/driver. */
+/** Detect Postgres/SQLite/MySQL unique constraint errors from Drizzle/driver. */
 declare function isUniqueViolation(err: unknown): boolean;
 /** Re-throw as {@link RowConflictError} on unique violations; otherwise re-throws. */
 declare function rethrowConflict(err: unknown, message?: string): never;
@@ -162,6 +162,23 @@ interface PostgresConfig {
     /** Full connection URL, e.g. postgres://user:pass@host:5432/db */
     url: string;
     schema?: Record<string, unknown>;
+    /**
+     * Connection / pool / SSL options forwarded to postgres.js.
+     * Common keys: `max` (pool size), `idle_timeout`, `connect_timeout`,
+     * `max_lifetime`, `ssl`, `prepare`. See the postgres.js docs for the full set.
+     *
+     * @example
+     * { max: 20, idle_timeout: 30, ssl: 'require' }
+     */
+    options?: {
+        max?: number;
+        idle_timeout?: number;
+        connect_timeout?: number;
+        max_lifetime?: number;
+        ssl?: boolean | 'require' | 'allow' | 'prefer' | 'verify-full' | Record<string, unknown>;
+        prepare?: boolean;
+        [key: string]: unknown;
+    };
 }
 interface MysqlConfig {
     provider: 'mysql';
@@ -174,6 +191,16 @@ interface SqliteConfig {
     /** File path. Omit (or use ':memory:') for in-memory database. */
     file?: string;
     schema?: Record<string, unknown>;
+    /**
+     * Options forwarded to better-sqlite3, e.g. `{ readonly: true }`,
+     * `{ fileMustExist: true }`, `{ timeout: 5000 }`.
+     */
+    options?: {
+        readonly?: boolean;
+        fileMustExist?: boolean;
+        timeout?: number;
+        [key: string]: unknown;
+    };
 }
 type DatabaseConfig = PostgresConfig | MysqlConfig | SqliteConfig;
 type PostgresDatabase<TSchema extends Record<string, unknown> = Record<string, never>> = PostgresJsDatabase<TSchema>;

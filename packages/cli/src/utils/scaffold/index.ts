@@ -14,7 +14,7 @@ export async function scaffoldProject(options: ScaffoldOptions): Promise<void> {
   // Determine @kozo/core version based on source
   const kozoCoreDep = packageSource === 'local'
     ? 'workspace:*'
-    : '^0.3.24';
+    : '^0.5.21';
 
   // Handle fullstack with frontend FIRST (has priority over template type)
   if (frontend !== 'none') {

@@ -37,6 +37,26 @@ async function createUsersTable(db: Awaited<ReturnType<typeof createTestDatabase
   `);
 }
 
+describe('@kozojs/db — sqlite connection options', () => {
+  it('forwards options to better-sqlite3 (fileMustExist rejects a missing file)', async () => {
+    await expect(
+      createDatabase({
+        provider: 'sqlite',
+        file: './definitely-not-here-xyz.sqlite',
+        options: { fileMustExist: true },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('accepts an options object and still opens a working database', async () => {
+    const db = await createDatabase({ provider: 'sqlite', schema, options: { timeout: 1000 } });
+    await createUsersTable(db as Awaited<ReturnType<typeof createTestDatabase>>);
+    await db.insert(users).values({ name: 'Grace' });
+    const rows = await db.select().from(users);
+    expect(rows).toHaveLength(1);
+  });
+});
+
 describe('@kozojs/db — createTestDatabase', () => {
   it('returns an in-memory sqlite drizzle instance', async () => {
     const db = await createTestDatabase(schema);

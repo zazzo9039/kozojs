@@ -1,6 +1,6 @@
 # @kozojs/queue
 
-Multi-backend job queue integration for [Kozo](https://github.com/zazzo9039/kozojs) framework.  
+Multi-backend job queue integration for [Kozo](https://github.com/zazzo9039/kozo) framework.  
 Supports **Redis** (BullMQ) and **AMQP** (RabbitMQ) through a unified adapter interface.
 
 ## Install

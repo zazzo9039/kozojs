@@ -160,13 +160,14 @@ export function generateTypedClient(
     if (paramsType !== 'void') args.push(`params: ${paramsType}`);
     if (bodyType !== 'void') args.push(`body: ${bodyType}`);
     if (queryType !== 'void') args.push(`query?: ${queryType}`);
-    
+    args.push('init?: KozoRequestInit');
+
     const argsStr = args.join(', ');
     const returnType = `Promise<${responseType}>`;
-    
+
     // Generate method implementation
     let methodBody = `  async ${methodName}(${argsStr}): ${returnType} {\n`;
-    
+
     // Validation
     if (includeValidation && bodyType !== 'void') {
       const schemaVar = schemaVars.get(`${methodName}_body`);
@@ -176,7 +177,7 @@ export function generateTypedClient(
         methodBody += `    }\n`;
       }
     }
-    
+
     // URL construction
     let urlExpression = `\`\${this.baseUrl}${route.path}\``;
     if (pathParams.length > 0) {
@@ -184,34 +185,28 @@ export function generateTypedClient(
       const pathWithParams = route.path.replace(/:(\w+)/g, '${params.$1}');
       urlExpression = `\`\${this.baseUrl}${pathWithParams}\``;
     }
-    
+
     methodBody += `    let url = ${urlExpression};\n`;
-    
-    // Query string
+
+    // Query string (null/undefined values are dropped, not serialized as "undefined")
     if (queryType !== 'void') {
       methodBody += `    if (query) {\n`;
-      methodBody += `      const queryString = new URLSearchParams(query as any).toString();\n`;
-      methodBody += `      url += \`?\${queryString}\`;\n`;
+      methodBody += `      const qs = new URLSearchParams();\n`;
+      methodBody += `      for (const [k, v] of Object.entries(query)) {\n`;
+      methodBody += `        if (v !== undefined && v !== null) qs.set(k, String(v));\n`;
+      methodBody += `      }\n`;
+      methodBody += `      const queryString = qs.toString();\n`;
+      methodBody += `      if (queryString) url += \`?\${queryString}\`;\n`;
       methodBody += `    }\n`;
     }
-    
-    // Fetch options
-    methodBody += `    const options: RequestInit = {\n`;
-    methodBody += `      method: '${route.method.toUpperCase()}',\n`;
-    methodBody += `      headers: { ...this.defaultHeaders, 'Content-Type': 'application/json' },\n`;
-    if (bodyType !== 'void') {
-      methodBody += `      body: JSON.stringify(body),\n`;
-    }
-    methodBody += `    };\n`;
-    
-    // Execute request
-    methodBody += `    const response = await fetch(url, options);\n`;
-    methodBody += `    if (!response.ok) {\n`;
-    methodBody += `      throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);\n`;
-    methodBody += `    }\n`;
-    methodBody += `    return response.json();\n`;
+
+    // Delegate to the shared transport (auth, hooks, RFC 7807 errors)
+    const requestArgs = [`method: '${route.method.toUpperCase()}'`];
+    if (bodyType !== 'void') requestArgs.push('body');
+    requestArgs.push('signal: init?.signal', 'headers: init?.headers');
+    methodBody += `    return this.request(url, { ${requestArgs.join(', ')} });\n`;
     methodBody += `  }\n`;
-    
+
     methodImplementations.push(methodBody);
   }
 
@@ -230,27 +225,118 @@ export function generateTypedClient(
     code += schemaExports.join('\n') + '\n\n';
   }
 
-  // Client class
+  // Shared runtime: per-request init, RFC 7807 error, client options
+  code += `/** Per-request overrides accepted by every client method. */\n`;
+  code += `export interface KozoRequestInit {\n`;
+  code += `  signal?: AbortSignal;\n`;
+  code += `  headers?: Record<string, string>;\n`;
+  code += `}\n\n`;
+
+  code += `/** RFC 7807 problem details (application/problem+json). */\n`;
+  code += `export interface KozoProblemDetails {\n`;
+  code += `  type?: string;\n`;
+  code += `  title?: string;\n`;
+  code += `  status?: number;\n`;
+  code += `  detail?: string;\n`;
+  code += `  instance?: string;\n`;
+  code += `  [key: string]: unknown;\n`;
+  code += `}\n\n`;
+
+  code += `/** Thrown on every non-2xx response. Carries the parsed body and RFC 7807 fields. */\n`;
+  code += `export class KozoApiError extends Error {\n`;
+  code += `  readonly status: number;\n`;
+  code += `  readonly problem: KozoProblemDetails | null;\n`;
+  code += `  readonly body: unknown;\n\n`;
+  code += `  constructor(status: number, body: unknown) {\n`;
+  code += `    const problem = body !== null && typeof body === 'object' && !Array.isArray(body)\n`;
+  code += `      ? (body as KozoProblemDetails)\n`;
+  code += `      : null;\n`;
+  code += `    const title = problem && typeof problem.title === 'string' ? problem.title : null;\n`;
+  code += `    const message = problem && typeof (problem as { message?: unknown }).message === 'string'\n`;
+  code += `      ? (problem as { message: string }).message\n`;
+  code += `      : null;\n`;
+  code += `    super(title ?? message ?? 'API error ' + status);\n`;
+  code += `    this.name = 'KozoApiError';\n`;
+  code += `    this.status = status;\n`;
+  code += `    this.problem = problem;\n`;
+  code += `    this.body = body;\n`;
+  code += `  }\n`;
+  code += `}\n\n`;
+
   code += `export interface KozoClientOptions {\n`;
   code += `  baseUrl?: string;\n`;
   code += `  validateRequests?: boolean;\n`;
   code += `  defaultHeaders?: Record<string, string>;\n`;
+  code += `  /** Bearer token provider, called per request; skipped when it returns null/undefined. */\n`;
+  code += `  getToken?: () => string | null | undefined | Promise<string | null | undefined>;\n`;
+  code += `  /** Inspect/mutate url and headers right before the request is sent. */\n`;
+  code += `  onRequest?: (req: { url: string; method: string; headers: Record<string, string> }) => void | Promise<void>;\n`;
+  code += `  /** Called on 401 responses when a request was sent (e.g. clear session, redirect to login). */\n`;
+  code += `  onUnauthorized?: (error: KozoApiError) => void | Promise<void>;\n`;
+  code += `  /** Called for every non-2xx response, before the KozoApiError is thrown. */\n`;
+  code += `  onError?: (error: KozoApiError) => void | Promise<void>;\n`;
+  code += `  /** Custom fetch implementation (default: globalThis.fetch). */\n`;
+  code += `  fetch?: typeof fetch;\n`;
   code += `}\n\n`;
 
   code += `export class KozoClient {\n`;
   code += `  private baseUrl: string;\n`;
   code += `  private validateRequests: boolean;\n`;
-  code += `  private defaultHeaders: Record<string, string>;\n\n`;
-  
+  code += `  private defaultHeaders: Record<string, string>;\n`;
+  code += `  private getToken?: KozoClientOptions['getToken'];\n`;
+  code += `  private onRequest?: KozoClientOptions['onRequest'];\n`;
+  code += `  private onUnauthorized?: KozoClientOptions['onUnauthorized'];\n`;
+  code += `  private onError?: KozoClientOptions['onError'];\n`;
+  code += `  private fetchImpl: typeof fetch;\n\n`;
+
   code += `  constructor(options: KozoClientOptions = {}) {\n`;
   code += `    this.baseUrl = options.baseUrl || '${baseUrl}';\n`;
   code += `    this.validateRequests = options.validateRequests ?? ${validateByDefault};\n`;
   code += `    this.defaultHeaders = options.defaultHeaders || ${JSON.stringify(defaultHeaders)};\n`;
+  code += `    this.getToken = options.getToken;\n`;
+  code += `    this.onRequest = options.onRequest;\n`;
+  code += `    this.onUnauthorized = options.onUnauthorized;\n`;
+  code += `    this.onError = options.onError;\n`;
+  code += `    this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));\n`;
   code += `  }\n\n`;
-  
+
+  code += `  /** Shared transport: bearer auth, request hook, 204/non-JSON handling, RFC 7807 errors. */\n`;
+  code += `  protected async request<T>(\n`;
+  code += `    url: string,\n`;
+  code += `    { method, body, signal, headers: extraHeaders }: { method: string; body?: unknown; signal?: AbortSignal; headers?: Record<string, string> },\n`;
+  code += `  ): Promise<T> {\n`;
+  code += `    const headers: Record<string, string> = { ...this.defaultHeaders, ...extraHeaders };\n`;
+  code += `    if (body !== undefined && headers['Content-Type'] === undefined) {\n`;
+  code += `      headers['Content-Type'] = 'application/json';\n`;
+  code += `    }\n`;
+  code += `    const token = this.getToken ? await this.getToken() : null;\n`;
+  code += `    if (token) headers['Authorization'] = 'Bearer ' + token;\n`;
+  code += `    const req = { url, method, headers };\n`;
+  code += `    if (this.onRequest) await this.onRequest(req);\n`;
+  code += `    const response = await this.fetchImpl(req.url, {\n`;
+  code += `      method,\n`;
+  code += `      headers: req.headers,\n`;
+  code += `      body: body !== undefined ? JSON.stringify(body) : undefined,\n`;
+  code += `      signal,\n`;
+  code += `    });\n`;
+  code += `    const contentType = response.headers.get('content-type') ?? '';\n`;
+  code += `    const data = response.status === 204\n`;
+  code += `      ? null\n`;
+  code += `      : contentType.includes('json')\n`;
+  code += `        ? await response.json().catch(() => null)\n`;
+  code += `        : await response.text();\n`;
+  code += `    if (!response.ok) {\n`;
+  code += `      const error = new KozoApiError(response.status, data);\n`;
+  code += `      if (response.status === 401 && this.onUnauthorized) await this.onUnauthorized(error);\n`;
+  code += `      if (this.onError) await this.onError(error);\n`;
+  code += `      throw error;\n`;
+  code += `    }\n`;
+  code += `    return data as T;\n`;
+  code += `  }\n\n`;
+
   // Add all methods
   code += methodImplementations.join('\n');
-  
+
   code += `}\n\n`;
   code += `export default KozoClient;\n`;
 
@@ -339,8 +425,11 @@ function zodToString(schema: any): string {
       return `z.intersection(${zodToString(left)}, ${zodToString(right)})`;
     }
     case 'record': {
+      // Zod v4 removed the single-argument z.record(value): the key type is
+      // mandatory. Serialize it when present, default to z.string().
+      const kt = def4?.keyType ?? def3?.keyType;
       const vt = def4?.valueType ?? def3?.valueType;
-      return `z.record(${zodToString(vt)})`;
+      return `z.record(${kt ? zodToString(kt) : 'z.string()'}, ${zodToString(vt)})`;
     }
     case 'tuple': {
       const items = def4?.items ?? def3?.items ?? [];

@@ -36,14 +36,14 @@ import {
 } from "drizzle-zod";
 
 // src/query-helpers/errors.ts
-var RowNotFoundError = class extends Error {
+import { NotFoundError, ConflictError } from "@kozojs/core";
+var RowNotFoundError = class extends NotFoundError {
   constructor(message = "Not found") {
     super(message);
     this.name = "RowNotFoundError";
   }
 };
-var RowConflictError = class extends Error {
-  code = "23505";
+var RowConflictError = class extends ConflictError {
   constructor(message = "Conflict") {
     super(message);
     this.name = "RowConflictError";
@@ -51,7 +51,7 @@ var RowConflictError = class extends Error {
 };
 function isUniqueViolation(err) {
   const code = err?.code;
-  return code === "23505" || code === "SQLITE_CONSTRAINT_UNIQUE";
+  return code === "23505" || code === "SQLITE_CONSTRAINT_UNIQUE" || code === "ER_DUP_ENTRY";
 }
 function rethrowConflict(err, message = "Conflict") {
   if (isUniqueViolation(err)) throw new RowConflictError(message);
@@ -258,7 +258,7 @@ async function createDatabase(config) {
         import("drizzle-orm/postgres-js"),
         import("postgres")
       ]);
-      const client = postgres(config.url);
+      const client = config.options ? postgres(config.url, config.options) : postgres(config.url);
       return drizzle(client, { schema });
     }
     case "mysql": {
@@ -275,7 +275,7 @@ async function createDatabase(config) {
         import("better-sqlite3")
       ]);
       const dbFile = config.file ?? ":memory:";
-      const sqlite = new Database(dbFile);
+      const sqlite = config.options ? new Database(dbFile, config.options) : new Database(dbFile);
       return drizzle(sqlite, { schema });
     }
     default:

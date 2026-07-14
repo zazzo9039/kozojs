@@ -1,8 +1,8 @@
 import * as hono from 'hono';
 import { Context, Next } from 'hono';
 import { JWTVerifyGetKey } from 'jose';
-import { KozoEnv, KozoUser } from '@kozojs/core';
-export { KozoError, KozoUser, UnauthorizedError } from '@kozojs/core';
+import { KozoEnv, KozoUser, KozoGuard } from '@kozojs/core';
+export { GuardRequest, KozoError, KozoGuard, KozoUser, UnauthorizedError } from '@kozojs/core';
 
 /**
  * Authentication options
@@ -181,6 +181,11 @@ interface RegisterAuthOptions extends AuthOptions {
  * `ctx.user` — e.g. admin role guards. Middleware registered **after** `loadRoutes()`
  * runs **after** directory `_middleware.ts`, so JWT would not populate the user in time.
  *
+ * @deprecated Use {@link registerAuthGuard} instead — same API and semantics,
+ * but registered as a transport-agnostic guard (`app.guard`): under
+ * `nativeListen()` it runs on the uWS native fast path, while this middleware
+ * version forces every covered route through the Hono bridge (~35% slower).
+ *
  * @example
  * await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
  *   routesDir: './src/routes',
@@ -190,6 +195,63 @@ interface RegisterAuthOptions extends AuthOptions {
  * await app.loadRoutes();
  */
 declare function registerAuthBeforeLoadRoutes(app: KozoAppLike, secretOrPublicKey: string | Uint8Array, options: RegisterAuthOptions): Promise<void>;
+
+/** Options for {@link jwtGuard}. */
+interface JwtGuardOptions {
+    /**
+     * Paths that bypass authentication (exact match or prefix — '/api/docs'
+     * also matches '/api/docs/anything').
+     */
+    publicPaths?: Iterable<string>;
+    /** Allowed JWT algorithms. Defaults to HS256/HS384/HS512. */
+    allowedAlgorithms?: string[];
+    /** Claims that must equal the given values for the token to be accepted. */
+    expectedClaims?: Record<string, unknown>;
+    /** Custom key resolver for asymmetric algorithms. */
+    getKey?: JWTVerifyGetKey;
+}
+/**
+ * JWT authentication as a transport-agnostic guard for `app.guard()`.
+ *
+ * Mirrors `registerAuthBeforeLoadRoutes` semantics: public paths pass without
+ * a token, everything else requires a valid Bearer token. On success the
+ * decoded payload is attached as the user (visible to later guards via
+ * `req.user` and to handlers via `ctx.user`).
+ *
+ * @example
+ * app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, {
+ *   publicPaths: ['/api/health', '/api/docs'],
+ * }));
+ */
+declare function jwtGuard(secretOrPublicKey: string | Uint8Array, options?: JwtGuardOptions): KozoGuard;
+/**
+ * Role check as a guard. Run it AFTER `jwtGuard` in the chain — it reads the
+ * user attached by the previous guard. 401 when unauthenticated, 403 when the
+ * role does not match. Checks `user.role` (string) and `user.roles` (array).
+ *
+ * @example
+ * app.guard('/api/*', jwtGuard(secret, { publicPaths }));
+ * app.guard('/api/admin/*', roleGuard('admin'));
+ */
+declare function roleGuard(role: string | string[]): KozoGuard;
+/** Structural interface for apps exposing `guard()` (i.e. `Kozo`). */
+interface KozoGuardAppLike {
+    guard(pattern: string, guard: KozoGuard): unknown;
+}
+/**
+ * Guard-based equivalent of {@link registerAuthBeforeLoadRoutes}: scans the
+ * routes directory for `meta.auth: false` and registers a single `jwtGuard`
+ * on `${prefix}/*`. Routes keep the uWS native fast path under
+ * `nativeListen()` — this is the recommended setup for native apps.
+ *
+ * @example
+ * await registerAuthGuard(app, process.env.JWT_SECRET!, {
+ *   routesDir: './src/routes',
+ *   extraPublicPaths: ['/api/docs', '/api/docs.json'],
+ * });
+ * await app.loadRoutes();
+ */
+declare function registerAuthGuard(app: KozoGuardAppLike, secretOrPublicKey: string | Uint8Array, options: RegisterAuthOptions): Promise<void>;
 /**
  * Decode a JWT token payload without verifying its signature.
  * Safe for client-side use to inspect claims (e.g. displaying user info in the UI).
@@ -201,4 +263,4 @@ declare function registerAuthBeforeLoadRoutes(app: KozoAppLike, secretOrPublicKe
  */
 declare function decodeTokenPayload<T extends KozoUser = KozoUser>(token: string): T | null;
 
-export { type AuthOptions, type Guard, type KozoAppLike, type RegisterAuthOptions, anyOf, authenticateJWT, canActivate, createJWT, decodeJWT, decodeTokenPayload, getUser, hasRole, isAuthenticated, isSelf, registerAuthBeforeLoadRoutes };
+export { type AuthOptions, type Guard, type JwtGuardOptions, type KozoAppLike, type KozoGuardAppLike, type RegisterAuthOptions, anyOf, authenticateJWT, canActivate, createJWT, decodeJWT, decodeTokenPayload, getUser, hasRole, isAuthenticated, isSelf, jwtGuard, registerAuthBeforeLoadRoutes, registerAuthGuard, roleGuard };

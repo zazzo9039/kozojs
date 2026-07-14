@@ -4,31 +4,40 @@ Quick reference for mistakes that look like framework bugs but are usually confi
 
 ---
 
-## 1. Auth runs after role guards → always 403
+## 1. Security middleware doesn't run under `nativeListen()` (≤ 0.5.15)
 
-**Symptom:** Admin routes return `403 Forbidden` even with a valid JWT. `user.role` is undefined in `_middleware.ts`.
+**Symptom:** Routes protected by `app.middleware()` / `_middleware.ts` answer **without** auth or rate limits when the server starts with `nativeListen()`.
 
-**Cause:** JWT middleware registered **after** `loadRoutes()`. Directory `_middleware.ts` runs in registration order — your role guard executes **before** JWT decodes the token.
+**Cause:** On core ≤ 0.5.15 the uWS transport served every route on the native fast path, silently bypassing the Hono middleware pipeline. Those versions are deprecated on npm.
 
-**Fix:** Use `registerAuthBeforeLoadRoutes()` **before** `loadRoutes()`:
+**Fix:** Upgrade to ≥ 0.5.16 and use guards (`app.guard()` / `registerAuthGuard`) — they run on both transports, natively under uWS. Leftover middleware still works on ≥ 0.5.16 (covered routes are Hono-bridged) but costs ~35% throughput.
+
+---
+
+## 2. Auth runs after role guards → always 403
+
+**Symptom:** Admin routes return `403 Forbidden` even with a valid JWT. `user.role` is undefined in the role check.
+
+**Cause:** JWT registered **after** `loadRoutes()` (or after the role guard). Guards run in registration order — the role check executes **before** JWT decodes the token.
+
+**Fix:** Use `registerAuthGuard()` **before** `loadRoutes()`, then `roleGuard`:
 
 ```typescript
-await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
+await registerAuthGuard(app, process.env.JWT_SECRET!, {
   routesDir: './src/routes',
   prefix: '',
 });
+app.guard('/api/admin/*', roleGuard('admin'));
 await app.loadRoutes();
 ```
 
-**Never:** register JWT enforcement **after** `loadRoutes()` when `_middleware.ts` checks `user.role`.
-
-**Reference app:** **kozo-app** uses `registerApiSecurity()` (same ordering rule, plus rate limits) before `loadRoutes()`.
+**Reference app:** **kozo-native-api** registers all guards in `registerApiSecurity()` before `loadRoutes()`.
 
 See [auth-middleware.md](./auth-middleware.md).
 
 ---
 
-## 2. Public routes still require JWT
+## 3. Public routes still require JWT
 
 **Symptom:** `/health` or `/auth/login` returns `401`.
 
@@ -49,7 +58,7 @@ app.get('/health', { response: HealthSchema }, handler, { auth: false });
 
 ---
 
-## 3. Request-scoped state bleeds across users
+## 4. Request-scoped state bleeds across users
 
 **Symptom:** User A sees User B's transaction, tenant ID, or correlation data under concurrency.
 
@@ -73,16 +82,16 @@ See [getting-started.md § DI](./getting-started.md#3-dependency-injection).
 
 ---
 
-## 4. WebSocket routes ignored
+## 5. WebSocket routes ignored
 
 **Symptom:** `app.ws('/chat', …)` never connects; no WebSocket upgrade.
 
 **Cause:** `app.listen()` uses Node HTTP only. WebSockets require `nativeListen()` with `uWebSockets.js` installed.
 
-**Fix:**
+**Fix:** (uWebSockets.js is published on GitHub, not npm)
 
 ```bash
-pnpm add uWebSockets.js
+pnpm add uNetworking/uWebSockets.js#v20.66.0
 ```
 
 ```typescript
@@ -93,7 +102,7 @@ Console warning on startup: `[Kozo] WebSocket routes require nativeListen()…`
 
 ---
 
-## 5. `loadRoutes()` loads nothing
+## 6. `loadRoutes()` loads nothing
 
 **Symptom:** File routes 404; only manual routes work.
 
@@ -109,7 +118,7 @@ Console warning on startup: `[Kozo] WebSocket routes require nativeListen()…`
 
 ---
 
-## 6. `413 Content Too Large`
+## 7. `413 Content Too Large`
 
 **Symptom:** Upload fails with 413.
 
@@ -123,7 +132,7 @@ createKozo({ maxBodyBytes: 10 * 1024 * 1024 }); // 10 MB
 
 ---
 
-## 7. Handler works on `listen()` but not `nativeListen()`
+## 8. Handler works on `listen()` but not `nativeListen()`
 
 **Symptom:** Route returns data on dev server but empty/wrong on uWS.
 
@@ -142,7 +151,7 @@ Avoid legacy handler types — use `KozoContext` / `KozoHandler`. Raw Node `req/
 
 ---
 
-## 8. `gen:client` / OpenAPI missing routes
+## 9. `gen:client` / OpenAPI missing routes
 
 **Symptom:** Generated client skips file-system routes.
 
@@ -162,30 +171,101 @@ Then: `kozo gen:client`
 
 ---
 
-## 9. uWebSockets.js not installed
+## 10. uWebSockets.js not installed
 
 **Runtime message:**
 
 ```
 [Kozo] uWebSockets.js is required but not installed.
-Run: pnpm add uWebSockets.js
+It is published on GitHub, not npm — install it with:
+  pnpm add uNetworking/uWebSockets.js#v20.66.0
 ```
 
-This is intentional — native transport is an optional peer dependency.
+This is intentional — native transport is an optional peer dependency. Note that
+uWebSockets.js is distributed via GitHub (`uNetworking/uWebSockets.js#<tag>`),
+not the npm registry, so `pnpm add uWebSockets.js` alone will fail.
 
 ---
 
-## 10. CLI template not found
+## 11. CLI template not found
 
 **Symptom:** `Could not find Kozo templates directory`
 
 **Cause:** Old CLI version without bundled templates, or running outside the monorepo without published package.
 
-**Fix:** Upgrade `@kozojs/cli` or see the [public Kozo repo](https://github.com/zazzo9039/kozojs) and use:
+**Fix:** Upgrade `@kozojs/cli` or see the [public Kozo repo](https://github.com/zazzo9039/kozo) and use:
 
 ```bash
 node packages/cli/lib/index.js my-app --template file-routing
 ```
+
+---
+
+## 12. Native transport limits (`nativeListen` / uWS)
+
+Kozo's **native path** (`app.nativeListen()`) is optimized for JSON/text APIs at high
+throughput. It is not a drop-in replacement for every pattern that works on
+`app.listen()` (Node HTTP + Hono).
+
+### What works well on the native path
+
+- JSON request/response handlers (`ctx.json`, return plain objects)
+- **Guards** (`app.guard`, `@kozojs/auth` JWT/role guards) — compiled into uWS
+- WebSockets (requires uWS installed)
+- Routes with no Hono middleware overlap — full native speed
+
+### Hono bridge (middleware / legacy `_middleware.ts`)
+
+Routes covered by Hono middleware patterns are **bridged** through Hono for
+correctness (~35% slower than pure native). On the bridge:
+
+| Feature | Native fast path | Hono bridge |
+|---|---|---|
+| JSON handlers | ✅ | ✅ |
+| Multiple `Set-Cookie` | ✅ | ✅ (since 0.5.20) |
+| **Streaming / SSE responses** | ❌ | ❌ **fully buffered** |
+| `Transfer-Encoding: chunked` passthrough | ❌ | ❌ |
+
+For Server-Sent Events or large streamed downloads, use `app.listen()` behind a
+reverse proxy, or serve streams from a dedicated Node HTTP route.
+
+### Request bodies
+
+| Body type | `listen()` | `nativeListen()` |
+|---|---|---|
+| JSON / UTF-8 text | ✅ | ✅ |
+| **Multipart / file uploads** | ✅ (Hono) | ❌ **not supported** — bodies are read as UTF-8 strings |
+| Raw binary | ✅ | ❌ |
+
+Use `listen()` for upload endpoints, or offload files to object storage via pre-signed URLs.
+
+### TLS / HTTPS / bind address
+
+- uWS **`SSLApp` is not wired** in Kozo 0.5.x — no built-in HTTPS on `nativeListen()`.
+- The server binds **all interfaces** (`0.0.0.0`); there is no `host` option yet.
+
+**Production pattern:** terminate TLS at **nginx**, Caddy, or a cloud load balancer;
+run Kozo on HTTP behind the proxy.
+
+### Body size limits
+
+`maxBodyBytes` applies on all three entrypoints (`listen`, `nativeListen`, `listenSsr`)
+via Content-Length pre-checks and uWS buffering limits. **Chunked uploads without
+Content-Length** on `listen()` may bypass the pre-check — size-cap uploads at the
+proxy if that matters.
+
+### When to use which transport
+
+```typescript
+// Max throughput JSON API + guards + WebSockets
+await app.nativeListen(3000);
+
+// Multipart uploads, streaming, or simplest local dev
+await app.listen(3000);
+```
+
+See also [§1 middleware vs guards](#1-security-middleware-doesnt-run-under-nativelisten--0515) and the
+[`@kozojs/core` README](../packages/core/README.md).
 
 ---
 

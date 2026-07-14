@@ -31,12 +31,21 @@ export interface ScanOptions {
 }
 
 // ---------------------------------------------------------------------------
+// Path helpers
+// ---------------------------------------------------------------------------
+
+/** Normalize route file paths for cross-platform manifests (always `/`). */
+export function normalizeRouteFilePath(filePath: string): string {
+  return filePath.replace(/\\/g, '/');
+}
+
+// ---------------------------------------------------------------------------
 // File-path → URL-path conversion (mirrors core/src/utils/file-to-path.ts)
 // ---------------------------------------------------------------------------
 
 function fileToRoute(filePath: string): { path: string; method: HttpMethod } | null {
   // Normalize separators
-  const normalized = filePath.replace(/\\/g, '/');
+  const normalized = normalizeRouteFilePath(filePath);
   const lastDot = normalized.lastIndexOf('.');
   const withoutExt = lastDot !== -1 ? normalized.slice(0, lastDot) : normalized;
 
@@ -155,7 +164,7 @@ export async function scanRoutes(options: ScanOptions): Promise<ScannedRoute[]> 
       path: parsed.path,
       method: parsed.method,
       handler: absolutePath,
-      relativePath: file,
+      relativePath: normalizeRouteFilePath(file),
       params,
       hasBodySchema,
       hasQuerySchema,
@@ -203,12 +212,13 @@ export async function scanMiddleware(options: ScanOptions): Promise<ScannedMiddl
   });
 
   const middlewares: ScannedMiddleware[] = files.map(file => {
-    const dir = file.replace(/\\/g, '/').replace(/\/_middleware\.(ts|js)$/, '').replace(/_middleware\.(ts|js)$/, '');
+    const normalized = normalizeRouteFilePath(file);
+    const dir = normalized.replace(/\/_middleware\.(ts|js)$/, '').replace(/_middleware\.(ts|js)$/, '');
     const pathPrefix = dir ? `/${dir}/*` : '/*';
     return {
       pathPrefix,
       handler: join(routesDir, file),
-      relativePath: file,
+      relativePath: normalized,
     };
   });
 

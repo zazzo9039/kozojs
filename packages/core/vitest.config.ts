@@ -15,7 +15,9 @@ export default defineConfig({
         'src/**/*.d.ts',
         'src/**/*.test.ts',
         'src/**/__tests__/**',
-        // Integration-only: require uWebSockets.js native binary / Vite runtime
+        // Integration-only modules — exercised by transport/guard parity suites,
+        // server-lifecycle, and ssr-static tests (real uWS / Vite not required
+        // for unit coverage thresholds).
         'src/uws-transport.ts',
         'src/ssr.ts',
         'src/ws.ts',

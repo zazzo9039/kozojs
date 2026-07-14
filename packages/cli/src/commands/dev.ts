@@ -23,37 +23,39 @@ export async function devCommand(): Promise<void> {
     }
   });
 
-  await runStep(2, 5, 'Checking dependencies...', async () => {
+  await runStep(2, 4, 'Checking dependencies...', async () => {
     if (!fs.existsSync(path.join(process.cwd(), 'node_modules'))) {
       throw new Error('Dependencies not installed. Run: pnpm install');
     }
-    await sleep(300);
   });
 
-  await runStep(3, 5, 'Generating route types...', async () => {
-    const out = await generateKozoTypes(process.cwd());
-    if (out) await sleep(100);
+  await runStep(3, 4, 'Generating route types...', async () => {
+    await generateKozoTypes(process.cwd());
   });
 
   // Detect routes directory
   const routesDir = resolveRoutesDir(process.cwd());
 
-  await runStep(4, 5, 'Scanning routes...', async () => {
+  await runStep(4, 4, 'Scanning routes...', async () => {
     if (routesDir) {
       await generateManifest({ routesDir, projectRoot: process.cwd(), cache: false, verbose: false });
     }
-    await sleep(300);
   });
 
-  await runStep(5, 5, 'Starting server on port 3000...', async () => {
-    await sleep(200);
-  });
+  // Resolve the entry the app is actually started from — no hardcoded path.
+  const entry = resolveEntry(process.cwd());
+  if (!entry) {
+    console.error(pc.red('\n❌ No dev entry found. Expected src/index.ts, src/main.ts, src/server.ts or index.ts (or a source-file "main" in package.json).'));
+    process.exit(1);
+  }
+  const entryRel = path.relative(process.cwd(), entry);
 
-  console.log(pc.gray('\nℹ  👀 Watching for file changes... (Ctrl+C to stop)\n'));
+  console.log(pc.gray(`\nℹ  Starting ${pc.bold(entryRel)} (tsx watch) — the app prints its own URL.`));
+  console.log(pc.gray('👀 Watching for file changes... (Ctrl+C to stop)\n'));
   console.log(pc.dim('─'.repeat(50)) + '\n');
 
-  // 4. Start tsx watch process
-  const child = spawn('npx', ['tsx', 'watch', 'src/index.ts'], {
+  // Start tsx watch on the resolved entry
+  const child = spawn('npx', ['tsx', 'watch', entryRel], {
     stdio: 'inherit',
     shell: true,
     cwd: process.cwd(),
@@ -176,6 +178,35 @@ export function resolveRoutesDir(cwd: string): string | null {
   return null;
 }
 
+/**
+ * Resolve the entry file `kozo dev` runs with `tsx watch`.
+ * Prefers a source-file `main`/`module` in package.json, then common
+ * conventions. Returns an absolute path, or null if none is found.
+ */
+export function resolveEntry(cwd: string): string | null {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf-8')) as {
+      main?: string;
+      module?: string;
+    };
+    for (const field of [pkg.main, pkg.module]) {
+      if (typeof field === 'string' && /\.(t|j)sx?$/.test(field)) {
+        const p = path.join(cwd, field);
+        if (fs.existsSync(p)) return p;
+      }
+    }
+  } catch {
+    /* no / invalid package.json — fall back to conventions */
+  }
+
+  const candidates = ['src/index.ts', 'src/main.ts', 'src/server.ts', 'index.ts', 'src/index.js'];
+  for (const c of candidates) {
+    const p = path.join(cwd, c);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
 function printBox(title: string): void {
   const width = 50;
   const pad = Math.floor((width - title.length) / 2);
@@ -202,8 +233,4 @@ async function runStep(
     console.error(pc.red(`\n  Error: ${(err as Error).message}`));
     process.exit(1);
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

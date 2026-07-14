@@ -132,7 +132,7 @@ export default defineConfig({
     },
     dependencies: {
       '@kozojs/core': kozoCoreDep,
-      ...(auth && { '@kozojs/auth': kozoCoreDep === 'workspace:*' ? 'workspace:*' : '^0.1.0' }),
+      ...(auth && { '@kozojs/auth': kozoCoreDep === 'workspace:*' ? 'workspace:*' : '^0.5.21' }),
       hono: '^4.12.5',
       zod: '^4.0.0',
       dotenv: '^16.4.0',
@@ -174,9 +174,9 @@ export default defineConfig({
   // src/index.ts
   // Note: fullstack template routes use in-memory data (src/data/index.ts).
   // The db/ files are scaffolded for future Drizzle usage but not wired into routes.
-  const authImport = auth ? `import { authenticateJWT } from '@kozojs/auth';\n` : '';
+  const authImport = auth ? `import { jwtGuard } from '@kozojs/auth';\n` : '';
   const authMiddleware = auth
-    ? `\n// JWT protects all /api/* routes except public ones\nconst JWT_SECRET = process.env.JWT_SECRET || 'change-me';\nconst _jwt = authenticateJWT(JWT_SECRET, { prefix: '' });\nconst publicPaths = ['/api/auth/', '/api/health', '/api/stats'];\napp.getApp().use('/api/*', (c, next) => {\n  if (publicPaths.some(p => c.req.path.startsWith(p))) return next();\n  return _jwt(c, next);\n});\n`
+    ? `\n// JWT protects all /api/* routes except public ones.\n// app.guard runs on BOTH transports (listen + nativeListen) at native speed.\nconst JWT_SECRET = process.env.JWT_SECRET || 'change-me';\napp.guard('/api/*', jwtGuard(JWT_SECRET, {\n  publicPaths: ['/api/auth', '/api/health', '/api/stats'],\n}));\n`
     : '';
 
   const listenCode = ssr

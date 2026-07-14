@@ -90,6 +90,7 @@ function generateTypedClient(routes, options = {}) {
     if (paramsType !== "void") args.push(`params: ${paramsType}`);
     if (bodyType !== "void") args.push(`body: ${bodyType}`);
     if (queryType !== "void") args.push(`query?: ${queryType}`);
+    args.push("init?: KozoRequestInit");
     const argsStr = args.join(", ");
     const returnType = `Promise<${responseType}>`;
     let methodBody = `  async ${methodName}(${argsStr}): ${returnType} {
@@ -115,34 +116,25 @@ function generateTypedClient(routes, options = {}) {
     if (queryType !== "void") {
       methodBody += `    if (query) {
 `;
-      methodBody += `      const queryString = new URLSearchParams(query as any).toString();
+      methodBody += `      const qs = new URLSearchParams();
 `;
-      methodBody += `      url += \`?\${queryString}\`;
+      methodBody += `      for (const [k, v] of Object.entries(query)) {
+`;
+      methodBody += `        if (v !== undefined && v !== null) qs.set(k, String(v));
+`;
+      methodBody += `      }
+`;
+      methodBody += `      const queryString = qs.toString();
+`;
+      methodBody += `      if (queryString) url += \`?\${queryString}\`;
 `;
       methodBody += `    }
 `;
     }
-    methodBody += `    const options: RequestInit = {
-`;
-    methodBody += `      method: '${route.method.toUpperCase()}',
-`;
-    methodBody += `      headers: { ...this.defaultHeaders, 'Content-Type': 'application/json' },
-`;
-    if (bodyType !== "void") {
-      methodBody += `      body: JSON.stringify(body),
-`;
-    }
-    methodBody += `    };
-`;
-    methodBody += `    const response = await fetch(url, options);
-`;
-    methodBody += `    if (!response.ok) {
-`;
-    methodBody += `      throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);
-`;
-    methodBody += `    }
-`;
-    methodBody += `    return response.json();
+    const requestArgs = [`method: '${route.method.toUpperCase()}'`];
+    if (bodyType !== "void") requestArgs.push("body");
+    requestArgs.push("signal: init?.signal", "headers: init?.headers");
+    methodBody += `    return this.request(url, { ${requestArgs.join(", ")} });
 `;
     methodBody += `  }
 `;
@@ -159,6 +151,78 @@ function generateTypedClient(routes, options = {}) {
     code += "// Zod Schemas\n";
     code += schemaExports.join("\n") + "\n\n";
   }
+  code += `/** Per-request overrides accepted by every client method. */
+`;
+  code += `export interface KozoRequestInit {
+`;
+  code += `  signal?: AbortSignal;
+`;
+  code += `  headers?: Record<string, string>;
+`;
+  code += `}
+
+`;
+  code += `/** RFC 7807 problem details (application/problem+json). */
+`;
+  code += `export interface KozoProblemDetails {
+`;
+  code += `  type?: string;
+`;
+  code += `  title?: string;
+`;
+  code += `  status?: number;
+`;
+  code += `  detail?: string;
+`;
+  code += `  instance?: string;
+`;
+  code += `  [key: string]: unknown;
+`;
+  code += `}
+
+`;
+  code += `/** Thrown on every non-2xx response. Carries the parsed body and RFC 7807 fields. */
+`;
+  code += `export class KozoApiError extends Error {
+`;
+  code += `  readonly status: number;
+`;
+  code += `  readonly problem: KozoProblemDetails | null;
+`;
+  code += `  readonly body: unknown;
+
+`;
+  code += `  constructor(status: number, body: unknown) {
+`;
+  code += `    const problem = body !== null && typeof body === 'object' && !Array.isArray(body)
+`;
+  code += `      ? (body as KozoProblemDetails)
+`;
+  code += `      : null;
+`;
+  code += `    const title = problem && typeof problem.title === 'string' ? problem.title : null;
+`;
+  code += `    const message = problem && typeof (problem as { message?: unknown }).message === 'string'
+`;
+  code += `      ? (problem as { message: string }).message
+`;
+  code += `      : null;
+`;
+  code += `    super(title ?? message ?? 'API error ' + status);
+`;
+  code += `    this.name = 'KozoApiError';
+`;
+  code += `    this.status = status;
+`;
+  code += `    this.problem = problem;
+`;
+  code += `    this.body = body;
+`;
+  code += `  }
+`;
+  code += `}
+
+`;
   code += `export interface KozoClientOptions {
 `;
   code += `  baseUrl?: string;
@@ -166,6 +230,26 @@ function generateTypedClient(routes, options = {}) {
   code += `  validateRequests?: boolean;
 `;
   code += `  defaultHeaders?: Record<string, string>;
+`;
+  code += `  /** Bearer token provider, called per request; skipped when it returns null/undefined. */
+`;
+  code += `  getToken?: () => string | null | undefined | Promise<string | null | undefined>;
+`;
+  code += `  /** Inspect/mutate url and headers right before the request is sent. */
+`;
+  code += `  onRequest?: (req: { url: string; method: string; headers: Record<string, string> }) => void | Promise<void>;
+`;
+  code += `  /** Called on 401 responses when a request was sent (e.g. clear session, redirect to login). */
+`;
+  code += `  onUnauthorized?: (error: KozoApiError) => void | Promise<void>;
+`;
+  code += `  /** Called for every non-2xx response, before the KozoApiError is thrown. */
+`;
+  code += `  onError?: (error: KozoApiError) => void | Promise<void>;
+`;
+  code += `  /** Custom fetch implementation (default: globalThis.fetch). */
+`;
+  code += `  fetch?: typeof fetch;
 `;
   code += `}
 
@@ -177,6 +261,16 @@ function generateTypedClient(routes, options = {}) {
   code += `  private validateRequests: boolean;
 `;
   code += `  private defaultHeaders: Record<string, string>;
+`;
+  code += `  private getToken?: KozoClientOptions['getToken'];
+`;
+  code += `  private onRequest?: KozoClientOptions['onRequest'];
+`;
+  code += `  private onUnauthorized?: KozoClientOptions['onUnauthorized'];
+`;
+  code += `  private onError?: KozoClientOptions['onError'];
+`;
+  code += `  private fetchImpl: typeof fetch;
 
 `;
   code += `  constructor(options: KozoClientOptions = {}) {
@@ -186,6 +280,83 @@ function generateTypedClient(routes, options = {}) {
   code += `    this.validateRequests = options.validateRequests ?? ${validateByDefault};
 `;
   code += `    this.defaultHeaders = options.defaultHeaders || ${JSON.stringify(defaultHeaders)};
+`;
+  code += `    this.getToken = options.getToken;
+`;
+  code += `    this.onRequest = options.onRequest;
+`;
+  code += `    this.onUnauthorized = options.onUnauthorized;
+`;
+  code += `    this.onError = options.onError;
+`;
+  code += `    this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));
+`;
+  code += `  }
+
+`;
+  code += `  /** Shared transport: bearer auth, request hook, 204/non-JSON handling, RFC 7807 errors. */
+`;
+  code += `  protected async request<T>(
+`;
+  code += `    url: string,
+`;
+  code += `    { method, body, signal, headers: extraHeaders }: { method: string; body?: unknown; signal?: AbortSignal; headers?: Record<string, string> },
+`;
+  code += `  ): Promise<T> {
+`;
+  code += `    const headers: Record<string, string> = { ...this.defaultHeaders, ...extraHeaders };
+`;
+  code += `    if (body !== undefined && headers['Content-Type'] === undefined) {
+`;
+  code += `      headers['Content-Type'] = 'application/json';
+`;
+  code += `    }
+`;
+  code += `    const token = this.getToken ? await this.getToken() : null;
+`;
+  code += `    if (token) headers['Authorization'] = 'Bearer ' + token;
+`;
+  code += `    const req = { url, method, headers };
+`;
+  code += `    if (this.onRequest) await this.onRequest(req);
+`;
+  code += `    const response = await this.fetchImpl(req.url, {
+`;
+  code += `      method,
+`;
+  code += `      headers: req.headers,
+`;
+  code += `      body: body !== undefined ? JSON.stringify(body) : undefined,
+`;
+  code += `      signal,
+`;
+  code += `    });
+`;
+  code += `    const contentType = response.headers.get('content-type') ?? '';
+`;
+  code += `    const data = response.status === 204
+`;
+  code += `      ? null
+`;
+  code += `      : contentType.includes('json')
+`;
+  code += `        ? await response.json().catch(() => null)
+`;
+  code += `        : await response.text();
+`;
+  code += `    if (!response.ok) {
+`;
+  code += `      const error = new KozoApiError(response.status, data);
+`;
+  code += `      if (response.status === 401 && this.onUnauthorized) await this.onUnauthorized(error);
+`;
+  code += `      if (this.onError) await this.onError(error);
+`;
+  code += `      throw error;
+`;
+  code += `    }
+`;
+  code += `    return data as T;
 `;
   code += `  }
 
@@ -272,8 +443,9 @@ function zodToString(schema) {
       return `z.intersection(${zodToString(left)}, ${zodToString(right)})`;
     }
     case "record": {
+      const kt = def4?.keyType ?? def3?.keyType;
       const vt = def4?.valueType ?? def3?.valueType;
-      return `z.record(${zodToString(vt)})`;
+      return `z.record(${kt ? zodToString(kt) : "z.string()"}, ${zodToString(vt)})`;
     }
     case "tuple": {
       const items = def4?.items ?? def3?.items ?? [];
@@ -291,6 +463,14 @@ function zodToString(schema) {
 
 // src/uws-transport.ts
 import { createServer as netCreateServer } from "net";
+
+// src/body-read.ts
+var UTF8_DECODER = new TextDecoder();
+function chunksToUtf8(chunks) {
+  if (chunks.length === 0) return "";
+  if (chunks.length === 1) return chunks[0].toString("utf8");
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 // src/errors.ts
 var CONTENT_TYPE_PROBLEM = "application/problem+json";
@@ -432,6 +612,14 @@ var BODY_500_STATIC = JSON.stringify({
   title: ERROR_RESPONSES.INTERNAL_ERROR.title,
   status: 500
 });
+function bodyTooLargeJson(maxBytes) {
+  return JSON.stringify({
+    type: "about:blank",
+    title: "Content Too Large",
+    status: 413,
+    detail: `Request body exceeds the ${maxBytes}-byte limit`
+  });
+}
 var KozoError = class extends Error {
   statusCode;
   code;
@@ -551,12 +739,6 @@ var BODY_503 = JSON.stringify({
   status: 503,
   detail: "Server is shutting down, please retry later"
 });
-var BODY_413 = JSON.stringify({
-  type: "about:blank",
-  title: "Payload Too Large",
-  status: 413,
-  detail: "Request body exceeds maximum allowed size"
-});
 var DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024;
 var uwsAborted = /* @__PURE__ */ new WeakMap();
 var uwsFinished = /* @__PURE__ */ new WeakMap();
@@ -669,6 +851,65 @@ async function tryLoadUws() {
     return null;
   }
 }
+function readUwsRemoteAddress(uwsRes) {
+  try {
+    return UTF8_DECODER.decode(uwsRes.getRemoteAddressAsText());
+  } catch {
+    return "";
+  }
+}
+function middlewarePatternOverlaps(pattern, routePath) {
+  if (pattern === "*" || pattern === "/*") return true;
+  const p = pattern.split("/").filter(Boolean);
+  const r = routePath.split("/").filter(Boolean);
+  for (let i = 0; i < p.length; i++) {
+    const ps = p[i];
+    if (ps === "*") return true;
+    const rs = r[i];
+    if (rs === void 0) return false;
+    if (ps.startsWith(":") || rs.startsWith(":")) continue;
+    if (ps !== rs) return false;
+  }
+  return p.length === r.length;
+}
+function writeFetchHeadersToUws(uwsRes, responseHeaders) {
+  const setCookies = typeof responseHeaders.getSetCookie === "function" ? responseHeaders.getSetCookie() : [];
+  responseHeaders.forEach((v, k) => {
+    const lower = k.toLowerCase();
+    if (lower === "content-length" || lower === "set-cookie") return;
+    uwsRes.writeHeader(k, v);
+  });
+  if (setCookies.length > 0) {
+    for (const cookie of setCookies) uwsRes.writeHeader("Set-Cookie", cookie);
+    return;
+  }
+  const legacy = responseHeaders.get("set-cookie");
+  if (legacy) uwsRes.writeHeader("Set-Cookie", legacy);
+}
+function makeUwsHonoBridge(method, honoFetch) {
+  const canHaveBody = !NO_BODY_METHODS.has(method);
+  return async (uwsRes, url, rawBody, _params, corsHeaders, reqHeaders) => {
+    try {
+      const headers = new Headers();
+      if (reqHeaders) for (const k in reqHeaders) headers.set(k, reqHeaders[k]);
+      const request = new Request(`http://kozo.uws${url}`, {
+        method,
+        headers,
+        body: canHaveBody && rawBody.length > 0 ? rawBody : void 0
+      });
+      const response = await honoFetch(request);
+      const body = response.status === 204 || response.status === 304 ? void 0 : await response.text();
+      uwsCorkWrite(uwsRes, () => {
+        uwsRes.writeStatus(STATUS_TEXT[response.status] ?? String(response.status));
+        writeFetchHeadersToUws(uwsRes, response.headers);
+        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        uwsSafeEnd(uwsRes, body);
+      });
+    } catch {
+      uwsFastWrite500(uwsRes, corsHeaders);
+    }
+  };
+}
 function getFreePort() {
   return new Promise((resolve2, reject) => {
     const srv = netCreateServer();
@@ -687,15 +928,29 @@ var UWS_METHOD = {
   OPTIONS: "options",
   HEAD: "head"
 };
-function buildCorsHeaders(cfg) {
+function buildCorsHeadersFor(cfg, origin) {
   const h = [
-    ["Access-Control-Allow-Origin", cfg.origin ?? "*"],
+    ["Access-Control-Allow-Origin", origin],
     ["Access-Control-Allow-Methods", cfg.methods ?? "GET,POST,PUT,PATCH,DELETE,OPTIONS"],
     ["Access-Control-Allow-Headers", cfg.headers ?? "Content-Type,Authorization"]
   ];
+  if (Array.isArray(cfg.origin)) h.push(["Vary", "Origin"]);
   if (cfg.maxAge != null) h.push(["Access-Control-Max-Age", String(cfg.maxAge)]);
   if (cfg.credentials) h.push(["Access-Control-Allow-Credentials", "true"]);
   return h;
+}
+function makeCorsResolver(cfg) {
+  const allowed = cfg.origin;
+  const cache = /* @__PURE__ */ new Map();
+  return (origin) => {
+    if (!origin || !allowed.includes(origin)) return void 0;
+    let h = cache.get(origin);
+    if (!h) {
+      h = buildCorsHeadersFor(cfg, origin);
+      cache.set(origin, h);
+    }
+    return h;
+  };
 }
 function attachAbortGuard(uwsRes) {
   uwsRes.onAborted(() => {
@@ -703,25 +958,32 @@ function attachAbortGuard(uwsRes) {
     markUwsFinished(uwsRes);
   });
 }
-function wrapHandler(h, corsHeaders, isShuttingDown, trackRequest2) {
-  return (uwsRes, url, rawBody, params, corsHeadersArg) => {
+function collectReqHeaders(uwsReq) {
+  const headers = {};
+  uwsReq.forEach((k, v) => {
+    headers[k.toLowerCase()] = v;
+  });
+  return headers;
+}
+function wrapHandler(h, corsHeaders, isShuttingDown, trackRequest2, corsResolver) {
+  return (uwsRes, url, rawBody, params, corsHeadersArg, reqHeaders, remoteAddress, user) => {
+    const cors2 = corsHeadersArg ?? (corsResolver ? corsResolver(reqHeaders?.origin) : corsHeaders ?? void 0);
     if (isShuttingDown?.()) {
       uwsCorkWrite(uwsRes, () => {
         uwsRes.writeStatus("503 Service Unavailable");
         uwsRes.writeHeader("Content-Type", CT_PROBLEM);
-        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        if (cors2) for (const [k, v] of cors2) uwsRes.writeHeader(k, v);
         uwsSafeEnd(uwsRes, BODY_503);
       });
       return;
     }
     attachAbortGuard(uwsRes);
-    const cors2 = corsHeadersArg ?? corsHeaders ?? void 0;
     if (!trackRequest2) {
-      return h(uwsRes, url, rawBody, params, cors2);
+      return h(uwsRes, url, rawBody, params, cors2, reqHeaders, remoteAddress, user);
     }
     const untrack = trackRequest2();
     try {
-      const result = h(uwsRes, url, rawBody, params, cors2);
+      const result = h(uwsRes, url, rawBody, params, cors2, reqHeaders, remoteAddress, user);
       if (result && typeof result.then === "function") {
         result.then(untrack, untrack);
       } else {
@@ -821,12 +1083,12 @@ function buildWsBehavior(handler) {
       }
     },
     open(ws) {
-      const remoteAddress = new TextDecoder().decode(ws.getRemoteAddressAsText());
+      const remoteAddress = UTF8_DECODER.decode(ws.getRemoteAddressAsText());
       if (handler.open) handler.open(getOrCreateWrapper(ws, remoteAddress));
     },
     message(ws, message, isBinary) {
       if (handler.message) {
-        const data = isBinary ? message : new TextDecoder().decode(message);
+        const data = isBinary ? message : UTF8_DECODER.decode(message);
         const wrapped = wsWrappers.get(ws);
         if (wrapped && handler.message) {
           handler.message(wrapped, data, isBinary);
@@ -845,17 +1107,54 @@ function buildWsBehavior(handler) {
   };
 }
 async function createUwsServer(opts) {
+  const ephemeral = opts.port === 0;
+  const attempts = ephemeral ? 5 : 1;
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    const port = ephemeral ? await getFreePort() : opts.port;
+    try {
+      return await listenUwsOnPort(opts, port);
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+function expandUwsPatterns(path2, paramNames) {
+  if (!path2.includes("?")) return [{ pattern: path2, paramNames }];
+  const segs = path2.split("/");
+  const isOptional = (seg) => seg.startsWith(":") && seg.endsWith("?");
+  const patternOf = (slice) => slice.map((s) => isOptional(s) ? s.slice(0, -1) : s).join("/") || "/";
+  const namesOf = (slice) => {
+    const out = [];
+    for (const s of slice) {
+      if (s.startsWith(":")) out.push(s.slice(1, isOptional(s) ? -1 : void 0));
+    }
+    return out;
+  };
+  const variants = [];
+  let end = segs.length;
+  while (end > 0) {
+    const slice = segs.slice(0, end);
+    variants.push({ pattern: patternOf(slice), paramNames: namesOf(slice) });
+    if (isOptional(segs[end - 1])) end--;
+    else break;
+  }
+  return variants;
+}
+function listenUwsOnPort(opts, port) {
   const { uws, routes, cors: corsConfig, isShuttingDown, trackRequest: trackRequest2 } = opts;
-  const port = opts.port === 0 ? await getFreePort() : opts.port;
   const emptyParams = Object.freeze({});
-  const corsHeaders = corsConfig ? buildCorsHeaders(corsConfig) : null;
+  const corsResolver = corsConfig && Array.isArray(corsConfig.origin) ? makeCorsResolver(corsConfig) : null;
+  const corsHeaders = corsConfig && !corsResolver ? buildCorsHeadersFor(corsConfig, corsConfig.origin ?? "*") : null;
   return new Promise((resolve2, reject) => {
     const uwsApp = uws.App();
-    if (corsHeaders) {
-      uwsApp.options("/*", (uwsRes) => {
+    if (corsConfig) {
+      uwsApp.options("/*", (uwsRes, uwsReq) => {
+        const headers = corsResolver ? corsResolver(uwsReq.getHeader("origin") || void 0) : corsHeaders;
         uwsCorkWrite(uwsRes, () => {
           uwsRes.writeStatus("204 No Content");
-          for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+          if (headers) for (const [k, v] of headers) uwsRes.writeHeader(k, v);
           uwsSafeEnd(uwsRes);
         });
       });
@@ -863,95 +1162,106 @@ async function createUwsServer(opts) {
     for (const route of routes) {
       const fn = UWS_METHOD[route.method];
       if (!fn) continue;
-      const h = wrapHandler(route.handler, corsHeaders, isShuttingDown, trackRequest2);
-      const names = route.paramNames;
-      const hasParams = names.length > 0;
+      const h = wrapHandler(route.handler, corsHeaders, isShuttingDown, trackRequest2, corsResolver);
       const noBody = NO_BODY_METHODS.has(route.method);
-      if (noBody && !hasParams) {
-        uwsApp[fn](route.path, (uwsRes, uwsReq) => {
-          const query = uwsReq.getQuery();
-          h(uwsRes, query ? `${uwsReq.getUrl()}?${query}` : uwsReq.getUrl(), "", emptyParams);
-        });
-      } else if (noBody && hasParams) {
-        uwsApp[fn](route.path, (uwsRes, uwsReq) => {
-          const rawPath = uwsReq.getUrl();
-          const query = uwsReq.getQuery();
-          const params = {};
-          for (let i = 0; i < names.length; i++) params[names[i]] = uwsReq.getParameter(i);
-          h(uwsRes, query ? `${rawPath}?${query}` : rawPath, "", params);
-        });
-      } else if (!hasParams) {
-        uwsApp[fn](route.path, (uwsRes, uwsReq) => {
-          const rawPath = uwsReq.getUrl();
-          const query = uwsReq.getQuery();
-          const url = query ? `${rawPath}?${query}` : rawPath;
-          const maxBody = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
-          let aborted = false;
-          let totalBytes = 0;
-          const chunks = [];
-          uwsRes.onAborted(() => {
-            aborted = true;
-            uwsAborted.set(uwsRes, true);
-            markUwsFinished(uwsRes);
+      for (const variant of expandUwsPatterns(route.path, route.paramNames)) {
+        const pattern = variant.pattern;
+        const names = variant.paramNames;
+        const hasParams = names.length > 0;
+        if (noBody && !hasParams) {
+          uwsApp[fn](pattern, (uwsRes, uwsReq) => {
+            const remoteAddress = readUwsRemoteAddress(uwsRes);
+            const reqHeaders = collectReqHeaders(uwsReq);
+            const query = uwsReq.getQuery();
+            h(uwsRes, query ? `${uwsReq.getUrl()}?${query}` : uwsReq.getUrl(), "", emptyParams, void 0, reqHeaders, remoteAddress);
           });
-          uwsRes.onData((chunk, isLast) => {
-            if (aborted) return;
-            if (chunk.byteLength > 0) {
-              totalBytes += chunk.byteLength;
-              if (totalBytes > maxBody) {
-                aborted = true;
-                uwsCorkWrite(uwsRes, () => {
-                  uwsRes.writeStatus("413 Payload Too Large");
-                  uwsRes.writeHeader("Content-Type", CT_PROBLEM);
-                  uwsSafeEnd(uwsRes, BODY_413);
-                });
-                return;
+        } else if (noBody && hasParams) {
+          uwsApp[fn](pattern, (uwsRes, uwsReq) => {
+            const remoteAddress = readUwsRemoteAddress(uwsRes);
+            const reqHeaders = collectReqHeaders(uwsReq);
+            const rawPath = uwsReq.getUrl();
+            const query = uwsReq.getQuery();
+            const params = {};
+            for (let i = 0; i < names.length; i++) params[names[i]] = uwsReq.getParameter(i);
+            h(uwsRes, query ? `${rawPath}?${query}` : rawPath, "", params, void 0, reqHeaders, remoteAddress);
+          });
+        } else if (!hasParams) {
+          uwsApp[fn](pattern, (uwsRes, uwsReq) => {
+            const remoteAddress = readUwsRemoteAddress(uwsRes);
+            const reqHeaders = collectReqHeaders(uwsReq);
+            const rawPath = uwsReq.getUrl();
+            const query = uwsReq.getQuery();
+            const url = query ? `${rawPath}?${query}` : rawPath;
+            const maxBody = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+            let aborted = false;
+            let totalBytes = 0;
+            const chunks = [];
+            uwsRes.onAborted(() => {
+              aborted = true;
+              uwsAborted.set(uwsRes, true);
+              markUwsFinished(uwsRes);
+            });
+            uwsRes.onData((chunk, isLast) => {
+              if (aborted) return;
+              if (chunk.byteLength > 0) {
+                totalBytes += chunk.byteLength;
+                if (totalBytes > maxBody) {
+                  aborted = true;
+                  uwsCorkWrite(uwsRes, () => {
+                    uwsRes.writeStatus("413 Payload Too Large");
+                    uwsRes.writeHeader("Content-Type", CT_PROBLEM);
+                    uwsSafeEnd(uwsRes, bodyTooLargeJson(maxBody));
+                  });
+                  return;
+                }
+                chunks.push(Buffer.from(chunk));
               }
-              chunks.push(Buffer.from(chunk));
-            }
-            if (isLast) {
-              const bodyStr = chunks.length ? Buffer.concat(chunks).toString("utf8") : "";
-              h(uwsRes, url, bodyStr, emptyParams);
-            }
-          });
-        });
-      } else {
-        uwsApp[fn](route.path, (uwsRes, uwsReq) => {
-          const rawPath = uwsReq.getUrl();
-          const query = uwsReq.getQuery();
-          const url = query ? `${rawPath}?${query}` : rawPath;
-          const params = {};
-          for (let i = 0; i < names.length; i++) params[names[i]] = uwsReq.getParameter(i);
-          const maxBody = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
-          let aborted = false;
-          let totalBytes = 0;
-          const chunks = [];
-          uwsRes.onAborted(() => {
-            aborted = true;
-            uwsAborted.set(uwsRes, true);
-            markUwsFinished(uwsRes);
-          });
-          uwsRes.onData((chunk, isLast) => {
-            if (aborted) return;
-            if (chunk.byteLength > 0) {
-              totalBytes += chunk.byteLength;
-              if (totalBytes > maxBody) {
-                aborted = true;
-                uwsCorkWrite(uwsRes, () => {
-                  uwsRes.writeStatus("413 Payload Too Large");
-                  uwsRes.writeHeader("Content-Type", CT_PROBLEM);
-                  uwsSafeEnd(uwsRes, BODY_413);
-                });
-                return;
+              if (isLast) {
+                const bodyStr = chunksToUtf8(chunks);
+                h(uwsRes, url, bodyStr, emptyParams, void 0, reqHeaders, remoteAddress);
               }
-              chunks.push(Buffer.from(chunk));
-            }
-            if (isLast) {
-              const bodyStr = chunks.length ? Buffer.concat(chunks).toString("utf8") : "";
-              h(uwsRes, url, bodyStr, params);
-            }
+            });
           });
-        });
+        } else {
+          uwsApp[fn](pattern, (uwsRes, uwsReq) => {
+            const remoteAddress = readUwsRemoteAddress(uwsRes);
+            const reqHeaders = collectReqHeaders(uwsReq);
+            const rawPath = uwsReq.getUrl();
+            const query = uwsReq.getQuery();
+            const url = query ? `${rawPath}?${query}` : rawPath;
+            const params = {};
+            for (let i = 0; i < names.length; i++) params[names[i]] = uwsReq.getParameter(i);
+            const maxBody = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+            let aborted = false;
+            let totalBytes = 0;
+            const chunks = [];
+            uwsRes.onAborted(() => {
+              aborted = true;
+              uwsAborted.set(uwsRes, true);
+              markUwsFinished(uwsRes);
+            });
+            uwsRes.onData((chunk, isLast) => {
+              if (aborted) return;
+              if (chunk.byteLength > 0) {
+                totalBytes += chunk.byteLength;
+                if (totalBytes > maxBody) {
+                  aborted = true;
+                  uwsCorkWrite(uwsRes, () => {
+                    uwsRes.writeStatus("413 Payload Too Large");
+                    uwsRes.writeHeader("Content-Type", CT_PROBLEM);
+                    uwsSafeEnd(uwsRes, bodyTooLargeJson(maxBody));
+                  });
+                  return;
+                }
+                chunks.push(Buffer.from(chunk));
+              }
+              if (isLast) {
+                const bodyStr = chunksToUtf8(chunks);
+                h(uwsRes, url, bodyStr, params, void 0, reqHeaders, remoteAddress);
+              }
+            });
+          });
+        }
       }
     }
     if (opts.wsRoutes) {
@@ -959,11 +1269,12 @@ async function createUwsServer(opts) {
         uwsApp.ws(wsRoute.path, buildWsBehavior(wsRoute.handler));
       }
     }
-    uwsApp.any("/*", (uwsRes) => {
+    uwsApp.any("/*", (uwsRes, uwsReq) => {
+      const ch = corsResolver ? corsResolver(uwsReq.getHeader("origin") || void 0) : corsHeaders;
       uwsCorkWrite(uwsRes, () => {
         uwsRes.writeStatus("404 Not Found");
         uwsRes.writeHeader("Content-Type", CT_PROBLEM);
-        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        if (ch) for (const [k, v] of ch) uwsRes.writeHeader(k, v);
         uwsSafeEnd(uwsRes, BODY_404);
       });
     });
@@ -1203,18 +1514,25 @@ async function resolveScopedServices(config, req) {
   };
 }
 var UwsReqAdapter = class {
-  constructor(urlStr, rawBody) {
+  constructor(urlStr, httpMethod, rawBody, headers = {}, clientAddress = "") {
     this.urlStr = urlStr;
+    this.httpMethod = httpMethod;
     this.rawBody = rawBody;
+    this.headers = headers;
+    this.clientAddress = clientAddress;
   }
-  header(_name) {
-    return void 0;
+  header(name) {
+    return this.headers[name.toLowerCase()];
   }
   get url() {
     return this.urlStr;
   }
   get method() {
-    return "GET";
+    return this.httpMethod;
+  }
+  /** Client IP captured synchronously on the uWS path (empty when unavailable). */
+  get remoteAddress() {
+    return this.clientAddress;
   }
   get path() {
     return this.urlStr.split("?")[0] ?? "/";
@@ -1228,17 +1546,77 @@ var UwsReqAdapter = class {
   }
 };
 
+// src/response-serializer.ts
+import build from "fast-json-stringify";
+import { z as z2 } from "zod";
+
+// src/json-schema.ts
+import { z } from "zod";
+function zodToJsonSchema(zodSchema) {
+  const { $schema, ...rest } = z.toJSONSchema(zodSchema);
+  return rest;
+}
+
+// src/response-serializer.ts
+function dateReplacer(_key, value) {
+  if (value instanceof Date) return value.toISOString();
+  return value;
+}
+function toJsonBody(result) {
+  if (typeof result === "string") return result;
+  return JSON.stringify(result, dateReplacer);
+}
+function isZodSchema(schema) {
+  return typeof schema === "object" && schema !== null && "safeParse" in schema;
+}
+function resolveResponseZodSchema(response) {
+  if (!response) return void 0;
+  if (isZodSchema(response)) return response;
+  const record = response;
+  return record[200] ?? record["200"] ?? Object.values(record)[0];
+}
+function compileResponseSerializerWithMeta(response) {
+  const zodSchema = resolveResponseZodSchema(response);
+  if (!zodSchema) return void 0;
+  if (zodSchema instanceof z2.ZodAny) {
+    return { serialize: toJsonBody, mode: "json-stringify" };
+  }
+  try {
+    const jsonSchema = zodToJsonSchema(zodSchema);
+    const stringify = build(jsonSchema);
+    return {
+      mode: "fast-json-stringify",
+      serialize: (data) => {
+        if (typeof data === "string") return data;
+        return stringify(data);
+      }
+    };
+  } catch {
+    return { serialize: toJsonBody, mode: "json-stringify" };
+  }
+}
+function compileResponseSerializer(response) {
+  return compileResponseSerializerWithMeta(response)?.serialize;
+}
+
 // src/compiler.ts
 var VALID_RESULT = Object.freeze({ valid: true, errors: null });
 function makeZValidator(schema) {
   return function(data) {
     const r = schema.safeParse(data);
     if (r.success) {
-      if (data !== null && typeof data === "object" && !Array.isArray(data)) {
-        const d = data;
-        const rd = r.data;
-        for (const k of Object.keys(d)) if (!(k in rd)) delete d[k];
-        Object.assign(d, rd);
+      if (data !== null && typeof data === "object") {
+        if (Array.isArray(data)) {
+          const rd = r.data;
+          const arr = data;
+          arr.length = 0;
+          for (let i = 0; i < rd.length; i++) arr.push(rd[i]);
+        } else {
+          const d = data;
+          const rd = r.data;
+          for (const k of Object.keys(d)) if (!(k in rd)) delete d[k];
+          Object.assign(d, rd);
+        }
       }
       return VALID_RESULT;
     }
@@ -1252,6 +1630,33 @@ function makeZValidator(schema) {
       }))
     };
   };
+}
+async function resolveHandlerError(err, path2, ctx, hook) {
+  if (hook && err instanceof Error) {
+    try {
+      const custom = hook(err, ctx);
+      if (custom instanceof Response) return custom;
+      if (custom != null && typeof custom.then === "function") {
+        return await custom;
+      }
+    } catch (hookErr) {
+      console.error("[Kozo] onError hook failed:", hookErr);
+    }
+  }
+  if (err instanceof KozoError) return err.toResponse(path2);
+  return internalErrorResponse(err, path2);
+}
+function resolveHandlerErrorSync(err, path2, ctx, hook) {
+  if (hook && err instanceof Error) {
+    try {
+      const custom = hook(err, ctx);
+      if (custom instanceof Response) return custom;
+    } catch (hookErr) {
+      console.error("[Kozo] onError hook failed:", hookErr);
+    }
+  }
+  if (err instanceof KozoError) return err.toResponse(path2);
+  return internalErrorResponse(err, path2);
 }
 var HonoReqAdapter = class {
   /** @internal */
@@ -1278,6 +1683,7 @@ var HonoReqAdapter = class {
     return this._c.req.text();
   }
 };
+var HONO_HEADERS_DIRTY = /* @__PURE__ */ Symbol("kozoHonoHeadersDirty");
 var CTX_PROTO = {
   json(data, status) {
     return this._c.json(data, status);
@@ -1292,6 +1698,7 @@ var CTX_PROTO = {
     return this._c.redirect(url, status);
   },
   header(name, value) {
+    this._c[HONO_HEADERS_DIRTY] = true;
     return this._c.header(name, value);
   }
 };
@@ -1318,9 +1725,11 @@ function buildCtx(c, extra) {
   }
   return ctx;
 }
-function honoResultToResponse(result, ser) {
+function honoResultToResponse(c, result, ser) {
   if (result instanceof Response) return result;
-  return jsonResponse200(ser(result));
+  const body = ser(result);
+  if (c[HONO_HEADERS_DIRTY]) return c.body(body, 200, { "Content-Type": "application/json" });
+  return jsonResponse200(body);
 }
 async function runHonoScoped(scope, req, run) {
   let err;
@@ -1333,55 +1742,67 @@ async function runHonoScoped(scope, req, run) {
     await resolved.finish(err);
   }
 }
-function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, services, ser, corsHeaders) {
+function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, services, ser, method, remoteAddress, corsHeaders, reqHeaders, user) {
   let done = false;
+  let userHeaders;
+  const finalCors = () => {
+    if (!userHeaders) return corsHeaders;
+    return corsHeaders ? [...corsHeaders, ...userHeaders] : userHeaders;
+  };
   const ctx = {
-    req: new UwsReqAdapter(url, rawBody),
+    req: new UwsReqAdapter(url, method, rawBody, reqHeaders ?? {}, remoteAddress),
     body,
     params,
     query,
     services,
-    user: null,
+    user: user ?? null,
+    header(name, value) {
+      (userHeaders ??= []).push([name, value]);
+    },
     json(data, status) {
       done = true;
       const body2 = ser(data);
-      if (status !== void 0 && status !== 200) uwsFastWriteJsonStatus(uwsRes, body2, status, corsHeaders);
-      else uwsFastWriteJson(uwsRes, body2, corsHeaders);
+      const ch = finalCors();
+      if (status !== void 0 && status !== 200) uwsFastWriteJsonStatus(uwsRes, body2, status, ch);
+      else uwsFastWriteJson(uwsRes, body2, ch);
     },
     text(data, status) {
       done = true;
       if (!canWriteUws(uwsRes)) return;
+      const ch = finalCors();
       uwsCorkRespond(uwsRes, () => {
         uwsRes.writeStatus(`${status ?? 200}`);
         uwsRes.writeHeader("Content-Type", "text/plain");
-        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        if (ch) for (const [k, v] of ch) uwsRes.writeHeader(k, v);
         uwsSafeEnd(uwsRes, data);
       });
     },
     html(data, status) {
       done = true;
       if (!canWriteUws(uwsRes)) return;
+      const ch = finalCors();
       uwsCorkRespond(uwsRes, () => {
         uwsRes.writeStatus(`${status ?? 200}`);
         uwsRes.writeHeader("Content-Type", "text/html; charset=utf-8");
-        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        if (ch) for (const [k, v] of ch) uwsRes.writeHeader(k, v);
         uwsSafeEnd(uwsRes, data);
       });
     },
     redirect(target, status) {
       done = true;
       if (!canWriteUws(uwsRes)) return;
+      const ch = finalCors();
       uwsCorkRespond(uwsRes, () => {
         uwsRes.writeStatus(`${status ?? 302}`);
         uwsRes.writeHeader("Location", target);
-        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        if (ch) for (const [k, v] of ch) uwsRes.writeHeader(k, v);
         uwsSafeEnd(uwsRes, "");
       });
     }
   };
-  return { ctx, responded: () => done };
+  return { ctx, responded: () => done, finalCors };
 }
-function compileScopedRouteHandler(handler, compiled, scope) {
+function compileScopedRouteHandler(handler, compiled, scope, errorHook) {
   const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
   const ser = serialize ?? toJsonBody;
   if (vb) {
@@ -1409,16 +1830,14 @@ function compileScopedRouteHandler(handler, compiled, scope) {
         return await runHonoScoped(scope, req, async (services, signalError) => {
           try {
             const result = await handler(buildCtx(c, { body, query, params, services }));
-            return honoResultToResponse(result, ser);
+            return honoResultToResponse(c, result, ser);
           } catch (err) {
             signalError(err);
-            if (err instanceof KozoError) return err.toResponse(path2);
-            return internalErrorResponse(err, path2);
+            return resolveHandlerErrorSync(err, path2, c, errorHook);
           }
         });
       } catch (err) {
-        if (err instanceof KozoError) return err.toResponse(path2);
-        return internalErrorResponse(err, path2);
+        return resolveHandlerErrorSync(err, path2, c, errorHook);
       }
     };
   }
@@ -1444,22 +1863,20 @@ function compileScopedRouteHandler(handler, compiled, scope) {
           const result = handler.length === 0 ? handler() : handler(buildCtx(c, extra));
           if (result != null && typeof result.then === "function") {
             const r = await result;
-            return honoResultToResponse(r, ser);
+            return honoResultToResponse(c, r, ser);
           }
-          return honoResultToResponse(result, ser);
+          return honoResultToResponse(c, result, ser);
         } catch (err) {
           signalError(err);
-          if (err instanceof KozoError) return err.toResponse(path2);
-          return internalErrorResponse(err, path2);
+          return resolveHandlerErrorSync(err, path2, c, errorHook);
         }
       });
     } catch (err) {
-      if (err instanceof KozoError) return err.toResponse(path2);
-      return internalErrorResponse(err, path2);
+      return resolveHandlerErrorSync(err, path2, c, errorHook);
     }
   };
 }
-function isZodSchema(schema) {
+function isZodSchema2(schema) {
   return typeof schema === "object" && schema !== null && "safeParse" in schema;
 }
 function jsonResponse200(body) {
@@ -1467,35 +1884,27 @@ function jsonResponse200(body) {
 }
 var EMPTY_BODY = Object.freeze({});
 var EMPTY_BODY_HANDLER = () => EMPTY_BODY;
-function dateReplacer(_key, value) {
-  if (value instanceof Date) return value.toISOString();
-  return value;
-}
-function toJsonBody(result) {
-  if (typeof result === "string") return result;
-  return JSON.stringify(result, dateReplacer);
-}
 var SchemaCompiler = class {
   static compile(schema) {
     const compiled = {};
-    if (schema.body && isZodSchema(schema.body)) {
+    if (schema.body && isZodSchema2(schema.body)) {
       compiled.validateBody = makeZValidator(schema.body);
     }
-    if (schema.query && isZodSchema(schema.query)) {
+    if (schema.query && isZodSchema2(schema.query)) {
       compiled.validateQuery = makeZValidator(schema.query);
     }
-    if (schema.params && isZodSchema(schema.params)) {
+    if (schema.params && isZodSchema2(schema.params)) {
       compiled.validateParams = makeZValidator(schema.params);
     }
     if (schema.response) {
-      compiled.serialize = (data) => JSON.stringify(data, dateReplacer);
+      compiled.serialize = compileResponseSerializer(schema.response);
     }
     return compiled;
   }
 };
-function compileRouteHandler(handler, schema, services, compiled, scope) {
+function compileRouteHandler(handler, schema, services, compiled, scope, errorHook) {
   if (scope?.factory) {
-    return compileScopedRouteHandler(handler, compiled, scope);
+    return compileScopedRouteHandler(handler, compiled, scope, errorHook);
   }
   const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
   const svc = services != null && Object.keys(services).length > 0 ? services : void 0;
@@ -1523,11 +1932,9 @@ function compileRouteHandler(handler, schema, services, compiled, scope) {
           if (!r.valid) return validationErrorResponse("params", r.errors, path2);
         }
         const result = await handler(buildCtx(c, { body, query, params, services: svc }));
-        if (result instanceof Response) return result;
-        return jsonResponse200(ser(result));
+        return honoResultToResponse(c, result, ser);
       } catch (err) {
-        if (err instanceof KozoError) return err.toResponse(path2);
-        return internalErrorResponse(err, path2);
+        return await resolveHandlerError(err, path2, c, errorHook);
       }
     };
   }
@@ -1550,33 +1957,46 @@ function compileRouteHandler(handler, schema, services, compiled, scope) {
       if (result instanceof Response) return result;
       if (result != null && typeof result.then === "function") {
         return result.then(
-          (r) => r instanceof Response ? r : jsonResponse200(ser(r)),
-          (err) => err instanceof KozoError ? err.toResponse(c.req.path) : internalErrorResponse(err, c.req.path)
+          (r) => honoResultToResponse(c, r, ser),
+          (err) => resolveHandlerErrorSync(err, c.req.path, c, errorHook)
         );
       }
-      return jsonResponse200(ser(result));
+      return honoResultToResponse(c, result, ser);
     } catch (err) {
-      if (err instanceof KozoError) return err.toResponse(c.req.path);
-      return internalErrorResponse(err, c.req.path);
+      return resolveHandlerErrorSync(err, c.req.path, c, errorHook);
     }
   };
 }
 var DEFAULT_MAX_BODY_BYTES2 = 1 * 1024 * 1024;
-function compileUwsNativeHandler(handler, schema, services, compiled, scope) {
+function compileUwsNativeHandler(handler, schema, services, compiled, scope, maxBodyBytes = DEFAULT_MAX_BODY_BYTES2, method = "GET") {
   const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
   const svc = services != null && Object.keys(services).length > 0 ? services : void 0;
   const ser = serialize ?? toJsonBody;
   const noArgs = handler.length === 0;
   const hasScope = scope?.factory != null;
-  function runUwsHandler(uwsRes, url, rawBody, params, body, query, runServices, corsHeaders) {
-    const { ctx, responded } = buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, runServices ?? {}, ser, corsHeaders);
+  function runUwsHandler(uwsRes, url, rawBody, params, body, query, runServices, corsHeaders, reqHeaders, remoteAddress = "", user) {
+    const { ctx, responded, finalCors } = buildUwsHandlerContext(
+      uwsRes,
+      url,
+      rawBody,
+      params,
+      body,
+      query,
+      runServices ?? {},
+      ser,
+      method,
+      remoteAddress,
+      corsHeaders,
+      reqHeaders,
+      user
+    );
     const result = noArgs ? handler() : handler(ctx);
     if (result != null && typeof result.then === "function") {
       result.then(
         (r) => {
           if (!canWriteUws(uwsRes)) return;
           try {
-            if (!responded()) uwsFastWriteJson(uwsRes, ser(r), corsHeaders);
+            if (!responded()) uwsFastWriteJson(uwsRes, ser(r), finalCors());
           } catch (err) {
             uwsFastWriteError(err, uwsRes, corsHeaders);
           }
@@ -1587,18 +2007,18 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope) {
       );
       return;
     }
-    if (!responded() && canWriteUws(uwsRes)) uwsFastWriteJson(uwsRes, ser(result), corsHeaders);
+    if (!responded() && canWriteUws(uwsRes)) uwsFastWriteJson(uwsRes, ser(result), finalCors());
   }
-  return function uws_handler(uwsRes, url, rawBody, params, corsHeaders) {
+  return function uws_handler(uwsRes, url, rawBody, params, corsHeaders, reqHeaders, remoteAddress = "", user) {
     try {
       let body;
       if (vb) {
-        if (rawBody && rawBody.length > DEFAULT_MAX_BODY_BYTES2) {
+        if (rawBody && rawBody.length > maxBodyBytes) {
           uwsCorkRespond(uwsRes, () => {
             uwsRes.writeStatus("413 Payload Too Large");
-            uwsRes.writeHeader("Content-Type", "application/json");
+            uwsRes.writeHeader("Content-Type", "application/problem+json");
             if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-            uwsSafeEnd(uwsRes, JSON.stringify({ error: "Payload Too Large", message: `Request body exceeds maximum allowed size` }));
+            uwsSafeEnd(uwsRes, bodyTooLargeJson(maxBodyBytes));
           });
           return;
         }
@@ -1633,9 +2053,9 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope) {
       if (hasScope && scope) {
         void (async () => {
           let err;
-          const resolved = await resolveScopedServices(scope, new UwsReqAdapter(url, rawBody));
+          const resolved = await resolveScopedServices(scope, new UwsReqAdapter(url, method, rawBody, reqHeaders ?? {}, remoteAddress));
           try {
-            runUwsHandler(uwsRes, url, rawBody, params, body, query, resolved.services, corsHeaders);
+            runUwsHandler(uwsRes, url, rawBody, params, body, query, resolved.services, corsHeaders, reqHeaders, remoteAddress, user);
           } catch (e) {
             err = e;
             if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
@@ -1645,7 +2065,7 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope) {
         })();
         return;
       }
-      runUwsHandler(uwsRes, url, rawBody, params, body, query, svc, corsHeaders);
+      runUwsHandler(uwsRes, url, rawBody, params, body, query, svc, corsHeaders, reqHeaders, remoteAddress, user);
     } catch (err) {
       if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
     }
@@ -1704,6 +2124,28 @@ function rateLimit(options) {
       return c.json({ error: message }, 429);
     }
     await next();
+  };
+}
+function rateLimitGuard(options) {
+  const {
+    max,
+    window,
+    keyGenerator = (req) => req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? req.header("x-real-ip") ?? req.remoteAddress ?? "anonymous",
+    message = "Too many requests",
+    store = memoryStore
+  } = options;
+  const windowMs = window * 1e3;
+  return async (req) => {
+    const record = await store.increment(keyGenerator(req), windowMs);
+    const headers = {
+      "X-RateLimit-Limit": String(max),
+      "X-RateLimit-Remaining": String(Math.max(0, max - record.count)),
+      "X-RateLimit-Reset": String(Math.ceil(record.resetAt / 1e3))
+    };
+    if (record.count > max) {
+      return { deny: { status: 429, body: { error: message }, headers } };
+    }
+    return { headers };
   };
 }
 function clearRateLimitStore() {
@@ -2142,6 +2584,154 @@ async function scanMiddleware(options) {
   return definitions;
 }
 
+// src/guard.ts
+var STATUS_TITLES = {
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  405: "Method Not Allowed",
+  409: "Conflict",
+  422: "Unprocessable Entity",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  503: "Service Unavailable"
+};
+function denyBodyJson(d) {
+  return JSON.stringify(
+    d.body ?? { title: STATUS_TITLES[d.status] ?? "Request Denied", status: d.status }
+  );
+}
+var RE_ESCAPE = /[.*+?^${}()|[\]\\]/g;
+function compileGuardPattern(pattern) {
+  if (pattern === "*" || pattern === "/*") return /(?:)/;
+  let re = "";
+  for (const seg of pattern.split("/").filter(Boolean)) {
+    if (seg === "*") return new RegExp(`^${re}(?:/.*)?$`);
+    re += "/" + (seg.startsWith(":") ? "[^/]+" : seg.replace(RE_ESCAPE, "\\$&"));
+  }
+  return new RegExp(`^${re}/?$`);
+}
+function guardToHonoMiddleware(guard) {
+  return async (c, next) => {
+    const u = new URL(c.req.url);
+    const greq = {
+      method: c.req.method,
+      path: u.pathname,
+      url: u.pathname + u.search,
+      remoteAddress: honoRemoteAddress(c),
+      params: c.req.param(),
+      get user() {
+        return honoUser(c);
+      },
+      header: (n) => c.req.header(n)
+    };
+    const r = await guard(greq);
+    if (r != null) {
+      if (r.deny) {
+        return new Response(denyBodyJson(r.deny), {
+          status: r.deny.status,
+          headers: { "Content-Type": "application/json", ...r.deny.headers }
+        });
+      }
+      if (r.user !== void 0) c.set("user", r.user);
+      if (r.headers) {
+        await next();
+        for (const k in r.headers) c.res.headers.set(k, r.headers[k]);
+        return;
+      }
+    }
+    return next();
+  };
+}
+function honoUser(c) {
+  try {
+    return c.get("user") ?? null;
+  } catch {
+    return null;
+  }
+}
+function honoRemoteAddress(c) {
+  const raw = c.req.raw;
+  const direct = raw?.socket?.remoteAddress;
+  if (direct) return direct;
+  return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? "";
+}
+function compileGuards(entries) {
+  return entries.map((e) => ({ re: compileGuardPattern(e.pattern), guard: e.guard }));
+}
+function wrapNativeWithGuards(guards, inner, method) {
+  return (uwsRes, url, rawBody, params, corsHeaders, reqHeaders, remoteAddress = "") => {
+    const qIdx = url.indexOf("?");
+    const path2 = qIdx === -1 ? url : url.slice(0, qIdx);
+    let user = null;
+    let extraHeaders = null;
+    const greq = {
+      method,
+      path: path2,
+      url,
+      remoteAddress,
+      params,
+      get user() {
+        return user;
+      },
+      header: (n) => reqHeaders?.[n.toLowerCase()]
+    };
+    const denyNow = (d) => {
+      uwsCorkRespond(uwsRes, () => {
+        uwsRes.writeStatus(`${d.status} ${STATUS_TITLES[d.status] ?? ""}`.trimEnd());
+        uwsRes.writeHeader("Content-Type", "application/json");
+        if (d.headers) for (const k in d.headers) uwsRes.writeHeader(k, d.headers[k]);
+        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        uwsSafeEnd(uwsRes, denyBodyJson(d));
+      });
+    };
+    const apply = (r) => {
+      if (r == null) return false;
+      if (r.deny) {
+        denyNow(r.deny);
+        return true;
+      }
+      if (r.user !== void 0) user = r.user;
+      if (r.headers) {
+        extraHeaders ??= [];
+        for (const k in r.headers) extraHeaders.push([k, r.headers[k]]);
+      }
+      return false;
+    };
+    const proceed = () => {
+      const ch = extraHeaders ? [...corsHeaders ?? [], ...extraHeaders] : corsHeaders;
+      return inner(uwsRes, url, rawBody, params, ch, reqHeaders, remoteAddress, user);
+    };
+    let i = 0;
+    const step = () => {
+      while (i < guards.length) {
+        const g = guards[i++];
+        if (!g.re.test(path2)) continue;
+        const r = g.guard(greq);
+        if (r != null && typeof r.then === "function") {
+          return r.then((res) => {
+            if (apply(res)) return;
+            return step();
+          });
+        }
+        if (apply(r)) return;
+      }
+      return proceed();
+    };
+    try {
+      const p = step();
+      if (p != null && typeof p.then === "function") {
+        return p.catch((err) => {
+          uwsFastWriteError(err, uwsRes, corsHeaders);
+        });
+      }
+    } catch (err) {
+      uwsFastWriteError(err, uwsRes, corsHeaders);
+    }
+  };
+}
+
 // src/ssr.ts
 import {
   createServer as createHttpServer
@@ -2206,7 +2796,14 @@ function pipeStreamResponse(res, headPart, tailPart, pipe) {
   pipe(sink);
 }
 async function serveStaticFile(staticDir, urlPath, res) {
-  const decoded = decodeURIComponent(urlPath);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(urlPath);
+  } catch {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("Bad Request");
+    return true;
+  }
   const safePath = path.normalize(decoded).replace(/^(\.\.[/\\])+/, "");
   const filePath = path.join(staticDir, safePath);
   if (!filePath.startsWith(staticDir)) return false;
@@ -2310,7 +2907,9 @@ async function startProductionServer(config, root, apiPrefixes, appPlaceholder, 
   });
   return new Promise((resolve2) => {
     server.listen(port, () => {
-      console.log(`\u{1F680} Kozo SSR production server \u2192 http://localhost:${port}`);
+      if (config.logger !== false) {
+        console.log(`\u{1F680} Kozo SSR production server \u2192 http://localhost:${port}`);
+      }
       resolve2({ server, port });
     });
   });
@@ -2406,517 +3005,15 @@ Run: pnpm add -D vite (in ${root})`
   });
   return new Promise((resolve2) => {
     server.listen(port, () => {
-      console.log(`\u26A1 Kozo SSR dev server \u2192 http://localhost:${port}`);
+      if (config.logger !== false) {
+        console.log(`\u26A1 Kozo SSR dev server \u2192 http://localhost:${port}`);
+      }
       resolve2({ server, port });
     });
   });
 }
 
-// src/app.ts
-var KozoGroup = class {
-  constructor(prefix, parent) {
-    this.prefix = prefix;
-    this.parent = parent;
-  }
-  get(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") this.parent.get(this.prefix + path2, schemaOrHandler);
-    else this.parent.get(this.prefix + path2, schemaOrHandler, handler, meta);
-    return this;
-  }
-  post(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") this.parent.post(this.prefix + path2, schemaOrHandler);
-    else this.parent.post(this.prefix + path2, schemaOrHandler, handler, meta);
-    return this;
-  }
-  put(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") this.parent.put(this.prefix + path2, schemaOrHandler);
-    else this.parent.put(this.prefix + path2, schemaOrHandler, handler, meta);
-    return this;
-  }
-  patch(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") this.parent.patch(this.prefix + path2, schemaOrHandler);
-    else this.parent.patch(this.prefix + path2, schemaOrHandler, handler, meta);
-    return this;
-  }
-  delete(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") this.parent.delete(this.prefix + path2, schemaOrHandler);
-    else this.parent.delete(this.prefix + path2, schemaOrHandler, handler, meta);
-    return this;
-  }
-};
-var Kozo = class _Kozo {
-  app;
-  services;
-  _scope;
-  routes = [];
-  /** Deferred uWS route data — compiled lazily only when nativeListen() is called. */
-  _deferredUws = [];
-  shutdownManager = new ShutdownManager();
-  _routesDir;
-  _wsRoutes = [];
-  _onStart;
-  _onStop;
-  _maxBodyBytes;
-  /** Normalize bare Zod response schema → { 200: schema } for OpenAPI generators */
-  static normalizeSchema(schema) {
-    if (schema.response && typeof schema.response.parse === "function") {
-      return { ...schema, response: { 200: schema.response } };
-    }
-    return schema;
-  }
-  constructor(config = {}) {
-    this.app = new Hono();
-    this.services = config.services ?? {};
-    this._routesDir = config.routesDir;
-    this._onStart = config.onStart;
-    this._onStop = config.onStop;
-    this._maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES2;
-    if (config.scopedServices) {
-      this._scope = {
-        base: this.services,
-        factory: config.scopedServices,
-        onEnd: config.onRequestEnd
-      };
-    }
-    this.app.onError((err, c) => {
-      if (err instanceof KozoError) {
-        return err.toResponse(c.req.path);
-      }
-      console.error("[Kozo] Unhandled error:", err);
-      return internalErrorResponse(err, c.req.path);
-    });
-  }
-  // Plugin system
-  use(plugin) {
-    plugin.install(this);
-    return this;
-  }
-  /**
-   * Load routes from the file system using the configured routesDir.
-   * Each route file is dynamically imported, its schema compiled, and handler registered.
-   *
-   * Also scans for `_middleware.ts` files in each directory and registers them
-   * as scoped Hono middleware (parent directories run first):
-   *
-   *   routes/_middleware.ts        → applies to all routes
-   *   routes/admin/_middleware.ts  → applies to /admin/* routes only
-   *
-   * This is a no-op if routesDir is not configured.
-   */
-  async loadRoutes(routesDir) {
-    const dir = routesDir ?? this._routesDir;
-    if (!dir) return this;
-    const middlewares = await scanMiddleware({ routesDir: dir, verbose: false });
-    for (const mw of middlewares) {
-      this.app.use(mw.pathPrefix, mw.handler);
-    }
-    const routes = await scanRoutes({ routesDir: dir, verbose: false });
-    const compiled = await Promise.all(
-      routes.map(async (route) => {
-        const { path: path2, method, module } = route;
-        const resolved = resolveRouteModule(module);
-        const { handler, schema, meta } = resolved;
-        const compiledSchema = SchemaCompiler.compile(schema);
-        return { path: path2, method, handler, schema, meta, compiledSchema };
-      })
-    );
-    for (const { path: path2, method, handler, schema, meta, compiledSchema } of compiled) {
-      const normalizedSchema = _Kozo.normalizeSchema(schema);
-      const optimizedHandler = compileRouteHandler(
-        (ctx) => handler(ctx),
-        normalizedSchema,
-        this.services,
-        compiledSchema,
-        this._scope
-      );
-      this.routes.push({ method, path: path2, schema: normalizedSchema, meta });
-      this.app[method](path2, optimizedHandler);
-      const paramNames = [];
-      path2.replace(/:([^/]+)/g, (_, name) => {
-        paramNames.push(name);
-        return name;
-      });
-      this._deferredUws.push({ method: method.toUpperCase(), path: path2, paramNames, handler: (ctx) => handler(ctx), schema, compiled: compiledSchema });
-    }
-    return this;
-  }
-  generateClient(baseUrlOrOptions) {
-    const options = typeof baseUrlOrOptions === "string" ? { baseUrl: baseUrlOrOptions } : baseUrlOrOptions || {};
-    const routeInfos = this.routes.map((r) => ({
-      method: r.method,
-      path: r.path,
-      schema: r.schema
-    }));
-    return generateTypedClient(routeInfos, options);
-  }
-  get(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") return this.register("get", path2, {}, schemaOrHandler);
-    return this.register("get", path2, schemaOrHandler, handler, meta);
-  }
-  post(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") return this.register("post", path2, {}, schemaOrHandler);
-    return this.register("post", path2, schemaOrHandler, handler, meta);
-  }
-  put(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") return this.register("put", path2, {}, schemaOrHandler);
-    return this.register("put", path2, schemaOrHandler, handler, meta);
-  }
-  patch(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") return this.register("patch", path2, {}, schemaOrHandler);
-    return this.register("patch", path2, schemaOrHandler, handler, meta);
-  }
-  delete(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") return this.register("delete", path2, {}, schemaOrHandler);
-    return this.register("delete", path2, schemaOrHandler, handler, meta);
-  }
-  /**
-   * Group routes under a common path prefix.
-   *
-   * @example
-   * app.group('/users', (r) => {
-   *   r.get('/',    { query: paginationSchema }, (ctx) => listUsers(ctx.query));
-   *   r.get('/:id', { params: uuidParams },     (ctx) => getUser(ctx.params.id));
-   *   r.post('/',   { body: CreateUserSchema }, (ctx) => createUser(ctx.body));
-   * });
-   */
-  group(prefix, fn) {
-    fn(new KozoGroup(prefix, this));
-    return this;
-  }
-  /**
-   * Register a WebSocket endpoint (requires `nativeListen()` with uWebSockets.js).
-   *
-   * @example
-   * app.ws('/ws/chat', {
-   *   open(ws)  { ws.subscribe('chat'); },
-   *   message(ws, data) { ws.publish('chat', data); },
-   * });
-   *
-   * // With typed user data and auth:
-   * app.ws<{ userId: string }>('/ws/secure', {
-   *   upgrade(req) {
-   *     const userId = verifyToken(req.headers['authorization']);
-   *     return userId ? { userId } : false;
-   *   },
-   *   open(ws) { console.log(ws.data.userId, 'connected'); },
-   * });
-   */
-  ws(path2, handler) {
-    this._wsRoutes.push({ path: path2, handler });
-    return this;
-  }
-  register(method, path2, schema, handler, meta) {
-    const normalizedSchema = _Kozo.normalizeSchema(schema);
-    this.routes.push({ method, path: path2, schema: normalizedSchema, meta });
-    const compiled = SchemaCompiler.compile(normalizedSchema);
-    const optimizedHandler = compileRouteHandler(
-      handler,
-      normalizedSchema,
-      this.services,
-      compiled,
-      this._scope
-    );
-    this.app[method](path2, optimizedHandler);
-    const paramNames = [];
-    path2.replace(/:([^/]+)/g, (_, name) => {
-      paramNames.push(name);
-      return name;
-    });
-    this._deferredUws.push({ method: method.toUpperCase(), path: path2, paramNames, handler, schema: normalizedSchema, compiled });
-    return this;
-  }
-  /**
-   * Start a uWebSockets.js HTTP server.
-   *
-   * All routes are registered directly with uWS's C++ radix trie router —
-   * zero JS routing overhead per request. The C++ HTTP parser (µHttpParser)
-   * eliminates all IncomingMessage/ServerResponse allocations.
-   *
-   * Throws if uWebSockets.js is not installed.
-   * Returns { port, server } so callers can close the server when done.
-   */
-  async nativeListen(portOrOptions) {
-    const opts = typeof portOrOptions === "number" ? { port: portOrOptions } : portOrOptions ?? {};
-    const port = opts.port ?? 3e3;
-    const uwsBindings = await tryLoadUws();
-    if (!uwsBindings) {
-      throw new Error(
-        "[Kozo] uWebSockets.js is required but not installed.\nRun: pnpm add uWebSockets.js"
-      );
-    }
-    const manager = this.shutdownManager;
-    const uwsRoutes = this._deferredUws.map((r) => ({
-      method: r.method,
-      path: r.path,
-      paramNames: r.paramNames,
-      handler: compileUwsNativeHandler(r.handler, r.schema, this.services, r.compiled, this._scope)
-    }));
-    this._deferredUws.length = 0;
-    const result = await createUwsServer({
-      uws: uwsBindings,
-      routes: uwsRoutes,
-      port,
-      cors: opts.cors,
-      isShuttingDown: () => manager.isShuttingDown(),
-      trackRequest: () => manager.trackRequest(),
-      wsRoutes: this._wsRoutes.length > 0 ? this._wsRoutes : void 0
-    });
-    manager.setServer(result.server);
-    if (this._wsRoutes.length > 0) {
-      console.log(`\u{1F680} uWebSockets.js transport active (HTTP + ${this._wsRoutes.length} WebSocket route${this._wsRoutes.length > 1 ? "s" : ""})`);
-    } else {
-      console.log("\u{1F680} uWebSockets.js transport active (C++ HTTP parser + native radix router)");
-    }
-    if (this._onStart) {
-      await this._onStart({ services: this.services });
-    }
-    return result;
-  }
-  async listen(port) {
-    if (this._wsRoutes.length > 0) {
-      console.warn("[Kozo] WebSocket routes require nativeListen() (uWebSockets.js). They will be ignored with listen().");
-    }
-    const finalPort = port ?? 3e3;
-    const manager = this.shutdownManager;
-    const originalFetch = this.app.fetch;
-    let shutdownStarted = false;
-    manager.onShutdownStart(() => {
-      shutdownStarted = true;
-    });
-    const server = serve({
-      fetch: (req, ...args) => {
-        const contentLength = req.headers.get("content-length");
-        if (contentLength !== null && Number(contentLength) > this._maxBodyBytes) {
-          return new Response(
-            JSON.stringify({
-              type: "about:blank",
-              title: "Content Too Large",
-              status: 413,
-              detail: `Request body exceeds the ${this._maxBodyBytes}-byte limit`
-            }),
-            {
-              status: 413,
-              headers: { "Content-Type": "application/problem+json" }
-            }
-          );
-        }
-        if (!shutdownStarted) {
-          const untrack2 = manager.trackRequest();
-          try {
-            return originalFetch(req, ...args);
-          } finally {
-            untrack2();
-          }
-        }
-        if (manager.isShuttingDown()) {
-          return new Response(
-            JSON.stringify({
-              type: "about:blank",
-              title: "Service Unavailable",
-              status: 503,
-              detail: "Server is shutting down, please retry later"
-            }),
-            {
-              status: 503,
-              headers: { "Content-Type": "application/problem+json" }
-            }
-          );
-        }
-        const untrack = manager.trackRequest();
-        try {
-          return originalFetch(req, ...args);
-        } finally {
-          untrack();
-        }
-      },
-      port: finalPort
-    });
-    manager.setServer(server);
-    console.log(`\u{1F680} Kozo server listening on http://localhost:${finalPort}`);
-    if (this._onStart) {
-      await this._onStart({ services: this.services });
-    }
-  }
-  /**
-   * Start a unified server that handles both API routes and SSR-rendered pages.
-   *
-   * API routes (matching `ssrConfig.apiPrefix`, default `/api`) are routed
-   * through Hono. All other requests go through the Vite SSR pipeline:
-   * - Dev:  Vite middleware for HMR + optional SSR rendering
-   * - Prod: Static file serving + SSR template rendering
-   *
-   * This eliminates the need for a separate frontend server and API proxy.
-   *
-   * @example
-   * const app = createKozo({ routesDir: './src/routes' });
-   * await app.loadRoutes();
-   *
-   * await app.listenSsr(3000, {
-   *   root: path.resolve(__dirname, '../web'),
-   *   entryServer: 'src/entry-server.tsx',
-   * });
-   */
-  async listenSsr(port, ssrConfig) {
-    const manager = this.shutdownManager;
-    const originalFetch = this.app.fetch;
-    let shutdownStarted = false;
-    manager.onShutdownStart(() => {
-      shutdownStarted = true;
-    });
-    const shutdownFetch = (req, ...args) => {
-      if (!shutdownStarted) {
-        const untrack2 = manager.trackRequest();
-        try {
-          return originalFetch(req, ...args);
-        } finally {
-          untrack2();
-        }
-      }
-      if (manager.isShuttingDown()) {
-        return new Response(
-          JSON.stringify({
-            type: "about:blank",
-            title: "Service Unavailable",
-            status: 503,
-            detail: "Server is shutting down, please retry later"
-          }),
-          { status: 503, headers: { "Content-Type": "application/problem+json" } }
-        );
-      }
-      const untrack = manager.trackRequest();
-      try {
-        return originalFetch(req, ...args);
-      } finally {
-        untrack();
-      }
-    };
-    const { getRequestListener } = await import("@hono/node-server");
-    const honoHandler = getRequestListener(shutdownFetch);
-    const result = await createSsrServer(ssrConfig, honoHandler, port);
-    manager.setServer(result.server);
-    return result;
-  }
-  /**
-   * Graceful shutdown — drains in-flight requests before closing.
-   * Calls `onStop` lifecycle hook after draining and internal cleanup.
-   * Use getShutdownManager().setDatabase(db, provider) to register DB cleanup.
-   */
-  async shutdown(options) {
-    clearRateLimitStore();
-    await this.shutdownManager.shutdown(options);
-    if (this._onStop) {
-      try {
-        await this._onStop({ services: this.services });
-      } catch (err) {
-        console.error("[Kozo] onStop hook error:", err);
-      }
-    }
-  }
-  getShutdownManager() {
-    return this.shutdownManager;
-  }
-  getApp() {
-    return this.app;
-  }
-  middleware(pathOrHandler, handler) {
-    if (typeof pathOrHandler === "string") {
-      this.app.use(pathOrHandler, handler);
-    } else {
-      this.app.use(pathOrHandler);
-    }
-    return this;
-  }
-  /**
-   * Returns all registered routes (file-system + manual) after {@link loadRoutes} completes.
-   * Use this to inspect `meta.auth`, `meta.tags`, etc. at runtime.
-   *
-   * @example
-   * await app.loadRoutes();
-   * const publicRoutes = app.getRoutes().filter(r => r.meta?.auth === false);
-   */
-  getRoutes() {
-    return this.routes;
-  }
-  get fetch() {
-    return this.app.fetch;
-  }
-};
-function createKozo(config) {
-  return new Kozo(config);
-}
-
-// src/kozo-app.ts
-function defineKozoApp(options) {
-  const { routesDir = "./src/routes", services, types, configure, onReady, ...kozo } = options;
-  const definition = {
-    routesDir,
-    services,
-    types,
-    configure,
-    onReady,
-    kozo,
-    build: () => buildKozoApp(definition)
-  };
-  return definition;
-}
-async function buildKozoApp(definition) {
-  const resolved = await definition.services();
-  const app = createKozo({
-    ...definition.kozo,
-    routesDir: definition.routesDir,
-    services: resolved
-  });
-  if (definition.configure) {
-    await definition.configure({ app, services: resolved });
-  }
-  await app.loadRoutes();
-  if (definition.onReady) {
-    await definition.onReady({ app });
-  }
-  return app;
-}
-async function renderKozoTypesDts(types, projectRoot) {
-  const path2 = await import("path");
-  const from = path2.join(projectRoot, ".kozo", "types.d.ts");
-  const to = path2.join(projectRoot, types.from);
-  let rel = path2.relative(path2.dirname(from), to).replace(/\\/g, "/");
-  if (!rel.startsWith(".")) rel = `./${rel}`;
-  const importPath = rel.replace(/\.ts$/, ".js");
-  return `// Auto-generated by Kozo \u2014 do not edit.
-import type { ${types.name} } from '${importPath}';
-
-declare module '@kozojs/core' {
-  interface KozoServices extends ${types.name} {}
-}
-`;
-}
-var KOZO_TYPES_CANDIDATES = [
-  "src/kozo.types.ts",
-  "src/kozo.types.js",
-  "kozo.types.ts"
-];
-var KOZO_CONFIG_CANDIDATES = [
-  "kozo.config.ts",
-  "kozo.config.js",
-  "src/kozo.config.ts",
-  "src/kozo.config.js"
-];
-var KOZO_TYPES_OUTPUT = ".kozo/types.d.ts";
-
-// src/types.ts
-function defineRoute(options) {
-  return options;
-}
-
-// src/index.ts
-import { z as z3 } from "zod";
-
 // src/openapi.ts
-import { z } from "zod";
-function zodToJsonSchema(zodSchema) {
-  const { $schema, ...rest } = z.toJSONSchema(zodSchema);
-  return rest;
-}
 var OpenAPIGenerator = class {
   config;
   schemas = /* @__PURE__ */ new Map();
@@ -3141,6 +3238,720 @@ function createOpenAPIGenerator(config) {
   return new OpenAPIGenerator(config);
 }
 
+// src/app.ts
+function docsRouteTag(path2) {
+  const segments = path2.split("/").filter(Boolean);
+  const seg = (segments[0]?.toLowerCase() === "api" ? segments[1] : segments[0]) ?? "general";
+  return seg.charAt(0).toUpperCase() + seg.slice(1);
+}
+var KozoGroup = class {
+  constructor(prefix, parent) {
+    this.prefix = prefix;
+    this.parent = parent;
+  }
+  get(path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") this.parent.get(this.prefix + path2, schemaOrHandler);
+    else this.parent.get(this.prefix + path2, schemaOrHandler, handler, meta);
+    return this;
+  }
+  post(path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") this.parent.post(this.prefix + path2, schemaOrHandler);
+    else this.parent.post(this.prefix + path2, schemaOrHandler, handler, meta);
+    return this;
+  }
+  put(path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") this.parent.put(this.prefix + path2, schemaOrHandler);
+    else this.parent.put(this.prefix + path2, schemaOrHandler, handler, meta);
+    return this;
+  }
+  patch(path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") this.parent.patch(this.prefix + path2, schemaOrHandler);
+    else this.parent.patch(this.prefix + path2, schemaOrHandler, handler, meta);
+    return this;
+  }
+  delete(path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") this.parent.delete(this.prefix + path2, schemaOrHandler);
+    else this.parent.delete(this.prefix + path2, schemaOrHandler, handler, meta);
+    return this;
+  }
+};
+var Kozo = class _Kozo {
+  app;
+  services;
+  _scope;
+  routes = [];
+  /** Deferred uWS route data — compiled lazily only when nativeListen() is called. */
+  _deferredUws = [];
+  shutdownManager = new ShutdownManager();
+  _routesDir;
+  _wsRoutes = [];
+  _onStart;
+  _onStop;
+  _maxBodyBytes;
+  _logger;
+  _onError;
+  _onNotFound;
+  /** Async plugin installs queued by use() — flushed before the server binds. */
+  _pendingPluginInstalls = [];
+  /** Normalize bare Zod response schema → { 200: schema } for OpenAPI generators */
+  static normalizeSchema(schema) {
+    if (schema.response && typeof schema.response.parse === "function") {
+      return { ...schema, response: { 200: schema.response } };
+    }
+    return schema;
+  }
+  constructor(config = {}) {
+    this.app = new Hono();
+    this.services = config.services ?? {};
+    this._routesDir = config.routesDir;
+    this._onStart = config.onStart;
+    this._onStop = config.onStop;
+    this._maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES2;
+    this._logger = config.logger !== false;
+    this._onError = config.onError;
+    this._onNotFound = config.onNotFound;
+    if (config.scopedServices) {
+      this._scope = {
+        base: this.services,
+        factory: config.scopedServices,
+        onEnd: config.onRequestEnd
+      };
+    }
+    this.app.onError((err, c) => {
+      const hook = this._onError;
+      if (hook) {
+        try {
+          const custom = hook(err, c);
+          if (custom instanceof Response) return custom;
+          if (custom != null && typeof custom.then === "function") {
+            return custom;
+          }
+        } catch (hookErr) {
+          console.error("[Kozo] onError hook failed:", hookErr);
+        }
+      }
+      if (err instanceof KozoError) {
+        return err.toResponse(c.req.path);
+      }
+      console.error("[Kozo] Unhandled error:", err);
+      return internalErrorResponse(err, c.req.path);
+    });
+    this.app.notFound((c) => {
+      const hook = this._onNotFound;
+      if (hook) {
+        try {
+          const custom = hook(c);
+          if (custom instanceof Response) return custom;
+          if (custom != null && typeof custom.then === "function") {
+            return custom;
+          }
+        } catch (hookErr) {
+          console.error("[Kozo] onNotFound hook failed:", hookErr);
+        }
+      }
+      return notFoundResponse(c.req.path);
+    });
+  }
+  // Plugin system
+  use(plugin) {
+    try {
+      const result = plugin.install(this);
+      if (result != null && typeof result.then === "function") {
+        this._pendingPluginInstalls.push(result);
+      }
+    } catch (err) {
+      console.error(`[Kozo] Plugin "${plugin.name}" install failed:`, err);
+      throw err;
+    }
+    return this;
+  }
+  /** Await all async plugin installs registered via use(). Called before bind. */
+  async flushPluginInstalls() {
+    if (this._pendingPluginInstalls.length === 0) return;
+    const pending = this._pendingPluginInstalls;
+    this._pendingPluginInstalls = [];
+    await Promise.all(pending);
+  }
+  /**
+   * Load routes from the file system using the configured routesDir.
+   * Each route file is dynamically imported, its schema compiled, and handler registered.
+   *
+   * Also scans for `_middleware.ts` files in each directory and registers them
+   * as scoped Hono middleware (parent directories run first):
+   *
+   *   routes/_middleware.ts        → applies to all routes
+   *   routes/admin/_middleware.ts  → applies to /admin/* routes only
+   *
+   * This is a no-op if routesDir is not configured.
+   */
+  async loadRoutes(routesDir) {
+    const dir = routesDir ?? this._routesDir;
+    if (!dir) return this;
+    const middlewares = await scanMiddleware({ routesDir: dir, verbose: false });
+    for (const mw of middlewares) {
+      this.app.use(mw.pathPrefix, mw.handler);
+      this._middlewarePatterns.push(mw.pathPrefix);
+    }
+    const routes = await scanRoutes({ routesDir: dir, verbose: false });
+    const compiled = await Promise.all(
+      routes.map(async (route) => {
+        const { path: path2, method, module } = route;
+        const resolved = resolveRouteModule(module);
+        const { handler, schema, meta } = resolved;
+        const compiledSchema = SchemaCompiler.compile(schema);
+        return { path: path2, method, handler, schema, meta, compiledSchema };
+      })
+    );
+    for (const { path: path2, method, handler, schema, meta, compiledSchema } of compiled) {
+      const normalizedSchema = _Kozo.normalizeSchema(schema);
+      const optimizedHandler = compileRouteHandler(
+        (ctx) => handler(ctx),
+        normalizedSchema,
+        this.services,
+        compiledSchema,
+        this._scope,
+        this._onError
+      );
+      this.routes.push({ method, path: path2, schema: normalizedSchema, meta });
+      this.app[method](path2, optimizedHandler);
+      const paramNames = [];
+      path2.replace(/:([^/]+)/g, (_, name) => {
+        paramNames.push(name);
+        return name;
+      });
+      this._deferredUws.push({ method: method.toUpperCase(), path: path2, paramNames, handler: (ctx) => handler(ctx), schema, compiled: compiledSchema });
+    }
+    return this;
+  }
+  generateClient(baseUrlOrOptions) {
+    const options = typeof baseUrlOrOptions === "string" ? { baseUrl: baseUrlOrOptions } : baseUrlOrOptions || {};
+    const routeInfos = this.routes.map((r) => ({
+      method: r.method,
+      path: r.path,
+      schema: r.schema
+    }));
+    return generateTypedClient(routeInfos, options);
+  }
+  get(path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") return this.register("get", path2, {}, schemaOrHandler);
+    return this.register("get", path2, schemaOrHandler, handler, meta);
+  }
+  post(path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") return this.register("post", path2, {}, schemaOrHandler);
+    return this.register("post", path2, schemaOrHandler, handler, meta);
+  }
+  put(path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") return this.register("put", path2, {}, schemaOrHandler);
+    return this.register("put", path2, schemaOrHandler, handler, meta);
+  }
+  patch(path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") return this.register("patch", path2, {}, schemaOrHandler);
+    return this.register("patch", path2, schemaOrHandler, handler, meta);
+  }
+  delete(path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") return this.register("delete", path2, {}, schemaOrHandler);
+    return this.register("delete", path2, schemaOrHandler, handler, meta);
+  }
+  /**
+   * Group routes under a common path prefix.
+   *
+   * @example
+   * app.group('/users', (r) => {
+   *   r.get('/',    { query: paginationSchema }, (ctx) => listUsers(ctx.query));
+   *   r.get('/:id', { params: uuidParams },     (ctx) => getUser(ctx.params.id));
+   *   r.post('/',   { body: CreateUserSchema }, (ctx) => createUser(ctx.body));
+   * });
+   */
+  group(prefix, fn) {
+    fn(new KozoGroup(prefix, this));
+    return this;
+  }
+  /**
+   * Register a WebSocket endpoint (requires `nativeListen()` with uWebSockets.js).
+   *
+   * @example
+   * app.ws('/ws/chat', {
+   *   open(ws)  { ws.subscribe('chat'); },
+   *   message(ws, data) { ws.publish('chat', data); },
+   * });
+   *
+   * // With typed user data and auth:
+   * app.ws<{ userId: string }>('/ws/secure', {
+   *   upgrade(req) {
+   *     const userId = verifyToken(req.headers['authorization']);
+   *     return userId ? { userId } : false;
+   *   },
+   *   open(ws) { console.log(ws.data.userId, 'connected'); },
+   * });
+   */
+  ws(path2, handler) {
+    this._wsRoutes.push({ path: path2, handler });
+    return this;
+  }
+  register(method, path2, schema, handler, meta) {
+    const normalizedSchema = _Kozo.normalizeSchema(schema);
+    this.routes.push({ method, path: path2, schema: normalizedSchema, meta });
+    const compiled = SchemaCompiler.compile(normalizedSchema);
+    const optimizedHandler = compileRouteHandler(
+      handler,
+      normalizedSchema,
+      this.services,
+      compiled,
+      this._scope,
+      this._onError
+    );
+    this.app[method](path2, optimizedHandler);
+    const paramNames = [];
+    path2.replace(/:([^/]+)/g, (_, name) => {
+      paramNames.push(name);
+      return name;
+    });
+    this._deferredUws.push({ method: method.toUpperCase(), path: path2, paramNames, handler, schema: normalizedSchema, compiled });
+    return this;
+  }
+  /**
+   * Start a uWebSockets.js HTTP server.
+   *
+   * All routes are registered directly with uWS's C++ radix trie router —
+   * zero JS routing overhead per request. The C++ HTTP parser (µHttpParser)
+   * eliminates all IncomingMessage/ServerResponse allocations.
+   *
+   * Throws if uWebSockets.js is not installed.
+   * Returns { port, server } so callers can close the server when done.
+   */
+  async nativeListen(portOrOptions) {
+    await this.flushPluginInstalls();
+    const opts = typeof portOrOptions === "number" ? { port: portOrOptions } : portOrOptions ?? {};
+    const port = opts.port ?? 3e3;
+    const uwsBindings = await tryLoadUws();
+    if (!uwsBindings) {
+      throw new Error(
+        "[Kozo] uWebSockets.js is required but not installed.\nIt is published on GitHub, not npm \u2014 install it with:\n  pnpm add uNetworking/uWebSockets.js#v20.66.0"
+      );
+    }
+    const manager = this.shutdownManager;
+    const patterns = this._middlewarePatterns;
+    const honoFetch = this.app.fetch;
+    let bridgedCount = 0;
+    let guardedCount = 0;
+    const uwsRoutes = this._deferredUws.map((r) => {
+      if (patterns.some((p) => middlewarePatternOverlaps(p, r.path))) {
+        bridgedCount++;
+        return {
+          method: r.method,
+          path: r.path,
+          paramNames: r.paramNames,
+          handler: makeUwsHonoBridge(r.method, honoFetch)
+        };
+      }
+      const native = compileUwsNativeHandler(r.handler, r.schema, this.services, r.compiled, this._scope, this._maxBodyBytes, r.method);
+      const guards = this._guards.filter((g) => middlewarePatternOverlaps(g.pattern, r.path));
+      if (guards.length === 0) {
+        return { method: r.method, path: r.path, paramNames: r.paramNames, handler: native };
+      }
+      guardedCount++;
+      return {
+        method: r.method,
+        path: r.path,
+        paramNames: r.paramNames,
+        handler: wrapNativeWithGuards(compileGuards(guards), native, r.method)
+      };
+    });
+    if (this._logger && (bridgedCount > 0 || guardedCount > 0)) {
+      const parts = [];
+      if (guardedCount > 0) parts.push(`${guardedCount} native+guards`);
+      if (bridgedCount > 0) parts.push(`${bridgedCount} Hono-bridged (app.middleware / _middleware.ts)`);
+      console.log(`[Kozo] routes: ${parts.join(", ")}, ${uwsRoutes.length - bridgedCount - guardedCount} pure native of ${uwsRoutes.length}`);
+    }
+    this._deferredUws.length = 0;
+    const result = await createUwsServer({
+      uws: uwsBindings,
+      routes: uwsRoutes,
+      port,
+      cors: opts.cors,
+      isShuttingDown: () => manager.isShuttingDown(),
+      trackRequest: () => manager.trackRequest(),
+      wsRoutes: this._wsRoutes.length > 0 ? this._wsRoutes : void 0,
+      maxBodyBytes: this._maxBodyBytes
+    });
+    manager.setServer(result.server);
+    if (this._logger) {
+      if (this._wsRoutes.length > 0) {
+        console.log(`\u{1F680} uWebSockets.js transport active (HTTP + ${this._wsRoutes.length} WebSocket route${this._wsRoutes.length > 1 ? "s" : ""})`);
+      } else {
+        console.log("\u{1F680} uWebSockets.js transport active (C++ HTTP parser + native radix router)");
+      }
+    }
+    if (this._onStart) {
+      await this._onStart({ services: this.services });
+    }
+    return result;
+  }
+  async listen(port) {
+    await this.flushPluginInstalls();
+    if (this._wsRoutes.length > 0) {
+      console.warn("[Kozo] WebSocket routes require nativeListen() (uWebSockets.js). They will be ignored with listen().");
+    }
+    const finalPort = port ?? 3e3;
+    const manager = this.shutdownManager;
+    const originalFetch = this.app.fetch;
+    let shutdownStarted = false;
+    manager.onShutdownStart(() => {
+      shutdownStarted = true;
+    });
+    let resolveListening;
+    const listening = new Promise((r) => {
+      resolveListening = r;
+    });
+    const server = serve({
+      fetch: (req, ...args) => {
+        const contentLength = req.headers.get("content-length");
+        if (contentLength !== null && Number(contentLength) > this._maxBodyBytes) {
+          return new Response(bodyTooLargeJson(this._maxBodyBytes), {
+            status: 413,
+            headers: { "Content-Type": "application/problem+json" }
+          });
+        }
+        if (!shutdownStarted) {
+          const untrack2 = manager.trackRequest();
+          try {
+            return originalFetch(req, ...args);
+          } finally {
+            untrack2();
+          }
+        }
+        if (manager.isShuttingDown()) {
+          return new Response(
+            JSON.stringify({
+              type: "about:blank",
+              title: "Service Unavailable",
+              status: 503,
+              detail: "Server is shutting down, please retry later"
+            }),
+            {
+              status: 503,
+              headers: { "Content-Type": "application/problem+json" }
+            }
+          );
+        }
+        const untrack = manager.trackRequest();
+        try {
+          return originalFetch(req, ...args);
+        } finally {
+          untrack();
+        }
+      },
+      port: finalPort
+    }, (info) => resolveListening(info.port));
+    manager.setServer(server);
+    const boundPort = await listening;
+    if (this._logger) {
+      console.log(`\u{1F680} Kozo server listening on http://localhost:${boundPort}`);
+    }
+    if (this._onStart) {
+      await this._onStart({ services: this.services });
+    }
+    return { port: boundPort, server };
+  }
+  /**
+   * Start a unified server that handles both API routes and SSR-rendered pages.
+   *
+   * API routes (matching `ssrConfig.apiPrefix`, default `/api`) are routed
+   * through Hono. All other requests go through the Vite SSR pipeline:
+   * - Dev:  Vite middleware for HMR + optional SSR rendering
+   * - Prod: Static file serving + SSR template rendering
+   *
+   * This eliminates the need for a separate frontend server and API proxy.
+   *
+   * @example
+   * const app = createKozo({ routesDir: './src/routes' });
+   * await app.loadRoutes();
+   *
+   * await app.listenSsr(3000, {
+   *   root: path.resolve(__dirname, '../web'),
+   *   entryServer: 'src/entry-server.tsx',
+   * });
+   */
+  async listenSsr(port, ssrConfig) {
+    await this.flushPluginInstalls();
+    const manager = this.shutdownManager;
+    const originalFetch = this.app.fetch;
+    let shutdownStarted = false;
+    manager.onShutdownStart(() => {
+      shutdownStarted = true;
+    });
+    const shutdownFetch = (req, ...args) => {
+      const contentLength = req.headers.get("content-length");
+      if (contentLength !== null && Number(contentLength) > this._maxBodyBytes) {
+        return new Response(bodyTooLargeJson(this._maxBodyBytes), {
+          status: 413,
+          headers: { "Content-Type": "application/problem+json" }
+        });
+      }
+      if (!shutdownStarted) {
+        const untrack2 = manager.trackRequest();
+        try {
+          return originalFetch(req, ...args);
+        } finally {
+          untrack2();
+        }
+      }
+      if (manager.isShuttingDown()) {
+        return new Response(
+          JSON.stringify({
+            type: "about:blank",
+            title: "Service Unavailable",
+            status: 503,
+            detail: "Server is shutting down, please retry later"
+          }),
+          { status: 503, headers: { "Content-Type": "application/problem+json" } }
+        );
+      }
+      const untrack = manager.trackRequest();
+      try {
+        return originalFetch(req, ...args);
+      } finally {
+        untrack();
+      }
+    };
+    const { getRequestListener } = await import("@hono/node-server");
+    const honoHandler = getRequestListener(shutdownFetch);
+    const result = await createSsrServer({ logger: this._logger, ...ssrConfig }, honoHandler, port);
+    manager.setServer(result.server);
+    return result;
+  }
+  /**
+   * Graceful shutdown — drains in-flight requests before closing.
+   * Calls `onStop` lifecycle hook after draining and internal cleanup.
+   * Use getShutdownManager().setDatabase(db, provider) to register DB cleanup.
+   */
+  async shutdown(options) {
+    clearRateLimitStore();
+    await this.shutdownManager.shutdown(options);
+    if (this._onStop) {
+      try {
+        await this._onStop({ services: this.services });
+      } catch (err) {
+        console.error("[Kozo] onStop hook error:", err);
+      }
+    }
+  }
+  getShutdownManager() {
+    return this.shutdownManager;
+  }
+  getApp() {
+    return this.app;
+  }
+  /**
+   * Register a Hono middleware on the app.
+   *
+   * Patterns are tracked so `nativeListen()` can bridge any covered route
+   * through the Hono pipeline (auth, rate limits, CORS, `_middleware.ts`, …).
+   *
+   * NOTE: bridged routes lose the zero-shim uWS fast path. For cross-cutting
+   * security (auth, rate limits, role checks) prefer {@link guard} — it runs
+   * the same check on both transports at native speed. Use `middleware()`
+   * only for logic that genuinely needs the Hono `Context`.
+   *
+   * @example
+   * app.middleware('/api/*', async (c, next) => {
+   *   c.set('user', await verifyJwt(c.req.header('authorization')));
+   *   return next();
+   * });
+   */
+  _middlewarePatterns = [];
+  middleware(pathOrHandler, handler) {
+    if (typeof pathOrHandler === "string") {
+      this.app.use(pathOrHandler, handler);
+      this._middlewarePatterns.push(pathOrHandler);
+    } else {
+      this.app.use(pathOrHandler);
+      this._middlewarePatterns.push("*");
+    }
+    return this;
+  }
+  /**
+   * Guards registered via {@link guard}. Unlike `_middlewarePatterns`, these
+   * do NOT force routes through the Hono bridge under `nativeListen()` —
+   * they are compiled directly into the uWS fast path.
+   */
+  _guards = [];
+  /**
+   * Register a transport-agnostic guard (auth, rate-limit, …).
+   *
+   * The same guard function runs on BOTH transports:
+   * - `listen()`        → as a Hono middleware
+   * - `nativeListen()`  → compiled into the zero-shim uWS path (no Hono,
+   *                       no Request/Response allocation — native speed)
+   *
+   * This is the recommended way to protect routes when using the uWS
+   * transport: `app.middleware()` forces covered routes through the Hono
+   * bridge, `app.guard()` does not.
+   *
+   * @example
+   * app.guard('/api/*', async (req) => {
+   *   const token = req.header('authorization')?.slice(7);
+   *   if (!token) return { deny: { status: 401 } };
+   *   const user = await verifyJwt(token);
+   *   return user ? { user } : { deny: { status: 401 } };
+   * });
+   */
+  guard(pattern, guard) {
+    this._guards.push({ pattern, guard });
+    this.app.use(pattern, guardToHonoMiddleware(guard));
+    return this;
+  }
+  /**
+   * Returns all registered routes (file-system + manual) after {@link loadRoutes} completes.
+   * Use this to inspect `meta.auth`, `meta.tags`, etc. at runtime.
+   *
+   * @example
+   * await app.loadRoutes();
+   * const publicRoutes = app.getRoutes().filter(r => r.meta?.auth === false);
+   */
+  getRoutes() {
+    return this.routes;
+  }
+  /**
+   * Mounts Swagger UI + the OpenAPI 3.1 spec of every registered route.
+   *
+   * Safe by default: outside `NODE_ENV=production` the docs are on; in
+   * production they are NOT mounted unless `enabled: true` is passed
+   * explicitly. The spec is generated lazily on the first request (and then
+   * cached), so `mountDocs()` can be called before or after `loadRoutes()`
+   * and works with `listen()` and `nativeListen()` alike.
+   *
+   * Both routes carry `meta.auth: false`; auth layers that scan route files
+   * (e.g. `@kozojs/auth`'s `registerAuthBeforeLoadRoutes`) still need the two
+   * paths in `extraPublicPaths`.
+   *
+   * @example
+   * app.mountDocs({ title: 'my-api', version: '1.0.0', path: '/api/docs' });
+   * // production opt-in:
+   * app.mountDocs({ enabled: env.ENABLE_DOCS });
+   */
+  mountDocs(options = {}) {
+    const enabled = options.enabled ?? process.env.NODE_ENV !== "production";
+    if (!enabled) return this;
+    const uiPath = options.path ?? "/docs";
+    const specPath = `${uiPath}.json`;
+    const info = {
+      title: options.title ?? "API",
+      version: options.version ?? "0.0.0",
+      description: options.description
+    };
+    let cachedSpec = null;
+    const buildSpec = () => {
+      if (cachedSpec) return cachedSpec;
+      const apiRoutes = this.getRoutes().filter(
+        (r) => r.path !== uiPath && r.path !== specPath
+      );
+      const seen = /* @__PURE__ */ new Set();
+      const tags = apiRoutes.map((r) => r.meta?.tags?.[0] ?? docsRouteTag(r.path)).filter((name) => !seen.has(name) && seen.add(name)).map((name) => ({ name, description: `${name} endpoints` }));
+      const definitions = apiRoutes.map((r) => ({
+        path: r.path,
+        method: r.method,
+        filePath: r.path,
+        module: {
+          default: () => void 0,
+          schema: r.schema,
+          meta: { ...r.meta, tags: r.meta?.tags ?? [docsRouteTag(r.path)] }
+        }
+      }));
+      cachedSpec = createOpenAPIGenerator({ info, servers: options.servers, tags }).generate(definitions);
+      return cachedSpec;
+    };
+    this.get(uiPath, {}, (ctx) => ctx.html(generateSwaggerHtml(specPath, info.title)), {
+      auth: false,
+      summary: "API documentation (Swagger UI)"
+    });
+    this.get(specPath, {}, (ctx) => ctx.json(buildSpec()), {
+      auth: false,
+      summary: "OpenAPI 3.1 specification"
+    });
+    return this;
+  }
+  get fetch() {
+    return this.app.fetch;
+  }
+};
+function createKozo(config) {
+  return new Kozo(config);
+}
+
+// src/kozo-app.ts
+function defineKozoApp(options) {
+  const { routesDir = "./src/routes", services, types, configure, onReady, ...kozo } = options;
+  const definition = {
+    routesDir,
+    services,
+    types,
+    configure,
+    onReady,
+    kozo,
+    build: () => buildKozoApp(definition)
+  };
+  return definition;
+}
+async function buildKozoApp(definition) {
+  const resolved = await definition.services();
+  const app = createKozo({
+    ...definition.kozo,
+    routesDir: definition.routesDir,
+    services: resolved
+  });
+  if (definition.configure) {
+    await definition.configure({ app, services: resolved });
+  }
+  await app.loadRoutes();
+  if (definition.onReady) {
+    await definition.onReady({ app });
+  }
+  return app;
+}
+async function renderKozoTypesDts(types, projectRoot) {
+  const path2 = await import("path");
+  const from = path2.join(projectRoot, ".kozo", "types.d.ts");
+  const to = path2.join(projectRoot, types.from);
+  let rel = path2.relative(path2.dirname(from), to).replace(/\\/g, "/");
+  if (!rel.startsWith(".")) rel = `./${rel}`;
+  const importPath = rel.replace(/\.ts$/, ".js");
+  return `// Auto-generated by Kozo \u2014 do not edit.
+import type { ${types.name} } from '${importPath}';
+
+declare module '@kozojs/core' {
+  interface KozoServices extends ${types.name} {}
+}
+`;
+}
+var KOZO_TYPES_CANDIDATES = [
+  "src/kozo.types.ts",
+  "src/kozo.types.js",
+  "kozo.types.ts"
+];
+var KOZO_CONFIG_CANDIDATES = [
+  "kozo.config.ts",
+  "kozo.config.js",
+  "src/kozo.config.ts",
+  "src/kozo.config.js"
+];
+var KOZO_TYPES_OUTPUT = ".kozo/types.d.ts";
+
+// src/types.ts
+function defineRoute(options) {
+  return options;
+}
+function createRouteFactory() {
+  return {
+    defineRoute(options) {
+      return options;
+    }
+  };
+}
+
+// src/index.ts
+import { z as z4 } from "zod";
+
 // src/middleware/logger.ts
 function sanitizeForLog(input) {
   return input.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t").replace(/\x1b/g, "\\x1b");
@@ -3309,10 +4120,10 @@ function verifyWebhookSignature(options) {
 }
 
 // src/helpers.ts
-import { z as z2 } from "zod";
+import { z as z3 } from "zod";
 import { randomUUID } from "crypto";
 function defineEnv(shape) {
-  const schema = z2.object(shape);
+  const schema = z3.object(shape);
   const result = schema.safeParse(process.env);
   if (!result.success) {
     const errors = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
@@ -3336,34 +4147,34 @@ function paginate(items, page, limit) {
 function uuid() {
   return randomUUID();
 }
-var paginationSchema = z2.object({
-  page: z2.coerce.number().int().min(1).default(1),
-  limit: z2.coerce.number().int().min(1).max(100).default(10)
+var paginationSchema = z3.object({
+  page: z3.coerce.number().int().min(1).default(1),
+  limit: z3.coerce.number().int().min(1).max(100).default(10)
 });
-var uuidParams = z2.object({
-  id: z2.string().uuid()
+var uuidParams = z3.object({
+  id: z3.string().uuid()
 });
-var idParams = z2.object({
-  id: z2.coerce.number().int().positive()
+var idParams = z3.object({
+  id: z3.coerce.number().int().positive()
 });
-var timestamps = z2.object({
-  createdAt: z2.date(),
-  updatedAt: z2.date()
+var timestamps = z3.object({
+  createdAt: z3.date(),
+  updatedAt: z3.date()
 });
-var sortSchema = z2.object({
-  sortBy: z2.string().optional(),
-  sortOrder: z2.enum(["asc", "desc"]).default("asc")
+var sortSchema = z3.object({
+  sortBy: z3.string().optional(),
+  sortOrder: z3.enum(["asc", "desc"]).default("asc")
 });
-var searchSchema = z2.object({
-  q: z2.string().optional()
+var searchSchema = z3.object({
+  q: z3.string().optional()
 });
-var successSchema = z2.object({
-  success: z2.boolean(),
-  message: z2.string().optional()
+var successSchema = z3.object({
+  success: z3.boolean(),
+  message: z3.string().optional()
 });
-var deletedSchema = z2.object({
-  success: z2.boolean(),
-  deletedId: z2.string()
+var deletedSchema = z3.object({
+  success: z3.boolean(),
+  deletedId: z3.string()
 });
 export {
   BadRequestError,
@@ -3387,12 +4198,14 @@ export {
   buildKozoApp,
   buildNativeContext,
   clearRateLimitStore,
+  compileGuardPattern,
   compileRouteHandler,
   cors,
   createFileSystemRouting,
   createInflightTracker,
   createKozo,
   createOpenAPIGenerator,
+  createRouteFactory,
   createShutdownManager,
   createSsrServer,
   defineEnv,
@@ -3414,6 +4227,7 @@ export {
   formatZodErrors,
   generateSwaggerHtml,
   generateTypedClient,
+  guardToHonoMiddleware,
   idParams,
   internalErrorResponse,
   isMiddlewareFile,
@@ -3423,6 +4237,7 @@ export {
   paginate,
   paginationSchema,
   rateLimit,
+  rateLimitGuard,
   renderKozoTypesDts,
   resolveRouteModule,
   scanMiddleware,
@@ -3437,5 +4252,5 @@ export {
   uuidParams,
   validationErrorResponse,
   verifyWebhookSignature,
-  z3 as z
+  z4 as z
 };

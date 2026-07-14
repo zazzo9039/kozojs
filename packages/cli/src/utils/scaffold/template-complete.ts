@@ -233,7 +233,7 @@ export async function scaffoldCompleteTemplate(
     },
     dependencies: {
       '@kozojs/core': kozoCoreDep,
-      ...(auth && { '@kozojs/auth': kozoCoreDep === 'workspace:*' ? 'workspace:*' : '^0.1.0' }),
+      ...(auth && { '@kozojs/auth': kozoCoreDep === 'workspace:*' ? 'workspace:*' : '^0.5.21' }),
       '@hono/node-server': '^1.19.10',
       ...(runtime === 'node' && { 'uWebSockets.js': 'github:uNetworking/uWebSockets.js#6609a88ffa9a16ac5158046761356ce03250a0df' }),
       hono: '^4.12.5',
@@ -331,8 +331,8 @@ export default defineConfig({
   }
 
   // Create modular index.ts entry point
-  const indexTs = `import { createKozo, cors, logger, rateLimit } from '@kozojs/core';
-${auth ? "import { authenticateJWT } from '@kozojs/auth';" : ''}
+  const indexTs = `import { createKozo, rateLimitGuard } from '@kozojs/core';
+${auth ? "import { jwtGuard } from '@kozojs/auth';" : ''}
 ${auth ? "import { registerAuthRoutes } from './routes/auth/index.js';" : ''}
 import { registerUserRoutes } from './routes/users/index.js';
 import { registerPostRoutes } from './routes/posts/index.js';
@@ -360,11 +360,10 @@ const app = createKozo({
   },
 });
 
-// ─── Middleware (Hono layer) ───────────────────────────────────────────
-app.getApp().use('*', logger());
-app.getApp().use('*', cors({ origin: CORS_ORIGIN }));
-app.getApp().use('/api/*', rateLimit({ max: RATE_LIMIT_MAX, windowMs: RATE_LIMIT_WINDOW }));
-${auth ? `app.getApp().use('/api/*', authenticateJWT(JWT_SECRET, { prefix: '/api' }));` : ''}
+// ─── Security (transport-agnostic guards — native speed under uWS) ────
+// Guards run on BOTH transports: listen() (Hono) and nativeListen() (uWS).
+app.guard('/*', rateLimitGuard({ max: RATE_LIMIT_MAX, window: RATE_LIMIT_WINDOW / 1000 }));
+${auth ? `app.guard('/auth/me', jwtGuard(JWT_SECRET));` : ''}
 
 // ─── Routes (native compiled — zero overhead) ─────────────────────────
 registerHealthRoute(app);
@@ -384,7 +383,8 @@ console.log('');
 console.log('🔥 Kozo server starting…');
 console.log('');
 
-await app.nativeListen(PORT);
+// CORS is handled at the transport level (works for preflight too)
+await app.nativeListen({ port: PORT, cors: { origin: CORS_ORIGIN } });
 console.log('');
 console.log('📚 Endpoints:');
 console.log('   GET  /health               Health check');
@@ -433,8 +433,8 @@ Built with 🔥 **Kozo Framework** — Production-ready server template
 ⚡ **Maximum Performance**
 - uWebSockets.js transport with native per-route C++ matching (zero JS routing overhead)
 - Compiled handlers write directly to uWS response via cork() — zero shim objects
-- Pre-compiled Zod schemas (Ajv fast-path)
-- fast-json-stringify serialization
+- Pre-compiled Zod validators (compiled once at startup)
+- fast-json-stringify response serialization when schema.response is set
 
 🔒 **Production Middleware**
 - CORS with configurable origins
@@ -842,12 +842,13 @@ export function registerAuthRoutes(app: Kozo) {
     return { success: true, token, user };
   });
 
-  // GET /auth/me — requires valid JWT (middleware handles verification)
+  // GET /auth/me — requires valid JWT (jwtGuard handles verification)
   app.get('/auth/me', {
     response: UserSchema,
   }, (c) => {
-    // user payload set by authenticateJWT middleware
-    return users[0];
+    // user payload attached by jwtGuard → ctx.user
+    const payload = c.user as { sub?: string } | null;
+    return users.find(u => u.id === payload?.sub) ?? users[0];
   });
 }
 `;

@@ -156,3 +156,15 @@ describe('generateTypedClient', () => {
     warnSpy.mockRestore();
   });
 });
+
+describe('zodToString: zod v4 record', () => {
+  it('emits the two-argument z.record(key, value) form', () => {
+    const bodySchema = z.object({ overrides: z.record(z.string(), z.boolean()) });
+    const routes: RouteInfo[] = [
+      { method: 'post', path: '/r', schema: { body: bodySchema }, zodSchemas: { body: bodySchema } },
+    ];
+    const code = generateTypedClient(routes);
+    expect(code).toContain('z.record(z.string(), z.boolean())');
+    expect(code).not.toMatch(/z\.record\(z\.boolean\(\)\)/);
+  });
+});

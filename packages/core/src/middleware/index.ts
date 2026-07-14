@@ -4,8 +4,8 @@ export type { LoggerOptions } from './logger.js';
 export { cors } from './cors.js';
 export type { CorsOptions } from './cors.js';
 
-export { rateLimit, clearRateLimitStore } from './rate-limit.js';
-export type { RateLimitOptions, RateLimitStore, RateLimitStoreRecord } from './rate-limit.js';
+export { rateLimit, rateLimitGuard, clearRateLimitStore } from './rate-limit.js';
+export type { RateLimitOptions, RateLimitGuardOptions, RateLimitStore, RateLimitStoreRecord } from './rate-limit.js';
 
 export { errorHandler } from './error-handler.js';
 

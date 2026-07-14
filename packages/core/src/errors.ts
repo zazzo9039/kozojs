@@ -246,6 +246,16 @@ export function internalErrorResponseStatic(): Response {
   return new Response(BODY_500_STATIC, INIT_500);
 }
 
+/** RFC 7807 JSON body for 413 — shared by listen() and nativeListen(). */
+export function bodyTooLargeJson(maxBytes: number): string {
+  return JSON.stringify({
+    type: 'about:blank',
+    title: 'Content Too Large',
+    status: 413,
+    detail: `Request body exceeds the ${maxBytes}-byte limit`,
+  });
+}
+
 // ============================================================================
 // KozoError — Base Error Class
 // ============================================================================

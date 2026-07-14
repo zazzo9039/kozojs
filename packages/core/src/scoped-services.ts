@@ -75,15 +75,18 @@ export class IncomingReqAdapter implements KozoRequest {
   }
 }
 
-/** Minimal `KozoRequest` for uWS handlers (URL string only). */
+/** Minimal `KozoRequest` for uWS handlers (URL + method + optional headers). */
 export class UwsReqAdapter implements KozoRequest {
   constructor(
     private readonly urlStr: string,
+    private readonly httpMethod: string,
     private readonly rawBody?: string,
+    private readonly headers: Record<string, string> = {},
+    private readonly clientAddress: string = '',
   ) {}
 
-  header(_name: string): string | undefined {
-    return undefined;
+  header(name: string): string | undefined {
+    return this.headers[name.toLowerCase()];
   }
 
   get url(): string {
@@ -91,7 +94,12 @@ export class UwsReqAdapter implements KozoRequest {
   }
 
   get method(): string {
-    return 'GET';
+    return this.httpMethod;
+  }
+
+  /** Client IP captured synchronously on the uWS path (empty when unavailable). */
+  get remoteAddress(): string {
+    return this.clientAddress;
   }
 
   get path(): string {

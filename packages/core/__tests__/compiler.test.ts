@@ -33,6 +33,12 @@ describe('SchemaCompiler.compile', () => {
     expect(compiled.validateParams!({ id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' }).valid).toBe(true);
   });
 
+  it('uses fast-json-stringify for structured response schemas', () => {
+    const schema = { response: { 200: z.object({ ok: z.boolean(), count: z.number() }) } };
+    const compiled = SchemaCompiler.compile(schema);
+    expect(compiled.serialize!({ ok: true, count: 42 })).toBe('{"ok":true,"count":42}');
+  });
+
   it('creates serializer when response schema present', () => {
     const schema = { response: { 200: z.object({ ok: z.boolean() }) } };
     const compiled = SchemaCompiler.compile(schema);

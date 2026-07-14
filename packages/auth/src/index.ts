@@ -415,6 +415,11 @@ async function collectPublicPaths(routesDir: string, extraPublicPaths: string[])
  * `ctx.user` — e.g. admin role guards. Middleware registered **after** `loadRoutes()`
  * runs **after** directory `_middleware.ts`, so JWT would not populate the user in time.
  *
+ * @deprecated Use {@link registerAuthGuard} instead — same API and semantics,
+ * but registered as a transport-agnostic guard (`app.guard`): under
+ * `nativeListen()` it runs on the uWS native fast path, while this middleware
+ * version forces every covered route through the Hono bridge (~35% slower).
+ *
  * @example
  * await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
  *   routesDir: './src/routes',
@@ -440,6 +445,188 @@ export async function registerAuthBeforeLoadRoutes(
   });
 }
 
+// ============================================
+// TRANSPORT-AGNOSTIC GUARDS (app.guard)
+// ============================================
+//
+// Guard variants of the JWT middleware. Registered via `app.guard()` they run
+// on the uWS native fast path under `nativeListen()` (no Hono bridge) AND as
+// regular Hono middleware under `listen()` — same security, native speed.
+
+import type { KozoGuard, GuardRequest } from '@kozojs/core';
+
+export type { KozoGuard, GuardRequest } from '@kozojs/core';
+
+const UNAUTHORIZED = (detail: string) => ({
+  deny: {
+    status: 401,
+    body: { type: 'about:blank', title: 'Unauthorized', status: 401, detail },
+  },
+});
+
+function jwtErrorDetail(error: any): string {
+  switch (error?.code) {
+    case 'ERR_JWT_EXPIRED': return 'Token has expired';
+    case 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED': return 'Invalid token signature';
+    case 'ERR_JWT_CLAIM_VALIDATION_FAILED': return error.message || 'Token claim validation failed';
+    default: return 'Invalid or expired token';
+  }
+}
+
+/** Options for {@link jwtGuard}. */
+export interface JwtGuardOptions {
+  /**
+   * Paths that bypass authentication (exact match or prefix — '/api/docs'
+   * also matches '/api/docs/anything').
+   */
+  publicPaths?: Iterable<string>;
+  /** Allowed JWT algorithms. Defaults to HS256/HS384/HS512. */
+  allowedAlgorithms?: string[];
+  /** Claims that must equal the given values for the token to be accepted. */
+  expectedClaims?: Record<string, unknown>;
+  /** Custom key resolver for asymmetric algorithms. */
+  getKey?: JWTVerifyGetKey;
+}
+
+/**
+ * JWT authentication as a transport-agnostic guard for `app.guard()`.
+ *
+ * Mirrors `registerAuthBeforeLoadRoutes` semantics: public paths pass without
+ * a token, everything else requires a valid Bearer token. On success the
+ * decoded payload is attached as the user (visible to later guards via
+ * `req.user` and to handlers via `ctx.user`).
+ *
+ * @example
+ * app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, {
+ *   publicPaths: ['/api/health', '/api/docs'],
+ * }));
+ */
+export function jwtGuard(
+  secretOrPublicKey: string | Uint8Array,
+  options: JwtGuardOptions = {},
+): KozoGuard {
+  const {
+    publicPaths,
+    allowedAlgorithms = ['HS256', 'HS384', 'HS512'],
+    expectedClaims,
+    getKey,
+  } = options;
+
+  const key = typeof secretOrPublicKey === 'string'
+    ? new TextEncoder().encode(secretOrPublicKey)
+    : secretOrPublicKey;
+  const publicSet = publicPaths ? new Set(publicPaths) : null;
+
+  return async (req: GuardRequest) => {
+    const isPublic = publicSet !== null && isPublicPath(req.path, publicSet);
+
+    const authHeader = req.header('authorization');
+    let token: string | undefined;
+    if (authHeader) {
+      const parts = authHeader.split(' ');
+      if (parts.length === 2 && parts[0]?.toLowerCase() === 'bearer') token = parts[1];
+    }
+
+    if (!token) {
+      return isPublic ? undefined : UNAUTHORIZED('Missing authentication token');
+    }
+
+    try {
+      const verifyOpts = { algorithms: allowedAlgorithms };
+      const { payload } = getKey
+        ? await jwtVerify(token, getKey, verifyOpts)
+        : await jwtVerify(token, key, verifyOpts);
+
+      if (expectedClaims) {
+        for (const [claim, value] of Object.entries(expectedClaims)) {
+          if (payload[claim] !== value) return UNAUTHORIZED(`Invalid claim: ${claim}`);
+        }
+      }
+      return { user: payload };
+    } catch (error: any) {
+      // A present-but-invalid token is rejected even on public paths,
+      // matching authenticateJWT({ optional: true }) behavior.
+      return UNAUTHORIZED(jwtErrorDetail(error));
+    }
+  };
+}
+
+/**
+ * Role check as a guard. Run it AFTER `jwtGuard` in the chain — it reads the
+ * user attached by the previous guard. 401 when unauthenticated, 403 when the
+ * role does not match. Checks `user.role` (string) and `user.roles` (array).
+ *
+ * @example
+ * app.guard('/api/*', jwtGuard(secret, { publicPaths }));
+ * app.guard('/api/admin/*', roleGuard('admin'));
+ */
+export function roleGuard(role: string | string[]): KozoGuard {
+  const allowed = Array.isArray(role) ? role : [role];
+  return (req: GuardRequest) => {
+    const user = req.user as KozoUser | null;
+    if (!user) {
+      return {
+        deny: {
+          status: 401,
+          body: {
+            type: 'https://kozo-docs.vercel.app/docs/core/errors#unauthorized',
+            title: 'Unauthorized',
+            status: 401,
+            detail: 'Authentication required',
+          },
+        },
+      };
+    }
+    const userRole = typeof user.role === 'string' ? user.role : null;
+    const userRoles = Array.isArray(user.roles) ? user.roles : [];
+    if (allowed.some((r) => r === userRole || userRoles.includes(r))) return;
+    return {
+      deny: {
+        status: 403,
+        body: {
+          type: 'https://kozo-docs.vercel.app/docs/core/errors#forbidden',
+          title: 'Forbidden',
+          status: 403,
+          detail: 'You do not have permission to access this resource',
+        },
+      },
+    };
+  };
+}
+
+/** Structural interface for apps exposing `guard()` (i.e. `Kozo`). */
+export interface KozoGuardAppLike {
+  guard(pattern: string, guard: KozoGuard): unknown;
+}
+
+/**
+ * Guard-based equivalent of {@link registerAuthBeforeLoadRoutes}: scans the
+ * routes directory for `meta.auth: false` and registers a single `jwtGuard`
+ * on `${prefix}/*`. Routes keep the uWS native fast path under
+ * `nativeListen()` — this is the recommended setup for native apps.
+ *
+ * @example
+ * await registerAuthGuard(app, process.env.JWT_SECRET!, {
+ *   routesDir: './src/routes',
+ *   extraPublicPaths: ['/api/docs', '/api/docs.json'],
+ * });
+ * await app.loadRoutes();
+ */
+export async function registerAuthGuard(
+  app: KozoGuardAppLike,
+  secretOrPublicKey: string | Uint8Array,
+  options: RegisterAuthOptions,
+): Promise<void> {
+  const { routesDir, extraPublicPaths = [], prefix = '/api', getToken: _ignored, optional: _ignored2, ...rest } = options;
+  const publicPaths = await collectPublicPaths(routesDir, extraPublicPaths);
+  app.guard(`${prefix}/*`, jwtGuard(secretOrPublicKey, {
+    publicPaths,
+    allowedAlgorithms: rest.allowedAlgorithms,
+    expectedClaims: rest.expectedClaims,
+    getKey: rest.getKey,
+  }));
+}
+
 /**
  * Decode a JWT token payload without verifying its signature.
  * Safe for client-side use to inspect claims (e.g. displaying user info in the UI).
@@ -450,12 +637,6 @@ export async function registerAuthBeforeLoadRoutes(
  * console.log(payload?.email, payload?.role);
  */
 export function decodeTokenPayload<T extends KozoUser = KozoUser>(token: string): T | null {
-  try {
-    const base64Payload = token.split('.')[1];
-    if (!base64Payload) return null;
-    const json = atob(base64Payload.replace(/-/g, '+').replace(/_/g, '/'));
-    return JSON.parse(json) as T;
-  } catch {
-    return null;
-  }
+  const payload = decodeJWT(token);
+  return payload as T | null;
 }

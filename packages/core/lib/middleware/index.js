@@ -84,6 +84,28 @@ function rateLimit(options) {
     await next();
   };
 }
+function rateLimitGuard(options) {
+  const {
+    max,
+    window,
+    keyGenerator = (req) => req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? req.header("x-real-ip") ?? req.remoteAddress ?? "anonymous",
+    message = "Too many requests",
+    store = memoryStore
+  } = options;
+  const windowMs = window * 1e3;
+  return async (req) => {
+    const record = await store.increment(keyGenerator(req), windowMs);
+    const headers = {
+      "X-RateLimit-Limit": String(max),
+      "X-RateLimit-Remaining": String(Math.max(0, max - record.count)),
+      "X-RateLimit-Reset": String(Math.ceil(record.resetAt / 1e3))
+    };
+    if (record.count > max) {
+      return { deny: { status: 429, body: { error: message }, headers } };
+    }
+    return { headers };
+  };
+}
 function clearRateLimitStore() {
   memoryMap.clear();
   if (cleanupTimer) {
@@ -333,5 +355,6 @@ export {
   errorHandler,
   logger,
   rateLimit,
+  rateLimitGuard,
   verifyWebhookSignature
 };

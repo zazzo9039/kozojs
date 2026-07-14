@@ -1,5 +1,12 @@
 # @kozojs/auth
 
+## 0.5.10
+
+### Patch Changes
+
+- Updated dependencies [efefc5e]
+  - @kozojs/core@0.5.10
+
 ## 0.5.9
 
 ### Patch Changes

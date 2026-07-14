@@ -3,7 +3,7 @@ import fs from 'fs-extra';
 import path from 'node:path';
 import os from 'node:os';
 
-import { scanRoutes, scanMiddleware } from '../src/routing/scan.js';
+import { scanRoutes, scanMiddleware, normalizeRouteFilePath } from '../src/routing/scan.js';
 
 async function writeRoute(routesDir: string, relativePath: string, content?: string): Promise<void> {
   const filePath = path.join(routesDir, relativePath);
@@ -77,6 +77,13 @@ export default async () => ({ ok: true });`,
     const routes = await scanRoutes({ routesDir });
     expect(routes[0].path).toBe('/users/me');
     expect(routes[1].path).toBe('/users/:id');
+  });
+});
+
+describe('normalizeRouteFilePath', () => {
+  it('converts Windows backslashes to forward slashes for manifests', () => {
+    expect(normalizeRouteFilePath('posts\\get.ts')).toBe('posts/get.ts');
+    expect(normalizeRouteFilePath('admin\\_middleware.ts')).toBe('admin/_middleware.ts');
   });
 });
 

@@ -15,6 +15,8 @@ describe('createPubSub', () => {
       on: vi.fn(),
       subscribe: vi.fn(),
       unsubscribe: vi.fn(),
+      psubscribe: vi.fn(),
+      punsubscribe: vi.fn(),
     };
     createSubscriber = vi.fn().mockReturnValue(mockSubscriber);
     pubsub = createPubSub(mockPublishRedis, createSubscriber);
@@ -74,6 +76,33 @@ describe('createPubSub', () => {
 
     onMessage('other', '{"x":1}');
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  // ── psubscribe ─────────────────────────────────────────────────────────────
+
+  it('psubscribe() registers the pattern on the subscriber', () => {
+    pubsub.psubscribe('user.*', vi.fn());
+    expect(createSubscriber).toHaveBeenCalledTimes(1);
+    expect(mockSubscriber.psubscribe).toHaveBeenCalledWith('user.*');
+  });
+
+  it('pmessage is dispatched with the concrete matched channel', () => {
+    const handler = vi.fn();
+    pubsub.psubscribe('user.*', handler);
+
+    const onPmessage = mockSubscriber.on.mock.calls.find(
+      ([event]: [string]) => event === 'pmessage',
+    )?.[1];
+    expect(onPmessage).toBeDefined();
+
+    onPmessage('user.*', 'user.42', '{"id":42}');
+    expect(handler).toHaveBeenCalledWith({ id: 42 }, 'user.42');
+  });
+
+  it('punsubscribe() fires when the last pattern handler is removed', () => {
+    const unsub = pubsub.psubscribe('room.*', vi.fn());
+    unsub();
+    expect(mockSubscriber.punsubscribe).toHaveBeenCalledWith('room.*');
   });
 
   // ── unsubscribe ────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # @kozojs/auth
 
-JWT authentication for [Kozo Framework](https://github.com/zazzo9039/kozojs) — built on [`jose`](https://github.com/panva/jose).
+Authentication for [Kozo](https://github.com/zazzo9039/kozo) that stays on the native uWebSockets fast path — JWT guards, roles, no Hono bridge. Built on [`jose`](https://github.com/panva/jose).
 
 ## Install
 
@@ -8,53 +8,93 @@ JWT authentication for [Kozo Framework](https://github.com/zazzo9039/kozojs) —
 npm install @kozojs/auth @kozojs/core
 ```
 
-## Quick start (recommended — before `loadRoutes`)
+## Quick start (recommended — guards)
 
-Use **`registerAuthBeforeLoadRoutes`** when you have `_middleware.ts` role guards or anything that reads `user` before the handler:
+**`registerAuthGuard`** is the single source of truth for authentication: the
+same check runs on `listen()` (Hono) AND on `nativeListen()` (uWebSockets.js)
+at native speed — no Hono bridge, no middleware bypass.
 
 ```typescript
 import { createKozo } from '@kozojs/core';
-import { registerAuthBeforeLoadRoutes, createJWT } from '@kozojs/auth';
+import { registerAuthGuard, roleGuard } from '@kozojs/auth';
 
 const app = createKozo({ routesDir: './src/routes' });
 
-await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
+await registerAuthGuard(app, process.env.JWT_SECRET!, {
   routesDir: './src/routes',
   prefix: '/api',
   extraPublicPaths: ['/api/docs', '/api/docs.json'],
 });
 
+// Role-protected subtrees (reads the user set by the JWT guard)
+app.guard('/api/admin/*', roleGuard('admin'));
+
 await app.loadRoutes();
-await app.listen(3000);
+await app.nativeListen(3000); // or app.listen(3000) — identical semantics
 ```
 
 Public routes: set `export const meta = { auth: false }` in the route file.
 
-## Manual middleware
+## Composable guards
 
 ```typescript
-import { authenticateJWT } from '@kozojs/auth';
+import { jwtGuard, roleGuard } from '@kozojs/auth';
 
-// Optional decode (populates user when token present)
-app.middleware('/api/*', authenticateJWT(process.env.JWT_SECRET!, { optional: true }));
-
-// Enforce on protected paths
-app.middleware('/api/*', authenticateJWT(process.env.JWT_SECRET!));
+app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, {
+  publicPaths: ['/api/health', '/api/docs'],
+}));
+app.guard('/api/admin/*', roleGuard(['admin', 'owner']));
 ```
 
-Handlers receive `ctx.user` (Kozo) or `c.get('user')` (Hono raw context).
-
-For apps with custom rate limits or extra middleware (see **kozo-app** `registerApiSecurity`), compose
-`authenticateJWT` manually **before** `loadRoutes()` — same ordering rule as above.
-
-## Role guards
+Handlers receive `ctx.user`; later guards see it as `req.user`.
 
 ```typescript
-import { canActivate, isAuthenticated, hasRole } from '@kozojs/auth';
+import type { KozoContext } from '@kozojs/core';
+import { UnauthorizedError } from '@kozojs/auth';
 
-// routes/api/admin/_middleware.ts
-export default canActivate(isAuthenticated, hasRole('admin'));
+export default async (ctx: KozoContext) => {
+  const { user } = ctx;
+  if (!user) throw new UnauthorizedError();
+  return { message: `Hello ${user.email}` };
+};
 ```
+
+## API reference
+
+| Export | Description |
+|--------|-------------|
+| `registerAuthGuard(app, secret, options)` | **Recommended.** Scans `meta.auth = false` routes and registers `jwtGuard` before `loadRoutes()` |
+| `jwtGuard(secret, options?)` | Guard: verifies Bearer JWT, attaches payload as `user` |
+| `roleGuard(role \| roles[])` | Guard: 403 unless `user.role` matches (run after JWT) |
+| `createJWT(payload, secret, options?)` | Sign HS256 JWT (`expiresIn`, etc.) |
+| `decodeTokenPayload(token)` | Decode payload **without** verification (display only) |
+| `registerAuthBeforeLoadRoutes(app, secret, options)` | **Deprecated** — middleware twin of `registerAuthGuard` |
+| `authenticateJWT(secret, options?)` | Legacy Hono middleware |
+| `canActivate(...guards)` · `hasRole` · `anyOf` · `isSelf` · `isAuthenticated` | Legacy Hono role middleware |
+| `UnauthorizedError` | 401 helper |
+
+## Options
+
+### `jwtGuard` / `registerAuthGuard`
+
+| Option | Description |
+|--------|-------------|
+| `prefix` | Path prefix (default `'/api'`) |
+| `publicPaths` | Extra paths that skip JWT (login, docs, …) |
+| `requiredClaims` | Claim names that must be present in the payload |
+| `getToken` | Custom extractor (default Bearer header) |
+| `getKey` | RS256 / JWKS via jose |
+| `allowedAlgorithms` | Default `HS256`, `HS384`, `HS512` |
+
+### `authenticateJWT` (`AuthOptions`, legacy)
+
+| Option | Description |
+|--------|-------------|
+| `prefix` | Path prefix (default `'/api'`) |
+| `optional` | Soft decode — no 401 without token |
+| `getToken` | Custom extractor (default Bearer header) |
+| `getKey` | RS256 / JWKS via jose |
+| `allowedAlgorithms` | Default `HS256`, `HS384`, `HS512` |
 
 ## Create tokens
 
@@ -68,15 +108,33 @@ const token = await createJWT(
 );
 ```
 
-## Options (`AuthOptions`)
+## Legacy: Hono middleware
 
-| Option | Description |
-|--------|-------------|
-| `prefix` | Path prefix (default `'/api'`) |
-| `optional` | Soft decode — no 401 without token |
-| `getToken` | Custom extractor (default Bearer header) |
-| `getKey` | RS256 / JWKS via jose |
-| `allowedAlgorithms` | Default `HS256`, `HS384`, `HS512` |
+> ⚠️ **Deprecated for native apps.** `registerAuthBeforeLoadRoutes` and
+> `authenticateJWT` register Hono middleware: under `nativeListen()` every
+> covered route is served through the Hono bridge (correct since core 0.5.16,
+> but ~35% slower than guards). On core ≤ 0.5.15 middleware was **silently
+> bypassed** under `nativeListen()` — upgrade immediately.
+
+```typescript
+import { authenticateJWT } from '@kozojs/auth';
+
+app.middleware('/api/*', authenticateJWT(process.env.JWT_SECRET!));
+```
+
+## Role guards (Hono `_middleware.ts` style — legacy)
+
+```typescript
+import { canActivate, isAuthenticated, hasRole } from '@kozojs/auth';
+
+// routes/api/admin/_middleware.ts — forces the Hono bridge; prefer roleGuard
+export default canActivate(isAuthenticated, hasRole('admin'));
+```
+
+## See also
+
+- [@kozojs/core guards](https://github.com/zazzo9039/kozo/tree/main/packages/core#guards-security--single-source-of-truth) — `app.guard()`, `rateLimitGuard`, transport-agnostic security
+- [`@kozojs/core` README](../core/README.md) — full framework reference
 
 ## License
 

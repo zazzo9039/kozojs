@@ -65,6 +65,14 @@ describe('JWT Authentication', () => {
     });
   });
 
+  describe('decodeTokenPayload', () => {
+    it('matches decodeJWT for the same token', async () => {
+      const { decodeTokenPayload } = await import('../src/index.js');
+      const token = await createJWT({ sub: 'u1', name: 'José' }, TEST_SECRET);
+      expect(decodeTokenPayload(token)).toEqual(decodeJWT(token));
+    });
+  });
+
   describe('authenticateJWT middleware', () => {
     let app: Hono;
 

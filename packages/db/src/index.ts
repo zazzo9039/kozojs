@@ -11,6 +11,23 @@ export interface PostgresConfig {
   /** Full connection URL, e.g. postgres://user:pass@host:5432/db */
   url: string;
   schema?: Record<string, unknown>;
+  /**
+   * Connection / pool / SSL options forwarded to postgres.js.
+   * Common keys: `max` (pool size), `idle_timeout`, `connect_timeout`,
+   * `max_lifetime`, `ssl`, `prepare`. See the postgres.js docs for the full set.
+   *
+   * @example
+   * { max: 20, idle_timeout: 30, ssl: 'require' }
+   */
+  options?: {
+    max?: number;
+    idle_timeout?: number;
+    connect_timeout?: number;
+    max_lifetime?: number;
+    ssl?: boolean | 'require' | 'allow' | 'prefer' | 'verify-full' | Record<string, unknown>;
+    prepare?: boolean;
+    [key: string]: unknown;
+  };
 }
 
 export interface MysqlConfig {
@@ -25,6 +42,16 @@ export interface SqliteConfig {
   /** File path. Omit (or use ':memory:') for in-memory database. */
   file?: string;
   schema?: Record<string, unknown>;
+  /**
+   * Options forwarded to better-sqlite3, e.g. `{ readonly: true }`,
+   * `{ fileMustExist: true }`, `{ timeout: 5000 }`.
+   */
+  options?: {
+    readonly?: boolean;
+    fileMustExist?: boolean;
+    timeout?: number;
+    [key: string]: unknown;
+  };
 }
 
 export type DatabaseConfig = PostgresConfig | MysqlConfig | SqliteConfig;
@@ -86,7 +113,7 @@ export async function createDatabase(config: DatabaseConfig): Promise<unknown> {
         import('drizzle-orm/postgres-js'),
         import('postgres'),
       ]);
-      const client = postgres(config.url);
+      const client = config.options ? postgres(config.url, config.options) : postgres(config.url);
       return drizzle(client, { schema });
     }
     case 'mysql': {
@@ -103,7 +130,7 @@ export async function createDatabase(config: DatabaseConfig): Promise<unknown> {
         import('better-sqlite3'),
       ]);
       const dbFile = config.file ?? ':memory:';
-      const sqlite = new Database(dbFile);
+      const sqlite = config.options ? new Database(dbFile, config.options) : new Database(dbFile);
       return drizzle(sqlite, { schema });
     }
     default:

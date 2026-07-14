@@ -74,26 +74,20 @@ Use singletons for pools/clients; use `scopedServices` when state must not leak 
 
 ## 4. Authentication
 
-Register JWT **before** `loadRoutes()` when folder `_middleware.ts` checks `user.role`:
+Security is **guard-based** (0.5.16+): the same checks run on `listen()` and `nativeListen()` at native speed. Register guards **before** `loadRoutes()`:
 
 ```typescript
-import { registerAuthBeforeLoadRoutes } from '@kozojs/auth';
+import { registerAuthGuard, roleGuard } from '@kozojs/auth';
 
-await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
+await registerAuthGuard(app, process.env.JWT_SECRET!, {
   routesDir: './src/routes',
   prefix: '',
 });
+app.guard('/admin/*', roleGuard('admin'));
 await app.loadRoutes();
 ```
 
 Mark public routes with `export const meta = { auth: false }`.
-
-Admin guard example (`src/routes/admin/_middleware.ts`):
-
-```typescript
-import { canActivate, isAuthenticated, hasRole } from '@kozojs/auth';
-export default canActivate(isAuthenticated, hasRole('admin'));
-```
 
 ## 5. OpenAPI + typed client
 

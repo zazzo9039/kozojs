@@ -1,48 +1,10 @@
 // ============================================================================
-// Tests for compiler.ts — compileNativeHandler + readNativeBody
+// Tests for compiler.ts — compileRouteHandler integration
 // ============================================================================
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import { SchemaCompiler, DEFAULT_MAX_BODY_BYTES, compileNativeHandler } from '../src/compiler.js';
-
-// compileNativeHandler is not publicly exported — test via app.ts integration
-// Instead, we test the full stack: register route → listen on HTTP → send request
-
 import { createKozo } from '../src/app.js';
-
-// ── Helpers ──────────────────────────────────────────────────────────────
-
-function makeRequest(
-  port: number,
-  method: string,
-  path: string,
-  body?: string | null,
-): Promise<{ status: number; headers: Record<string, string>; body: string }> {
-  return new Promise((resolve, reject) => {
-    const req = httpRequest({
-      hostname: '127.0.0.1', port, method, path,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    }, (res) => {
-      const chunks: Buffer[] = [];
-      res.on('data', (c: Buffer) => chunks.push(c));
-      res.on('end', () => {
-        resolve({
-          status: res.statusCode!,
-          headers: res.headers as Record<string, string>,
-          body: Buffer.concat(chunks).toString('utf8'),
-        });
-      });
-    });
-    req.on('error', reject);
-    if (body) req.write(body);
-    req.end();
-  });
-}
-
-// ── compileRouteHandler error paths (via Hono fetch) ────────────────────
 
 describe('compileRouteHandler error paths', () => {
   it('catches KozoError thrown by handler', async () => {
@@ -172,8 +134,6 @@ describe('compileRouteHandler error paths', () => {
   });
 });
 
-// ── fetch() integration (no real HTTP server needed) ─────────────────────
-
 describe('Kozo fetch integration (additional)', () => {
   it('serves GET with JSON serializer (response schema)', async () => {
     const app = createKozo();
@@ -189,7 +149,6 @@ describe('Kozo fetch integration (additional)', () => {
     const app = createKozo();
     app.post('/create', { body: z.object({ name: z.string() }) }, (ctx) => ctx.json({ created: ctx.body.name }));
 
-    // Valid request
     const good = await app.fetch(new Request('http://localhost/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -198,129 +157,11 @@ describe('Kozo fetch integration (additional)', () => {
     expect(good.status).toBe(200);
     expect(await good.json()).toEqual({ created: 'Alice' });
 
-    // Invalid request
     const bad = await app.fetch(new Request('http://localhost/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 123 }),
     }));
     expect(bad.status).toBe(400);
-  });
-});
-
-// ── compileNativeHandler — direct Node.js HTTP tests ───────────────────
-//
-// Spins up a real Node.js HTTP server using createServer() so the full
-// stream-based readNativeBody() path is exercised (no uWS dependency).
-
-describe('compileNativeHandler', () => {
-  /** Bind a compileNativeHandler result to a real HTTP server. */
-  async function startServer(handler: ReturnType<typeof compileNativeHandler>, params = {}): Promise<{ port: number; close: () => void }> {
-    return new Promise((resolve) => {
-      const { createServer: httpCreateServer } = require('node:http');
-      const srv = httpCreateServer((req: any, res: any) => handler(req, res, params));
-      srv.listen(0, () => resolve({ port: (srv.address() as any).port, close: () => srv.close() }));
-    });
-  }
-
-  it('sync handler with no schema returns 200 JSON', async () => {
-    const compiled = SchemaCompiler.compile({});
-    const handler = compileNativeHandler(() => ({ ok: true }), {}, {}, compiled);
-    const { port, close } = await startServer(handler);
-
-    const result = await makeRequest(port, 'GET', '/');
-    expect(result.status).toBe(200);
-    expect(JSON.parse(result.body)).toEqual({ ok: true });
-    close();
-  });
-
-  it('sync handler with params validation returns 400 on bad params', async () => {
-    const schema = { params: z.object({ id: z.string().uuid() }) };
-    const compiled = SchemaCompiler.compile(schema);
-    const handler = compileNativeHandler((ctx: any) => ctx.params, schema, {}, compiled);
-    // Pass an invalid param directly (non-UUID)
-    const { port, close } = await startServer(handler, { id: 'not-a-uuid' });
-
-    const result = await makeRequest(port, 'GET', '/');
-    expect(result.status).toBe(400);
-    close();
-  });
-
-  it('sync handler with params validation returns 200 on valid params', async () => {
-    const validId = '550e8400-e29b-41d4-a716-446655440000';
-    const schema = { params: z.object({ id: z.string().uuid() }) };
-    const compiled = SchemaCompiler.compile(schema);
-    const handler = compileNativeHandler((ctx: any) => ({ id: ctx.params.id }), schema, {}, compiled);
-    const { port, close } = await startServer(handler, { id: validId });
-
-    const result = await makeRequest(port, 'GET', '/');
-    expect(result.status).toBe(200);
-    expect(JSON.parse(result.body)).toEqual({ id: validId });
-    close();
-  });
-
-  it('async body handler returns 200 on valid body', async () => {
-    const schema = { body: z.object({ name: z.string() }) };
-    const compiled = SchemaCompiler.compile(schema);
-    const handler = compileNativeHandler(
-      async (ctx: any) => ({ echo: ctx.body.name }),
-      schema,
-      {},
-      compiled,
-    );
-    const { port, close } = await startServer(handler);
-
-    const result = await makeRequest(port, 'POST', '/', JSON.stringify({ name: 'Alice' }));
-    expect(result.status).toBe(200);
-    expect(JSON.parse(result.body)).toEqual({ echo: 'Alice' });
-    close();
-  });
-
-  it('async body handler returns 400 on invalid body', async () => {
-    const schema = { body: z.object({ name: z.string() }) };
-    const compiled = SchemaCompiler.compile(schema);
-    const handler = compileNativeHandler(
-      async (ctx: any) => ({ echo: ctx.body.name }),
-      schema,
-      {},
-      compiled,
-    );
-    const { port, close } = await startServer(handler);
-
-    const result = await makeRequest(port, 'POST', '/', JSON.stringify({ name: 123 }));
-    expect(result.status).toBe(400);
-    close();
-  });
-
-  it('async body handler returns 413 when body exceeds size limit', async () => {
-    const schema = { body: z.object({ data: z.string() }) };
-    const compiled = SchemaCompiler.compile(schema);
-    const handler = compileNativeHandler(() => ({}), schema, {}, compiled);
-    const { port, close } = await startServer(handler);
-
-    // Build oversized body (1 MB + 1 byte)
-    const oversized = Buffer.alloc(DEFAULT_MAX_BODY_BYTES + 1, 0x61).toString();
-    const result = await makeRequest(port, 'POST', '/', oversized).catch(
-      // ECONNRESET is acceptable — server destroys the connection on oversize
-      (err: any) => err.code === 'ECONNRESET' ? { status: 413, body: '' } : Promise.reject(err),
-    );
-    expect(result.status).toBe(413);
-    close();
-  });
-
-  it('sync async handler (returns promise) is handled correctly', async () => {
-    const compiled = SchemaCompiler.compile({});
-    const handler = compileNativeHandler(
-      async () => ({ delayed: true }),
-      {},
-      {},
-      compiled,
-    );
-    const { port, close } = await startServer(handler);
-
-    const result = await makeRequest(port, 'GET', '/');
-    expect(result.status).toBe(200);
-    expect(JSON.parse(result.body)).toEqual({ delayed: true });
-    close();
   });
 });

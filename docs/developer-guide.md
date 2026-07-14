@@ -68,30 +68,43 @@ app.group('/users', (r) => {
 });
 ```
 
+### Guards (security)
+
+`app.guard(pattern, fn)` is the single source of truth for auth, roles, and rate
+limits — the same check runs on `listen()` and `nativeListen()` (compiled into
+the uWS fast path):
+
+```typescript
+import { rateLimitGuard } from '@kozojs/core';
+import { jwtGuard, roleGuard } from '@kozojs/auth';
+
+app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!));
+app.guard('/api/admin/*', roleGuard('admin'));
+app.guard('/api/auth/*', rateLimitGuard({ max: 20, window: 60 }));
+```
+
 ### Middleware
 
 #### Global Middleware
 
 ```typescript
-import { cors, logger, rateLimit } from '@kozojs/core';
+import { logger } from '@kozojs/core';
 
 app.middleware(logger());
-app.middleware(cors({ origin: '*' }));
-app.middleware('/api/*', rateLimit({ max: 100, window: 60_000 }));
 ```
+
+Under `nativeListen()`, routes covered by middleware patterns are Hono-bridged
+(correct but slower) — keep security in guards.
 
 #### Per-Directory Middleware
 
 Create `_middleware.ts` files in route directories:
 
 ```typescript
-// src/routes/admin/_middleware.ts
-// Applies to all /admin/* routes
+// src/routes/api/_middleware.ts
+// Applies to all /api/* routes — Hono middleware (needs the Hono Context)
 export default async (c, next) => {
-  const user = c.get('user');
-  if (user?.role !== 'admin') {
-    return c.json({ error: 'Forbidden' }, 403);
-  }
+  c.header('x-request-id', crypto.randomUUID());
   await next();
 };
 ```
@@ -182,20 +195,21 @@ All errors include:
 
 ## @kozojs/auth
 
-JWT authentication middleware.
+JWT authentication guards.
 
 ```typescript
-import { registerAuthBeforeLoadRoutes, authenticateJWT } from '@kozojs/auth';
+import { registerAuthGuard, jwtGuard, roleGuard } from '@kozojs/auth';
 
-// Recommended with file-system routes + _middleware.ts
-await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
+// Recommended with file-system routes + meta.auth
+await registerAuthGuard(app, process.env.JWT_SECRET!, {
   routesDir: './src/routes',
   prefix: '/api',
 });
+app.guard('/api/admin/*', roleGuard('admin'));
 await app.loadRoutes();
 
-// Or manual middleware:
-app.middleware('/api/*', authenticateJWT(process.env.JWT_SECRET!));
+// Or a manual guard:
+app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, { publicPaths: ['/api/health'] }));
 ```
 
 The authenticated user is available as `ctx.user` in handlers.

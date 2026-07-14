@@ -85,6 +85,12 @@ export async function copyTemplate(
     throw new Error(`Destination already exists: ${dest}`);
   }
 
-  await fs.copy(src, dest, { filter: (p) => !p.includes('node_modules') });
+  // Filter on the path relative to the template root: the absolute src path
+  // legitimately contains node_modules when the CLI is installed as a package
+  // (npx cache, local or global node_modules), and a filter that rejects the
+  // copy root makes fs.copy silently copy nothing.
+  await fs.copy(src, dest, {
+    filter: (p) => !path.relative(src, p).split(path.sep).includes('node_modules'),
+  });
   await replaceInTree(dest, '{{PROJECT_NAME}}', projectName);
 }

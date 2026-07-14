@@ -33,6 +33,11 @@ export interface KozoPubSub {
   publish<T = unknown>(channel: string, data: T): Promise<number>;
   /** Subscribe to a channel. Returns unsubscribe function. */
   subscribe<T = unknown>(channel: string, handler: PubSubHandler<T>): () => void;
+  /**
+   * Subscribe to a glob-style channel pattern (e.g. `'user.*'`, `'room.?'`).
+   * The handler receives the concrete channel that matched. Returns unsubscribe.
+   */
+  psubscribe<T = unknown>(pattern: string, handler: PubSubHandler<T>): () => void;
 }
 
 // ── Rate-limit store ─────────────────────────────────────────────────────────

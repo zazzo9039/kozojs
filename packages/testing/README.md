@@ -1,6 +1,6 @@
 # @kozojs/testing
 
-In-process test client for [Kozo](https://github.com/zazzo9039/kozojs) framework — no HTTP server required.
+In-process test client for [Kozo](https://github.com/zazzo9039/kozo) framework — no HTTP server required.
 
 ## Install
 

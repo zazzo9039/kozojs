@@ -75,5 +75,34 @@ declare function createTestClient<TServices extends Services = Services>(app: Ko
  * ```
  */
 declare function createTestApp<TServices extends Services = Services>(config?: KozoConfig<TServices>): TestClient<TServices>;
+interface NativeTestClient<TServices extends Services = Services> extends TestClient<TServices> {
+    /** Port the native (uWebSockets.js) server is listening on. */
+    port: number;
+    /** Shut the native server down. Always call this (e.g. in afterEach/afterAll). */
+    close(): Promise<void>;
+}
+/**
+ * Boot the app on the native uWebSockets.js transport (`nativeListen`) and
+ * return a client that makes REAL HTTP requests to it.
+ *
+ * `createTestClient` exercises only the Hono (`listen()`) pipeline via
+ * `app.fetch`. Use this to test behavior that is specific to the native path —
+ * guards, `ctx.header()`, optional params, CORS — the way it actually runs in
+ * production under `nativeListen()`.
+ *
+ * Requires `uWebSockets.js` to be installed. Remember to call `close()`.
+ *
+ * @example
+ * ```ts
+ * const client = await createNativeTestClient(app);
+ * try {
+ *   const res = await client.get('/ping');
+ *   expect(res.status).toBe(200);
+ * } finally {
+ *   await client.close();
+ * }
+ * ```
+ */
+declare function createNativeTestClient<TServices extends Services = Services>(app: Kozo<TServices>): Promise<NativeTestClient<TServices>>;
 
-export { type InjectOptions, type TestClient, type TestResponse, createTestApp, createTestClient };
+export { type InjectOptions, type NativeTestClient, type TestClient, type TestResponse, createNativeTestClient, createTestApp, createTestClient };

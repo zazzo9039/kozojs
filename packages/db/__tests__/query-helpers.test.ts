@@ -214,6 +214,7 @@ describe('@kozojs/db — error helpers', () => {
   it('isUniqueViolation detects sqlite unique errors', () => {
     expect(isUniqueViolation({ code: 'SQLITE_CONSTRAINT_UNIQUE' })).toBe(true);
     expect(isUniqueViolation({ code: '23505' })).toBe(true);
+    expect(isUniqueViolation({ code: 'ER_DUP_ENTRY' })).toBe(true);
     expect(isUniqueViolation({ code: 'XX000' })).toBe(false);
   });
 });
@@ -250,5 +251,27 @@ describe('@kozojs/db — runTransaction', () => {
       return countRows(tx, users);
     });
     expect(result).toBe(1);
+  });
+});
+
+describe('@kozojs/db — row errors', () => {
+  it('RowNotFoundError is a NotFoundError (404)', async () => {
+    const { NotFoundError, KozoError } = await import('@kozojs/core');
+    const err = new RowNotFoundError('missing user');
+    expect(err).toBeInstanceOf(RowNotFoundError);
+    expect(err).toBeInstanceOf(NotFoundError);
+    expect(err).toBeInstanceOf(KozoError);
+    expect(err.statusCode).toBe(404);
+    expect(err.code).toBe('not-found');
+  });
+
+  it('RowConflictError is a ConflictError (409)', async () => {
+    const { ConflictError, KozoError } = await import('@kozojs/core');
+    const err = new RowConflictError('duplicate');
+    expect(err).toBeInstanceOf(RowConflictError);
+    expect(err).toBeInstanceOf(ConflictError);
+    expect(err).toBeInstanceOf(KozoError);
+    expect(err.statusCode).toBe(409);
+    expect(err.code).toBe('conflict');
   });
 });

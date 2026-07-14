@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createKozo } from '../src/app.js';
 import { z } from 'zod';
 import http from 'node:http';
+import { tryLoadUws } from '../src/uws-transport.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -235,6 +236,30 @@ describe('nativeListen() — uWebSockets.js transport', () => {
     expect(routes[0]).toMatchObject({ method: 'get', path: '/a' });
     expect(routes[1]).toMatchObject({ method: 'post', path: '/b' });
   });
+
+  it('honours custom maxBodyBytes on validated POST bodies (native path)', async () => {
+    const uws = await tryLoadUws();
+    if (!uws) return;
+
+    // Below the 1 MB default — proves the compiled handler uses config, not the constant.
+    const customMax = 512;
+    const payload = 'x'.repeat(600);
+    const app = createKozo({ maxBodyBytes: customMax, logger: false });
+    app.post('/echo', { body: z.object({ msg: z.string() }) }, () => ({ ok: true }));
+
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const result = await app.nativeListen({ port: 0 });
+
+    try {
+      const res = await httpPost(result.port, '/echo', { msg: payload });
+      expect(res.status).toBe(413);
+      const body = JSON.parse(res.body);
+      expect(body.status).toBe(413);
+      expect(body.title).toBe('Content Too Large');
+    } finally {
+      result.server.close();
+    }
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════
@@ -365,5 +390,45 @@ describe('Plugin system', () => {
     app.use({ name: 'test-plugin', version: '1.0.0', install: installFn });
 
     expect(installFn).toHaveBeenCalledWith(app);
+  });
+
+  it('awaits async plugin install before listen() binds', async () => {
+    let ready = false;
+    const app = createKozo({ logger: false });
+    app.use({
+      name: 'async-plugin',
+      async install() {
+        await new Promise((r) => setTimeout(r, 30));
+        ready = true;
+      },
+    });
+    app.get('/ready', () => ({ ready }));
+
+    const port = await freePort();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await app.listen(port);
+
+    try {
+      expect(ready).toBe(true);
+      const res = await httpGet(port, '/ready');
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ ready: true });
+    } finally {
+      await app.shutdown({ timeoutMs: 2000 }).catch(() => {});
+    }
+  });
+
+  it('rejects listen() when async plugin install fails', async () => {
+    const app = createKozo({ logger: false });
+    app.use({
+      name: 'failing-plugin',
+      async install() {
+        throw new Error('plugin boom');
+      },
+    });
+
+    const port = await freePort();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await expect(app.listen(port)).rejects.toThrow('plugin boom');
   });
 });

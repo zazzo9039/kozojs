@@ -1,13 +1,12 @@
 import type { Context } from 'hono';
-import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Services, RouteSchema, KozoRequest } from './types.js';
 import type { UwsHttpRes, UwsNativeHandler } from './uws-transport.js';
 import { uwsFastWriteJson, uwsFastWriteJsonStatus, uwsFastWrite400, uwsFastWriteError, canWriteUws, uwsCorkRespond, uwsSafeEnd } from './uws-transport.js';
 import { fastParseQuery } from './native-context.js';
-import { buildNativeContext } from './native-context.js';
 import type { AnyScopeConfig } from './scoped-services.js';
-import { resolveScopedServices, IncomingReqAdapter, UwsReqAdapter } from './scoped-services.js';
+import { resolveScopedServices, UwsReqAdapter } from './scoped-services.js';
 import { z } from 'zod';
+import { compileResponseSerializer, toJsonBody } from './response-serializer.js';
 
 // ============================================================================
 // Zod-native validator — replaces Ajv (removes eval/URL-string supply chain flags)
@@ -36,12 +35,26 @@ function makeZValidator(schema: z.ZodType): ZValidator {
   return function (data: unknown): ZValidateResult {
     const r = schema.safeParse(data);
     if (r.success) {
-      if (data !== null && typeof data === 'object' && !Array.isArray(data)) {
-        const d = data as Record<string, unknown>;
-        const rd = r.data as Record<string, unknown>;
-        for (const k of Object.keys(d)) if (!(k in rd)) delete d[k];
-        Object.assign(d, rd);
+      if (data !== null && typeof data === 'object') {
+        if (Array.isArray(data)) {
+          // Array body (e.g. `body: z.array(...)`): coercions/transforms produce
+          // a NEW array, so rewrite the caller's array in place — otherwise the
+          // handler would receive the original, untransformed values.
+          const rd = r.data as unknown[];
+          const arr = data as unknown[];
+          arr.length = 0;
+          for (let i = 0; i < rd.length; i++) arr.push(rd[i]);
+        } else {
+          // Object body: strip extra keys (removeAdditional) and write coerced
+          // values back in place (coerceTypes parity with the old Ajv path).
+          const d = data as Record<string, unknown>;
+          const rd = r.data as Record<string, unknown>;
+          for (const k of Object.keys(d)) if (!(k in rd)) delete d[k];
+          Object.assign(d, rd);
+        }
       }
+      // NOTE: a primitive-root body (`body: z.string().transform(...)`) cannot be
+      // rewritten in place; such transforms are not reflected in ctx.body.
       return VALID_RESULT;
     }
     return {
@@ -60,16 +73,45 @@ import {
   internalErrorResponse,
   internalErrorResponseStatic,
   KozoError,
+  bodyTooLargeJson,
 } from './errors.js';
-import {
-  fastWriteJson,
-  fastWriteError,
-  fastWrite400,
-  fastWrite500,
-} from './fast-response.js';
 
-type CompiledHandler = (c: Context) => Promise<Response> | Response;
-type UserHandler = (c: any) => any;
+/** Optional per-app error hook from {@link KozoConfig.onError}. */
+export type KozoErrorHook = (error: Error, ctx: unknown) => Response | Promise<Response> | void;
+
+async function resolveHandlerError(
+  err: unknown,
+  path: string,
+  ctx: unknown,
+  hook?: KozoErrorHook,
+): Promise<Response> {
+  if (hook && err instanceof Error) {
+    try {
+      const custom = hook(err, ctx);
+      if (custom instanceof Response) return custom;
+      if (custom != null && typeof (custom as Promise<Response>).then === 'function') {
+        return await (custom as Promise<Response>);
+      }
+    } catch (hookErr) {
+      console.error('[Kozo] onError hook failed:', hookErr);
+    }
+  }
+  if (err instanceof KozoError) return err.toResponse(path);
+  return internalErrorResponse(err as Error, path);
+}
+
+function resolveHandlerErrorSync(err: unknown, path: string, ctx: unknown, hook?: KozoErrorHook): Response {
+  if (hook && err instanceof Error) {
+    try {
+      const custom = hook(err, ctx);
+      if (custom instanceof Response) return custom;
+    } catch (hookErr) {
+      console.error('[Kozo] onError hook failed:', hookErr);
+    }
+  }
+  if (err instanceof KozoError) return err.toResponse(path);
+  return internalErrorResponse(err as Error, path);
+}
 
 /**
  * Lightweight request adapter — one allocation per request.
@@ -88,6 +130,14 @@ class HonoReqAdapter {
 }
 
 /**
+ * Marker set on the Hono context the first time a handler calls ctx.header().
+ * When set, return-value serialization routes the body through Hono's response
+ * builder (c.body) so the pending headers are applied — a raw new Response()
+ * would silently drop them.
+ */
+const HONO_HEADERS_DIRTY = Symbol('kozoHonoHeadersDirty');
+
+/**
  * Prototype for response helper methods.
  * Methods use `this._c` to access the Hono context.
  */
@@ -96,7 +146,10 @@ const CTX_PROTO = {
   text(this: any, data: string, status?: number)  { return this._c.text(data, status); },
   html(this: any, data: string, status?: number)  { return (this._c as any).html(data, status); },
   redirect(this: any, url: string, status?: number) { return this._c.redirect(url, status); },
-  header(this: any, name: string, value: string)  { return this._c.header(name, value); },
+  header(this: any, name: string, value: string)  {
+    this._c[HONO_HEADERS_DIRTY] = true;
+    return this._c.header(name, value);
+  },
 };
 
 /**
@@ -130,9 +183,13 @@ function buildCtx(c: Context, extra?: Record<string, unknown>): Record<string, u
   return ctx;
 }
 
-function honoResultToResponse(result: unknown, ser: (data: any) => string): Response {
+function honoResultToResponse(c: Context, result: unknown, ser: (data: any) => string): Response {
   if (result instanceof Response) return result;
-  return jsonResponse200(ser(result));
+  const body = ser(result);
+  // Apply any headers the handler set via ctx.header(); a raw new Response()
+  // drops them, so route the body through Hono's builder only when needed.
+  if ((c as any)[HONO_HEADERS_DIRTY]) return c.body(body, 200, { 'Content-Type': 'application/json' });
+  return jsonResponse200(body);
 }
 
 async function runHonoScoped(
@@ -149,11 +206,8 @@ async function runHonoScoped(
   }
 }
 
-function finishNativeResult(res: ServerResponse, result: unknown, ser: (data: any) => string): void {
-  if (res.writableEnded || res.headersSent) return;
-  if (result === undefined) return;
-  fastWriteJson(res, ser(result));
-}
+type CompiledHandler = (c: Context) => Promise<Response> | Response;
+type UserHandler = (c: any) => any;
 
 /** uWS KozoContext shim — same handler API as Hono (return value or ctx.json()). */
 function buildUwsHandlerContext(
@@ -165,60 +219,81 @@ function buildUwsHandlerContext(
   query: Record<string, string> | undefined,
   services: Services,
   ser: (data: any) => string,
+  method: string,
+  remoteAddress: string,
   corsHeaders?: import('./uws-transport.js').CorsHeaders,
-): { ctx: Record<string, unknown>; responded: () => boolean } {
+  reqHeaders?: Record<string, string>,
+  user?: unknown,
+): { ctx: Record<string, unknown>; responded: () => boolean; finalCors: () => import('./uws-transport.js').CorsHeaders | undefined } {
   let done = false;
+  // Headers the handler set via ctx.header(). Merged after the CORS headers so
+  // they are written on every response path, including the auto-serialized
+  // return value (see runUwsHandler). Undefined until the first header() call
+  // keeps the common no-header path allocation-free.
+  let userHeaders: [string, string][] | undefined;
+  const finalCors = (): import('./uws-transport.js').CorsHeaders | undefined => {
+    if (!userHeaders) return corsHeaders;
+    return corsHeaders ? [...corsHeaders, ...userHeaders] : userHeaders;
+  };
   const ctx: Record<string, unknown> = {
-    req: new UwsReqAdapter(url, rawBody),
+    req: new UwsReqAdapter(url, method, rawBody, reqHeaders ?? {}, remoteAddress),
     body,
     params,
     query,
     services,
-    user: null,
+    user: user ?? null,
+    header(name: string, value: string) {
+      (userHeaders ??= []).push([name, value]);
+    },
     json(data: unknown, status?: number) {
       done = true;
       const body = ser(data);
-      if (status !== undefined && status !== 200) uwsFastWriteJsonStatus(uwsRes, body, status, corsHeaders);
-      else uwsFastWriteJson(uwsRes, body, corsHeaders);
+      const ch = finalCors();
+      if (status !== undefined && status !== 200) uwsFastWriteJsonStatus(uwsRes, body, status, ch);
+      else uwsFastWriteJson(uwsRes, body, ch);
     },
     text(data: string, status?: number) {
       done = true;
       if (!canWriteUws(uwsRes)) return;
+      const ch = finalCors();
       uwsCorkRespond(uwsRes, () => {
         uwsRes.writeStatus(`${status ?? 200}`);
         uwsRes.writeHeader('Content-Type', 'text/plain');
-        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        if (ch) for (const [k, v] of ch) uwsRes.writeHeader(k, v);
         uwsSafeEnd(uwsRes, data);
       });
     },
     html(data: string, status?: number) {
       done = true;
       if (!canWriteUws(uwsRes)) return;
+      const ch = finalCors();
       uwsCorkRespond(uwsRes, () => {
         uwsRes.writeStatus(`${status ?? 200}`);
         uwsRes.writeHeader('Content-Type', 'text/html; charset=utf-8');
-        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        if (ch) for (const [k, v] of ch) uwsRes.writeHeader(k, v);
         uwsSafeEnd(uwsRes, data);
       });
     },
     redirect(target: string, status?: number) {
       done = true;
       if (!canWriteUws(uwsRes)) return;
+      const ch = finalCors();
       uwsCorkRespond(uwsRes, () => {
         uwsRes.writeStatus(`${status ?? 302}`);
         uwsRes.writeHeader('Location', target);
-        if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
+        if (ch) for (const [k, v] of ch) uwsRes.writeHeader(k, v);
         uwsSafeEnd(uwsRes, '');
       });
     },
   };
-  return { ctx, responded: () => done };
+  return { ctx, responded: () => done, finalCors };
 }
 
 function compileScopedRouteHandler(
   handler: UserHandler,
   compiled: CompiledRoute,
   scope: AnyScopeConfig,
+  errorHook?: KozoErrorHook,
 ): CompiledHandler {
   const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
   const ser = serialize ?? toJsonBody;
@@ -237,16 +312,14 @@ function compileScopedRouteHandler(
         return await runHonoScoped(scope, req, async (services, signalError) => {
           try {
             const result = await handler(buildCtx(c, { body, query, params, services }));
-            return honoResultToResponse(result, ser);
+            return honoResultToResponse(c, result, ser);
           } catch (err) {
             signalError(err as Error);
-            if (err instanceof KozoError) return err.toResponse(path);
-            return internalErrorResponse(err as Error, path);
+            return resolveHandlerErrorSync(err, path, c, errorHook);
           }
         });
       } catch (err) {
-        if (err instanceof KozoError) return err.toResponse(path);
-        return internalErrorResponse(err as Error, path);
+        return resolveHandlerErrorSync(err, path, c, errorHook);
       }
     };
   }
@@ -265,27 +338,19 @@ function compileScopedRouteHandler(
           const result = handler.length === 0 ? (handler as any)() : handler(buildCtx(c, extra));
           if (result != null && typeof (result as any).then === 'function') {
             const r = await result;
-            return honoResultToResponse(r, ser);
+            return honoResultToResponse(c, r, ser);
           }
-          return honoResultToResponse(result, ser);
+          return honoResultToResponse(c, result, ser);
         } catch (err) {
           signalError(err as Error);
-          if (err instanceof KozoError) return err.toResponse(path);
-          return internalErrorResponse(err as Error, path);
+          return resolveHandlerErrorSync(err, path, c, errorHook);
         }
       });
     } catch (err) {
-      if (err instanceof KozoError) return err.toResponse(path);
-      return internalErrorResponse(err as Error, path);
+      return resolveHandlerErrorSync(err, path, c, errorHook);
     }
   };
 }
-
-export type NativeRouteHandler = (
-  req: IncomingMessage,
-  res: ServerResponse,
-  params: Record<string, string>,
-) => void;
 
 export type CompiledRoute = {
   validateBody?: ZValidator;
@@ -311,23 +376,6 @@ function jsonResponse200(body: string): Response {
 const EMPTY_BODY: Record<string, never> = Object.freeze({}) as Record<string, never>;
 const EMPTY_BODY_HANDLER = () => EMPTY_BODY;
 
-// ============================================================================
-// Date-aware JSON.stringify replacer — converts Date → ISO 8601 string inline
-// during serialization instead of a separate deep recursive pre-walk.
-// ============================================================================
-function dateReplacer(_key: string, value: unknown): unknown {
-  if (value instanceof Date) return value.toISOString();
-  return value;
-}
-
-// ============================================================================
-// Fast serializer — skips JSON.stringify for plain strings
-// ============================================================================
-function toJsonBody(result: any): string {
-  if (typeof result === 'string') return result;
-  return JSON.stringify(result, dateReplacer);
-}
-
 export class SchemaCompiler {
   static compile(schema: RouteSchema): CompiledRoute {
     const compiled: CompiledRoute = {};
@@ -347,9 +395,9 @@ export class SchemaCompiler {
       compiled.validateParams = makeZValidator(schema.params);
     }
 
-    // 4. Serializer — JSON.stringify with automatic Date → ISO 8601 normalization
+    // 4. Serializer — fast-json-stringify from Zod response schema (fallback: JSON.stringify)
     if (schema.response) {
-      compiled.serialize = (data: any) => JSON.stringify(data, dateReplacer);
+      compiled.serialize = compileResponseSerializer(schema.response);
     }
 
     return compiled;
@@ -371,9 +419,10 @@ export function compileRouteHandler(
   services: Services,
   compiled: CompiledRoute,
   scope?: AnyScopeConfig,
+  errorHook?: KozoErrorHook,
 ): CompiledHandler {
   if (scope?.factory) {
-    return compileScopedRouteHandler(handler, compiled, scope);
+    return compileScopedRouteHandler(handler, compiled, scope, errorHook);
   }
 
   const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
@@ -393,11 +442,9 @@ export function compileRouteHandler(
         let params: Record<string, string> | undefined;
         if (vp) { params = c.req.param() as Record<string, string>; const r = vp(params); if (!r.valid) return validationErrorResponse('params', r.errors, path); }
         const result = await handler(buildCtx(c, { body, query, params, services: svc }));
-        if (result instanceof Response) return result;
-        return jsonResponse200(ser(result));
+        return honoResultToResponse(c, result, ser);
       } catch (err) {
-        if (err instanceof KozoError) return err.toResponse(path);
-        return internalErrorResponse(err as Error, path);
+        return await resolveHandlerError(err, path, c, errorHook);
       }
     };
   }
@@ -415,169 +462,19 @@ export function compileRouteHandler(
       if (result instanceof Response) return result;
       if (result != null && typeof (result as any).then === 'function') {
         return (result as Promise<any>).then(
-          (r: any) => r instanceof Response ? r : jsonResponse200(ser(r)),
-          (err: unknown) => err instanceof KozoError
-            ? err.toResponse(c.req.path)
-            : internalErrorResponse(err as Error, c.req.path),
+          (r: any) => honoResultToResponse(c, r, ser),
+          (err: unknown) => resolveHandlerErrorSync(err, c.req.path, c, errorHook),
         );
       }
-      return jsonResponse200(ser(result));
+      return honoResultToResponse(c, result, ser);
     } catch (err) {
-      if (err instanceof KozoError) return err.toResponse(c.req.path);
-      return internalErrorResponse(err as Error, c.req.path);
+      return resolveHandlerErrorSync(err, c.req.path, c, errorHook);
     }
   };
 }
-
-// ============================================================================
-// NATIVE NODE.JS HANDLER COMPILER
-//
-// Produces (req, res, params) => void handlers that write directly to the
-// Node.js ServerResponse socket — no Web API Request/Response allocation.
-// Used by Kozo.nativeListen() for maximum throughput.
-// ============================================================================
 
 /** Default max request body size: 1MB (aligned with uws-transport). */
 export const DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024;
-
-function readNativeBody(req: IncomingMessage, maxBytes: number = DEFAULT_MAX_BODY_BYTES): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let totalBytes = 0;
-    let limitExceeded = false;
-
-    const onData = (chunk: Buffer) => {
-      if (limitExceeded) return;
-      totalBytes += chunk.length;
-      if (totalBytes > maxBytes) {
-        limitExceeded = true;
-        req.removeListener('data', onData);
-        req.removeListener('end', onEnd);
-        req.removeListener('error', onError);
-        // Destroy connection to stop receiving data
-        req.destroy(new Error(`Request body exceeds ${maxBytes} bytes limit`));
-        resolve(null); // Return null to signal limit exceeded
-        return;
-      }
-      chunks.push(chunk);
-    };
-    const onEnd = () => {
-      req.removeListener('data', onData);
-      req.removeListener('end', onEnd);
-      req.removeListener('error', onError);
-      try {
-        const str = Buffer.concat(chunks).toString('utf8');
-        resolve(str ? JSON.parse(str) : {});
-      } catch {
-        resolve({});
-      }
-    };
-    const onError = (err: Error) => {
-      req.removeListener('data', onData);
-      req.removeListener('end', onEnd);
-      req.removeListener('error', onError);
-      reject(err);
-    };
-
-    req.on('data', onData);
-    req.on('end', onEnd);
-    req.on('error', onError);
-  });
-}
-
-export function compileNativeHandler(
-  handler: UserHandler,
-  schema: RouteSchema,
-  services: Services,
-  compiled: CompiledRoute,
-  scope?: AnyScopeConfig,
-): NativeRouteHandler {
-  const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
-  const svc = services != null && Object.keys(services).length > 0 ? services : undefined;
-  const ser = serialize ?? toJsonBody;
-  const noArgs = handler.length === 0;
-  const hasScope = scope?.factory != null;
-
-  async function invokeNative(
-    req: IncomingMessage,
-    res: ServerResponse,
-    params: Record<string, string>,
-    body: unknown,
-    runServices: Services | undefined,
-  ): Promise<void> {
-    const ctx = buildNativeContext(req, res, params, body, runServices ?? ({} as Services), ser);
-    const result = noArgs ? (handler as any)() : handler(ctx);
-    if (result != null && typeof (result as any).then === 'function') {
-      (result as Promise<any>).then(
-        (r: any) => finishNativeResult(res, r, ser),
-        (err: unknown) => fastWriteError(err, res),
-      );
-      return;
-    }
-    finishNativeResult(res, result, ser);
-  }
-
-  // Async path — body requires readNativeBody() await
-  if (vb) {
-    return async function native_body(req, res, params) {
-      try {
-        const body = await readNativeBody(req);
-        if (body === null) {
-          res.writeHead(413, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Payload Too Large', message: `Request body exceeds maximum allowed size` }));
-          return;
-        }
-        { const r = vb(body); if (!r.valid) { fastWrite400('body', r.errors, res); return; } }
-        if (vp) { const r = vp(params); if (!r.valid) { fastWrite400('params', r.errors, res); return; } }
-        if (vq) {
-          const url = req.url ?? '/';
-          const qIdx = url.indexOf('?');
-          const query = qIdx === -1 ? {} : fastParseQuery(url.slice(qIdx + 1));
-          const r = vq(query);
-          if (!r.valid) { fastWrite400('query', r.errors, res); return; }
-        }
-        if (hasScope && scope) {
-          let err: Error | undefined;
-          const resolved = await resolveScopedServices(scope, new IncomingReqAdapter(req));
-          try {
-            await invokeNative(req, res, params, body, resolved.services);
-          } catch (e) {
-            err = e as Error;
-            fastWriteError(err, res);
-          } finally {
-            await resolved.finish(err);
-          }
-          return;
-        }
-        await invokeNative(req, res, params, body, svc);
-      } catch (err) { fastWriteError(err, res); }
-    };
-  }
-
-  // Sync-capable path — no body to read
-  return function native_sync(req, res, params) {
-    try {
-      if (vq) { const url = req.url ?? '/'; const qIdx = url.indexOf('?'); const query = qIdx === -1 ? {} : fastParseQuery(url.slice(qIdx + 1)); const r = vq(query); if (!r.valid) { fastWrite400('query', r.errors, res); return; } }
-      if (vp) { const r = vp(params); if (!r.valid) { fastWrite400('params', r.errors, res); return; } }
-      if (hasScope && scope) {
-        void (async () => {
-          let err: Error | undefined;
-          const resolved = await resolveScopedServices(scope, new IncomingReqAdapter(req));
-          try {
-            await invokeNative(req, res, params, undefined, resolved.services);
-          } catch (e) {
-            err = e as Error;
-            fastWriteError(err, res);
-          } finally {
-            await resolved.finish(err);
-          }
-        })();
-        return;
-      }
-      void invokeNative(req, res, params, undefined, svc);
-    } catch (err) { fastWriteError(err, res); }
-  };
-}
 
 // ============================================================================
 // compileUwsNativeHandler — zero-shim uWS-native handler compiler
@@ -593,6 +490,8 @@ export function compileUwsNativeHandler(
   services: Services,
   compiled: CompiledRoute,
   scope?: AnyScopeConfig,
+  maxBodyBytes: number = DEFAULT_MAX_BODY_BYTES,
+  method: string = 'GET',
 ): UwsNativeHandler {
   const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
   const svc = services != null && Object.keys(services).length > 0 ? services : undefined;
@@ -609,15 +508,20 @@ export function compileUwsNativeHandler(
     query: Record<string, string> | undefined,
     runServices: Services | undefined,
     corsHeaders?: import('./uws-transport.js').CorsHeaders,
+    reqHeaders?: Record<string, string>,
+    remoteAddress = '',
+    user?: unknown,
   ): void {
-    const { ctx, responded } = buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, runServices ?? ({} as Services), ser, corsHeaders);
+    const { ctx, responded, finalCors } = buildUwsHandlerContext(
+      uwsRes, url, rawBody, params, body, query, runServices ?? ({} as Services), ser, method, remoteAddress, corsHeaders, reqHeaders, user,
+    );
     const result = noArgs ? (handler as any)() : handler(ctx);
     if (result != null && typeof (result as any).then === 'function') {
       (result as Promise<any>).then(
         (r: any) => {
           if (!canWriteUws(uwsRes)) return;
           try {
-            if (!responded()) uwsFastWriteJson(uwsRes, ser(r), corsHeaders);
+            if (!responded()) uwsFastWriteJson(uwsRes, ser(r), finalCors());
           } catch (err) {
             uwsFastWriteError(err, uwsRes, corsHeaders);
           }
@@ -628,21 +532,21 @@ export function compileUwsNativeHandler(
       );
       return;
     }
-    if (!responded() && canWriteUws(uwsRes)) uwsFastWriteJson(uwsRes, ser(result as any), corsHeaders);
+    if (!responded() && canWriteUws(uwsRes)) uwsFastWriteJson(uwsRes, ser(result as any), finalCors());
   }
 
   // Single closure — uWS pre-buffers the body so even body routes are sync
-  return function uws_handler(uwsRes: UwsHttpRes, url: string, rawBody: string | undefined, params: Record<string, string>, corsHeaders?: import('./uws-transport.js').CorsHeaders) {
+  return function uws_handler(uwsRes: UwsHttpRes, url: string, rawBody: string | undefined, params: Record<string, string>, corsHeaders?: import('./uws-transport.js').CorsHeaders, reqHeaders?: Record<string, string>, remoteAddress = '', user?: unknown) {
     try {
       let body: any;
       if (vb) {
         // Security: reject oversized bodies
-        if (rawBody && rawBody.length > DEFAULT_MAX_BODY_BYTES) {
+        if (rawBody && rawBody.length > maxBodyBytes) {
           uwsCorkRespond(uwsRes, () => {
             uwsRes.writeStatus('413 Payload Too Large');
-            uwsRes.writeHeader('Content-Type', 'application/json');
+            uwsRes.writeHeader('Content-Type', 'application/problem+json');
             if (corsHeaders) for (const [k, v] of corsHeaders) uwsRes.writeHeader(k, v);
-            uwsSafeEnd(uwsRes, JSON.stringify({ error: 'Payload Too Large', message: `Request body exceeds maximum allowed size` }));
+            uwsSafeEnd(uwsRes, bodyTooLargeJson(maxBodyBytes));
           });
           return;
         }
@@ -656,9 +560,9 @@ export function compileUwsNativeHandler(
       if (hasScope && scope) {
         void (async () => {
           let err: Error | undefined;
-          const resolved = await resolveScopedServices(scope, new UwsReqAdapter(url, rawBody));
+          const resolved = await resolveScopedServices(scope, new UwsReqAdapter(url, method, rawBody, reqHeaders ?? {}, remoteAddress));
           try {
-            runUwsHandler(uwsRes, url, rawBody, params, body, query, resolved.services, corsHeaders);
+            runUwsHandler(uwsRes, url, rawBody, params, body, query, resolved.services, corsHeaders, reqHeaders, remoteAddress, user);
           } catch (e) {
             err = e as Error;
             if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
@@ -669,7 +573,7 @@ export function compileUwsNativeHandler(
         return;
       }
 
-      runUwsHandler(uwsRes, url, rawBody, params, body, query, svc, corsHeaders);
+      runUwsHandler(uwsRes, url, rawBody, params, body, query, svc, corsHeaders, reqHeaders, remoteAddress, user);
     } catch (err) { if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders); }
   };
 }

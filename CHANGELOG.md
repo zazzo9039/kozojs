@@ -7,6 +7,256 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.21] — 2026-07-14
+
+> **P2 polish + post-0.5.20 fixes.** Additive DX/correctness across core, db,
+> redis, cli and testing; aligns all `@kozojs/*` packages to 0.5.21.
+
+### Added
+
+- `@kozojs/testing`: **`createNativeTestClient(app)`** — boots `nativeListen()` on an ephemeral port and drives the same test-client API over real HTTP, so native-transport behavior (guards, `ctx.header`, optional params, CORS) is finally testable.
+- `@kozojs/redis`: **`psubscribe(pattern, handler)`** for glob channel patterns (ioredis `pmessage`), with `punsubscribe` on last-handler cleanup.
+- `@kozojs/db`: connection/pool/SSL **`options`** passthrough for PostgreSQL (`max`, `idle_timeout`, `ssl`, `prepare`, …) and SQLite (`readonly`, `fileMustExist`, `timeout`).
+- Docs: [Native transport limits](docs/common-pitfalls.md#12-native-transport-limits-nativelisten--uws) — multipart, streaming bridge, HTTPS/bind notes.
+
+### Changed
+
+- `@kozojs/core`: **`listen()` returns `{ port, server }`** (like `nativeListen()`), reporting the OS-assigned port for `port: 0`. Additive — callers that ignore the return still work.
+- `@kozojs/cli`: **`kozo dev`** dropped the decorative delays, fixed the step counters, and resolves the real entry (package.json `main` / conventions) instead of a hardcoded `src/index.ts` and fake `port 3000`.
+- `@kozojs/db`: README/description clarify **PostgreSQL/SQLite for query helpers**; MySQL is **connection-only** in 0.5.x (raw Drizzle).
+- `@kozojs/auth`: `decodeTokenPayload` delegates to `decodeJWT` (jose) — correct UTF-8, no duplicate `atob` path.
+- `@kozojs/cli`: manifest route paths normalized to `/` on Windows (`normalizeRouteFilePath`).
+- CI: merge **Publish Gate** into `.github/workflows/ci.yml` — one Actions run per push/PR (tests + pack/publint/smoke when `packages/**` changes). Publish: `gh workflow run ci.yml -f publish=true`.
+
+### Fixed
+
+- `@kozojs/core`: Zod coercion/transform now applied to **array request bodies** (`body: z.array(...)`) — previously the handler received the untransformed values.
+- `@kozojs/db`: `isUniqueViolation` recognizes MySQL `ER_DUP_ENTRY`.
+
+## [0.5.20] — 2026-07-13
+
+> **Pre-launch hardening release.** Closes P0 transport/SSR bugs, uWS-first parity
+> gaps, OSS community files, and aligns all `@kozojs/*` packages to 0.5.20.
+
+### Fixed — `@kozojs/core`
+
+- SSR: malformed percent-encoding in static file paths returns **400** instead of
+  crashing the server (`decodeURIComponent` guard).
+- `ctx.header()` on both transports — Hono uses `c.body()` when headers were set;
+  uWS merges user headers on every response path.
+- Optional path params (`:id?`) on uWS via `expandUwsPatterns()` — matches Hono
+  `listen()` semantics (`/opt` and `/opt/42` both work).
+- `use(plugin)` async-safe — `flushPluginInstalls()` before `listen()`,
+  `nativeListen()`, and `listenSsr()` (fixes `redisPlugin` race).
+- Uniform `maxBodyBytes` — passed into `compileUwsNativeHandler`; `listenSsr()`
+  applies the same Content-Length pre-check as `listen()`.
+- `KozoConfig.onError` / `onNotFound` wired on Hono and compiled route handlers;
+  removed never-read config keys (`port`, `mode`, `runtime`, `target`,
+  `monitoring`, `basePath`, `openapi`).
+- `GuardRequest.remoteAddress` on the uWS native path (sync capture from uWS);
+  `rateLimitGuard` falls back to client IP when proxy headers are absent;
+  `UwsReqAdapter` reports the real HTTP method per route.
+- uWS Hono bridge preserves **multiple `Set-Cookie`** headers (`getSetCookie()`).
+
+### Changed — `@kozojs/core`
+
+- Removed unused runtime dead code: experimental WASM radix router,
+  `compileNativeHandler` / uWS shims (never wired into `nativeListen()`).
+- uWebSockets.js install docs/runtime message use GitHub spec
+  `uNetworking/uWebSockets.js#v20.66.0`.
+
+### Added — repository
+
+- `SECURITY.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`.
+- GitHub issue template (bug report) and pull request template.
+
+### Fixed — `@kozojs/db`
+
+- `RowNotFoundError` / `RowConflictError` extend `NotFoundError` / `ConflictError`
+  (`KozoError` hierarchy → correct 404/409 responses).
+
+### Changed — `@kozojs/cli` / templates
+
+- Starter templates try `nativeListen()` first, fall back to `listen()`; add
+  `uWebSockets.js` GitHub dependency spec.
+- Scaffold default npm range bumped to `^0.5.20`.
+
+### Removed
+
+- Obsolete `benchmarks/wasm-radix.bench.ts` (WASM router PoC removed in core).
+
+## [0.5.19] — 2026-06-18
+
+### Changed
+- `@kozojs/core`: npm description and README now open with the positioning
+  ("build your backend from a single contract" — routes, validation, OpenAPI
+  and a typed client derived from one Zod schema) instead of internal
+  serialization details. Docs/metadata only, no code changes.
+
+## [0.5.18-auth] — 2026-06-18
+
+> `@kozojs/auth` only.
+
+### Changed
+- `@kozojs/auth`: npm description and README hero now lead with the
+  native-transport guarantee ("authentication that stays on the native
+  uWebSockets fast path — JWT guards, roles, no bridge tax") rather than "JWT
+  authentication guards". Docs/metadata only, no code changes.
+
+## [0.5.17-cli] — 2026-06-18
+
+> `@kozojs/cli` only.
+
+### Changed
+- `@kozojs/cli`: npm description and README hero replaced the generic
+  "next-gen TypeScript Backend Framework" with what the CLI actually scaffolds
+  (file-system routes, services and auth, structured from day one).
+  Docs/metadata only, no code changes.
+
+## [0.5.18] — 2026-06-12
+
+### Fixed
+- `@kozojs/core`: the generated client serialized `z.record(...)` in the
+  Zod v3 single-argument form, which does not compile against Zod 4 (the
+  key type became mandatory). Now emits `z.record(key, value)`. Found by
+  generating a client for a schema with per-unit override maps.
+
+## [0.5.17] — 2026-06-12
+
+### Fixed
+- `@kozojs/core`: `createRouteFactory` no longer types the handler via an
+  intersection — `RouteDefinitionOptions` gained an optional `TServices`
+  generic, so `ctx.services` keeps the concrete app type (passing it to a
+  function no longer degrades to a `Services | AppServices` union).
+
+## [0.5.17-auth] — 2026-06-11
+
+> `@kozojs/auth` only.
+
+### Fixed
+- `@kozojs/auth` README: complete API reference on npm (guards, `jwtGuard`
+  options, section order).
+
+## [0.5.16] — 2026-06-11
+
+> **Security release.** `nativeListen()` (uWS) previously bypassed every Hono
+> middleware: auth, rate limits and CORS registered via `app.middleware()` or
+> `_middleware.ts` did not run — protected routes answered without a token.
+> Found live on kozo-native-api, present since the uWS transport landed.
+
+### Fixed
+- `@kozojs/core`: routes covered by `app.middleware()` / `_middleware.ts`
+  patterns are now **bridged through the Hono pipeline** under
+  `nativeListen()` — identical semantics to `listen()`. Uncovered routes keep
+  the zero-shim native path. Conservative pattern matching
+  (`middlewarePatternOverlaps`), bridge via `makeUwsHonoBridge`.
+- `@kozojs/core`: ephemeral-port bind retry on `nativeListen({ port: 0 })`.
+
+### Added
+- `@kozojs/core`: `app.guard(pattern, guard)` — transport-agnostic security
+  checks compiled into the uWS fast path (+33% vs the middleware bridge with
+  JWT). `guardToHonoMiddleware`, `wrapNativeWithGuards`, `rateLimitGuard`,
+  per-request CORS origin echo + native preflight, `req.user` propagation
+  into uWS handler ctx.
+- `@kozojs/auth`: `jwtGuard`, `roleGuard`, `registerAuthGuard` — guard-based
+  equivalent of `registerAuthBeforeLoadRoutes`, which is now deprecated.
+- `@kozojs/cli`: scaffold templates use guards instead of `getApp().use`
+  (invisible to `nativeListen()`); template deps bumped to `^0.5.16`.
+- tests: `guard-parity` + `middleware-parity` suites — auth status, user
+  propagation, headers, chaining and rate limits asserted identical on
+  `listen()` and `nativeListen()`.
+
+### Fixed (misc)
+- `@kozojs/queue`: flaky Redis events integration test (QueueEvents connect
+  race).
+
+## [0.5.15] — 2026-06-11
+
+### Fixed
+- `@kozojs/core`: `defineKozoApp({ types })` is now optional — it only feeds
+  the augmentation-based typegen, and apps on `createRouteFactory` have no
+  use for it. Previously every app was forced to carry the ref.
+
+## [0.5.14] — 2026-06-11
+
+### Added
+- `@kozojs/core`: `createRouteFactory<TServices>()` — a `defineRoute` bound to
+  the app's concrete services type. The explicit alternative to augmenting the
+  global `KozoServices` interface: no typegen script, no pre-hooks, no
+  generated d.ts, and two apps in one repo cannot fight over a single global
+  interface. Pair it with a package.json subpath import
+  (`"imports": { "#kozo": "./src/kozo.ts" }`) so every route file imports the
+  same alias at any folder depth. The augmentation path (`renderKozoTypesDts`,
+  `kozo types`) keeps working for existing apps.
+
+## [0.5.13] — 2026-06-11
+
+> DX release: secure-by-default API docs, a generated client that survives a
+> real app, silenceable banner. All packages aligned to 0.5.13.
+
+### Added
+- `@kozojs/core`: `app.mountDocs({ path, title, version, enabled })` mounts
+  Swagger UI + the OpenAPI 3.1 spec of every registered route. **Off in
+  production** unless `enabled: true` is passed explicitly; the spec is
+  generated lazily on first request, so it works before or after
+  `loadRoutes()` and with both `listen()` and `nativeListen()`; auto-tags
+  skip a leading `api` path segment. Replaces ~50 lines of per-app glue.
+- `@kozojs/core`: generated client v2 — `getToken` (bearer, sync or async),
+  `onRequest` / `onUnauthorized` / `onError` hooks, `KozoApiError` carrying
+  RFC 7807 problem details, custom `fetch`, per-call `{ signal, headers }`,
+  `null` on 204 instead of a `.json()` crash, query params dropping
+  null/undefined instead of serializing the string "undefined".
+- `@kozojs/core`: `createKozo({ logger: false })` silences the startup banner
+  (`listen`, `nativeListen`, and `listenSsr` — the flag is forwarded to the SSR
+  server, where it can also be set directly via `SsrConfig.logger`).
+
+### Fixed
+- `@kozojs/core` README: dependency count corrected (4 runtime deps, not 3) and
+  the headline no longer leads with uWebSockets.js, which is an optional peer.
+- All library packages: `"./package.json"` added to `exports` — tools doing
+  `require('@kozojs/core/package.json')` hit `ERR_PACKAGE_PATH_NOT_EXPORTED`
+  before.
+
+## [0.5.12] — 2026-06-10
+
+> Node support floor decided: >= 20.19 (`require(esm)`). Resolves the known
+> issue noted in 0.5.11; all packages aligned to 0.5.12.
+
+### Changed
+- **Node floor**: `engines.node >= 20.19.0` declared in all 7 packages (and the
+  workspace root). The CLI is a CJS bundle that `require()`s ESM-only deps
+  (execa, @clack/prompts, @kozojs/core): that needs `require(esm)`, available
+  from Node 20.19. Node 18 and 20 < 20.19 (both EOL) were never able to run
+  the published CLI.
+- `@kozojs/cli`: fails fast with a clear message on Node < 20.19 instead of an
+  `ERR_REQUIRE_ESM` stack; build target raised node14 → node20.
+- `@kozojs/core`, `@kozojs/auth`: the `"require"` export condition pointing to
+  an ESM file (misleading on old Node, flagged by publint/attw) is replaced
+  with `"default"` — CJS consumers on >= 20.19 load it via `require(esm)`.
+- `@kozojs/db`: `types` condition listed first in `exports` (TS resolution
+  convention, flagged by publint).
+- Publish gate is now fully blocking: publint + attw (`--profile esm-only`)
+  and the smoke matrix (Node 20/22/24) gate every publish; core smoke also
+  covers `require("@kozojs/core")`.
+- CI/gate workflows: actions bumped (checkout v6, setup-node v6,
+  pnpm/action-setup v6, upload-artifact v7, download-artifact v8) ahead of the
+  June 16, 2026 forced Node 24 runtime; CI test matrix now includes Node 24.
+
+## [0.5.11] — 2026-06-10
+
+> Hotfix: `@kozojs/cli` 0.5.9–0.5.10 were uninstallable from npm.
+
+### Fixed
+- `@kozojs/cli`: `"@kozojs/core": "workspace:*"` leaked into the published `dependencies` (raw `npm publish` does not rewrite the workspace protocol) — every `npm install @kozojs/cli` / `npx @kozojs/cli` failed since 0.5.9. Dependency is now `workspace:^`, published as `^0.5.10`.
+- `@kozojs/cli`: `create-kozo <name> --template <t>` crashed (`ENOENT` after a silent no-op copy) whenever the CLI was installed as a package: the template dir lives inside `node_modules`, and the copy filter rejected its own root. Filter now matches `node_modules` relative to the template root.
+
+### Added
+- `publish-gate` GitHub Actions workflow: packs with pnpm, asserts no `workspace:`/`file:`/`link:` protocols in packed manifests, runs publint + arethetypeswrong, smoke-installs the tarballs in an empty project across the Node matrix, and (manual dispatch) publishes the same validated tarballs in dependency order. Replaces `publish.sh`.
+- `scripts/smoke-core.mjs`: standalone smoke test for the packed `@kozojs/core` tarball.
+
+### Known issues
+- The CLI is a CJS bundle that `require()`s pure-ESM `@kozojs/core`: startup fails on Node 18 and 20 < 20.19 (`ERR_REQUIRE_ESM`) while `engines` still claims `>=18`. Tracked by the non-blocking gate jobs (Node 18 / 20.18.3) and the publint/attw steps, pending the module-strategy decision.
+
 ## [0.5.2] — 2026-05-30
 
 > Consolidation release: CLI test coverage, typecheck CI gate, queue/redis example, docs refresh.

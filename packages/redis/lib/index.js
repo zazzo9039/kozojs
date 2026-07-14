@@ -38,25 +38,31 @@ function createCache(redis, prefix) {
 function createPubSub(publishRedis, createSubscriber) {
   let subscriber;
   const handlers = /* @__PURE__ */ new Map();
+  const patternHandlers = /* @__PURE__ */ new Map();
+  function dispatch(set, channel, message) {
+    if (!set) return;
+    let data;
+    try {
+      data = JSON.parse(message);
+    } catch {
+      data = message;
+    }
+    for (const fn of set) {
+      try {
+        fn(data, channel);
+      } catch (err) {
+        console.error(`[kozo:redis] pubsub handler error on "${channel}":`, err);
+      }
+    }
+  }
   function ensureSubscriber() {
     if (subscriber) return subscriber;
     subscriber = createSubscriber();
     subscriber.on("message", (channel, message) => {
-      const set = handlers.get(channel);
-      if (!set) return;
-      let data;
-      try {
-        data = JSON.parse(message);
-      } catch {
-        data = message;
-      }
-      for (const fn of set) {
-        try {
-          fn(data, channel);
-        } catch (err) {
-          console.error(`[kozo:redis] pubsub handler error on "${channel}":`, err);
-        }
-      }
+      dispatch(handlers.get(channel), channel, message);
+    });
+    subscriber.on("pmessage", (pattern, channel, message) => {
+      dispatch(patternHandlers.get(pattern), channel, message);
     });
     return subscriber;
   }
@@ -76,6 +82,21 @@ function createPubSub(publishRedis, createSubscriber) {
         if (set.size === 0) {
           handlers.delete(channel);
           subscriber?.unsubscribe(channel);
+        }
+      };
+    },
+    psubscribe(pattern, handler) {
+      if (!patternHandlers.has(pattern)) {
+        patternHandlers.set(pattern, /* @__PURE__ */ new Set());
+        ensureSubscriber().psubscribe(pattern);
+      }
+      const set = patternHandlers.get(pattern);
+      set.add(handler);
+      return () => {
+        set.delete(handler);
+        if (set.size === 0) {
+          patternHandlers.delete(pattern);
+          subscriber?.punsubscribe(pattern);
         }
       };
     }

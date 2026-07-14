@@ -19,8 +19,45 @@ import path from 'node:path';
 import os from 'node:os';
 import type { FSWatcher } from 'chokidar';
 
-import { startRouteWatcher, resolveRoutesDir } from '../src/commands/dev.js';
+import { startRouteWatcher, resolveRoutesDir, resolveEntry } from '../src/commands/dev.js';
 import { generateManifest, type RoutesManifest } from '../src/routing/manifest.js';
+
+// ---------------------------------------------------------------------------
+// resolveEntry — no hardcoded src/index.ts
+// ---------------------------------------------------------------------------
+
+describe('resolveEntry', () => {
+  it('prefers a source-file "main" from package.json', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kozo-entry-'));
+    try {
+      fs.writeJsonSync(path.join(dir, 'package.json'), { main: 'src/server.ts' });
+      fs.ensureFileSync(path.join(dir, 'src/server.ts'));
+      expect(resolveEntry(dir)).toBe(path.join(dir, 'src/server.ts'));
+    } finally {
+      fs.removeSync(dir);
+    }
+  });
+
+  it('falls back to conventions when package.json has no source main', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kozo-entry-'));
+    try {
+      fs.writeJsonSync(path.join(dir, 'package.json'), { main: 'lib/index.js' });
+      fs.ensureFileSync(path.join(dir, 'src/index.ts'));
+      expect(resolveEntry(dir)).toBe(path.join(dir, 'src/index.ts'));
+    } finally {
+      fs.removeSync(dir);
+    }
+  });
+
+  it('returns null when no entry exists', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kozo-entry-'));
+    try {
+      expect(resolveEntry(dir)).toBeNull();
+    } finally {
+      fs.removeSync(dir);
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers

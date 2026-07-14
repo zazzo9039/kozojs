@@ -1,6 +1,6 @@
 # 🔥 Kozo Framework
 
-**The Structure for the Edge** — high-performance TypeScript backend framework with optional native C++ transport via uWebSockets.js.
+**The Structure for the Edge** — TypeScript backend framework with high-performance HTTP routing (uWebSockets.js), compiled serialization on typed responses where the schema allows it, and transparent `JSON.stringify` fallback otherwise.
 
 [![CI](https://github.com/zazzo9039/kozo/actions/workflows/ci.yml/badge.svg)](https://github.com/zazzo9039/kozo/actions/workflows/ci.yml)
 [![npm version](https://badge.fury.io/js/@kozojs%2Fcore.svg)](https://www.npmjs.com/package/@kozojs/core)
@@ -11,6 +11,8 @@
 
 - ⚡ **Native C++ routing** — uWebSockets.js per-route matching, zero JS dispatch in the hot path
 - 🚀 **High throughput** — matches bare uWS (0.1% gap), ~33% over Fastify, ~3× over NestJS — see [benchmarks/RESULTS.md](./benchmarks/RESULTS.md)
+- ⚡ **Compiled response serialization** — `fast-json-stringify` compiled at route registration when the Zod response schema is JSON-serializable; falls back to `JSON.stringify` for `z.any()`, transforms, dates, etc.
+- 📋 **Response contract enforcement** — routes with a `response` schema **omit undeclared fields** from the JSON output (not a bug — declare every field you return, or drop `response` from the schema)
 - 📁 **File-system routing** — zero config (`routes/users/[id].ts` → `GET /users/:id`)
 - ✅ **Zod-native validation** — schemas compiled once at startup, no Ajv, no `eval`
 - 📝 **Auto OpenAPI 3.1** — generated from your Zod schemas
@@ -19,6 +21,7 @@
 - 🛡️ **RFC 7807 errors** — every error is a `application/problem+json` response
 - 🔌 **Plug-and-play modules** — auth (JWT), db (Drizzle), queue (BullMQ/AMQP), redis (cache/pub-sub/rate-limit)
 - 🌐 **Three transports, one API** — `listen()` (Node), `nativeListen()` (uWS), `listenSsr()` (Vite SSR + API)
+- 🔐 **Transport-agnostic guards** — `app.guard()` runs auth/roles/rate-limits on the uWS fast path, same semantics on every transport
 
 ## 📦 Packages
 
@@ -26,7 +29,7 @@
 |---|---|---|
 | [`@kozojs/core`](./packages/core) | [![npm](https://img.shields.io/npm/v/@kozojs/core.svg)](https://www.npmjs.com/package/@kozojs/core) | Framework core (router, validation, OpenAPI, SSR, WS, client gen) |
 | [`@kozojs/cli`](./packages/cli) | [![npm](https://img.shields.io/npm/v/@kozojs/cli.svg)](https://www.npmjs.com/package/@kozojs/cli) | Project scaffolding (`create-kozo` / `kozo`) |
-| [`@kozojs/auth`](./packages/auth) | [![npm](https://img.shields.io/npm/v/@kozojs/auth.svg)](https://www.npmjs.com/package/@kozojs/auth) | JWT authentication middleware (via `jose`) |
+| [`@kozojs/auth`](./packages/auth) | [![npm](https://img.shields.io/npm/v/@kozojs/auth.svg)](https://www.npmjs.com/package/@kozojs/auth) | JWT authentication guards (via `jose`) — `jwtGuard`, `roleGuard`, `registerAuthGuard` |
 | [`@kozojs/db`](./packages/db) | [![npm](https://img.shields.io/npm/v/@kozojs/db.svg)](https://www.npmjs.com/package/@kozojs/db) | Drizzle ORM integration (PostgreSQL / MySQL / SQLite) |
 | [`@kozojs/queue`](./packages/queue) | [![npm](https://img.shields.io/npm/v/@kozojs/queue.svg)](https://www.npmjs.com/package/@kozojs/queue) | Multi-backend job queue (BullMQ / AMQP) |
 | [`@kozojs/redis`](./packages/redis) | [![npm](https://img.shields.io/npm/v/@kozojs/redis.svg)](https://www.npmjs.com/package/@kozojs/redis) | Redis cache, pub/sub, distributed rate-limit store |
@@ -48,8 +51,8 @@ Or wire it up by hand:
 
 ```bash
 npm install @kozojs/core zod
-# Optional, for native transport:
-npm install uWebSockets.js
+# Optional, for native transport (published on GitHub, not npm):
+npm install uNetworking/uWebSockets.js#v20.66.0
 ```
 
 ```typescript
@@ -133,7 +136,7 @@ routes/
 - [Getting Started](./docs/getting-started.md) — create a project, register routes, add auth, shutdown
 - [Developer Guide](./docs/developer-guide.md) — full API reference for every package
 - [Architecture Deep Dive](./docs/architecture.md) — compiler internals, request lifecycle, performance design
-- [Auth Middleware](./docs/auth-middleware.md) — JWT middleware configuration
+- [Auth Guards](./docs/auth-middleware.md) — JWT guard configuration (`app.guard`)
 - [Graceful Shutdown](./docs/graceful-shutdown.md) — shutdown lifecycle and database cleanup
 - [Benchmarks](./benchmarks/RESULTS.md) — full numbers, methodology, statistical validation
 - [Online docs site](https://kozo-docs.vercel.app)

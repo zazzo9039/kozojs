@@ -1,344 +1,12 @@
 import * as hono from 'hono';
-import { Context, MiddlewareHandler } from 'hono';
+import { MiddlewareHandler, Context } from 'hono';
 import { Hono } from 'hono/quick';
-import { IncomingMessage, ServerResponse, Server } from 'node:http';
+import { Server, IncomingMessage, ServerResponse } from 'node:http';
+import { R as RouteSchema, S as Services, K as KozoConfig, a as KozoHandler, b as RouteMeta, c as KozoEnv, d as KozoGuard, H as HttpMethod$1, e as KozoRequest, N as NativeKozoContext, f as RouteDefinition, M as MiddlewareDefinition, g as RouteModule, h as ResolvedRouteModule } from './index-DQaSTSNk.js';
+export { C as CorsOptions, U as FileSystemRoutingOptions, w as GuardDeny, x as GuardEntry, v as GuardOutcome, G as GuardRequest, u as GuardResult, p as Infer, o as InferResponse, I as InferSchema, j as KozoContext, l as KozoServices, k as KozoUser, L as LoggerOptions, W as ManifestHttpMethod, V as ManifestRoute, n as NativeKozoHandler, F as RateLimitGuardOptions, E as RateLimitOptions, J as RateLimitStore, O as RateLimitStoreRecord, m as RouteContext, i as RouteDefinitionOptions, X as RoutesManifest, Z as WebhookVerifyOptions, Q as applyFileSystemRouting, D as clearRateLimitStore, t as compileGuardPattern, z as cors, T as createFileSystemRouting, r as createRouteFactory, q as defineRoute, P as errorHandler, s as guardToHonoMiddleware, y as logger, A as rateLimit, B as rateLimitGuard, Y as verifyWebhookSignature } from './index-DQaSTSNk.js';
+import { Writable } from 'node:stream';
 import { z } from 'zod';
 export { z } from 'zod';
-import { Writable } from 'node:stream';
-export { CorsOptions, FileSystemRoutingOptions, LoggerOptions, ManifestHttpMethod, ManifestRoute, RateLimitOptions, RateLimitStore, RateLimitStoreRecord, RoutesManifest, WebhookVerifyOptions, applyFileSystemRouting, clearRateLimitStore, cors, createFileSystemRouting, errorHandler, logger, rateLimit, verifyWebhookSignature } from './middleware/index.js';
-
-type SchemaType = z.ZodType<any>;
-type RouteSchema = {
-    body?: SchemaType;
-    query?: SchemaType;
-    params?: SchemaType;
-    response?: SchemaType | Record<number, SchemaType>;
-};
-type InferSchema<T> = T extends z.ZodType<any> ? z.infer<T> : unknown;
-/**
- * Shorthand for `z.infer<typeof Schema>`.
- *
- * @example
- * const UserSchema = z.object({ name: z.string() });
- * type User = Infer<typeof UserSchema>; // { name: string }
- */
-type Infer<T extends z.ZodType<any>> = z.infer<T>;
-/** Infer the response data type from a schema's response field */
-type InferResponse<T> = T extends SchemaType ? InferSchema<T> : T extends Record<number, SchemaType> ? InferSchema<T[200]> : unknown;
-/**
- * Typed request object available as `ctx.req`.
- * Provides header access and raw request reference without `any`.
- */
-interface KozoRequest {
-    /** Get a request header by name (case-insensitive) */
-    header(name: string): string | undefined;
-    /** Full request URL string */
-    readonly url: string;
-    /** HTTP method (GET, POST, …) */
-    readonly method: string;
-    /** URL path (without query string) */
-    readonly path: string;
-    /** Raw query string (without leading `?`) */
-    readonly query: string;
-    /** Read the raw request body as a string (e.g. for webhook signature verification) */
-    text(): Promise<string>;
-}
-/**
- * Typed user payload set by authentication middleware.
- * Extend this interface in your app for full autocompletion:
- *
- * @example
- * declare module '@kozojs/core' {
- *   interface KozoUser {
- *     sub: string;
- *     role: 'admin' | 'user';
- *     email: string;
- *   }
- * }
- */
-/**
- * Typed user payload set by authentication middleware.
- *
- * Fields are already included for the most common JWT claims used in Kozo apps.
- * Add extra fields by augmenting this interface in your app:
- *
- * @example
- * declare module '@kozojs/core' {
- *   interface KozoUser {
- *     orgId: string;
- *     plan: 'free' | 'pro';
- *   }
- * }
- */
-interface KozoUser {
-    sub?: string;
-    /** User primary email address */
-    email?: string;
-    /** User display name */
-    name?: string;
-    /** Single role string (most common pattern) */
-    role?: string;
-    /** Multi-role array (RBAC) */
-    roles?: string[];
-    /** User UUID / primary key */
-    id?: string;
-    [key: string]: unknown;
-}
-/**
- * Context object passed to every Kozo route handler.
- *
- * All fields are fully typed from the route schema — `body`, `query`,
- * `params` have autocompletion based on the Zod schemas you define.
- *
- * @typeParam S         - Route schema (body / query / params / response)
- * @typeParam TServices - Services injected at `createKozo({ services })`
- *
- * @example
- * app.post('/users', { body: CreateUserSchema, response: UserSchema }, (ctx) => {
- *   ctx.body.name    // ✅ string — inferred from CreateUserSchema
- *   ctx.body.email   // ✅ string — inferred from CreateUserSchema
- *   ctx.services.db  // ✅ typed — inferred from createKozo<{ db: DB }>()
- *   ctx.user?.role   // ✅ string | undefined
- *   ctx.req.header('authorization') // ✅ string | undefined
- * });
- */
-type KozoContext<S extends RouteSchema = {}, TServices extends Services = Services> = {
-    /** Parsed + validated request body — typed from `schema.body` */
-    body: InferSchema<S['body']>;
-    /** Parsed + validated query params — typed from `schema.query` */
-    query: InferSchema<S['query']>;
-    /** Parsed + validated path params — typed from `schema.params` */
-    params: InferSchema<S['params']>;
-    /** Injected services — typed from `createKozo<TServices>()` */
-    services: TServices;
-    /** Authenticated user set by JWT middleware — extend `KozoUser` for custom fields */
-    user: KozoUser | null;
-    /** Typed request helper */
-    req: KozoRequest;
-    /** Send a JSON response. Type is inferred from `schema.response` */
-    json(data: InferResponse<S['response']>, status?: number): Response;
-    /** Send a plain text response */
-    text(data: string, status?: number): Response;
-    /** Send an HTML response (e.g. Swagger UI, SSR pages) */
-    html(data: string, status?: number): Response;
-    /** Redirect to another URL (default 302) */
-    redirect(url: string, status?: number): Response;
-    /** Set a response header */
-    header(name: string, value: string): void;
-    /**
-     * Raw Hono context — typed escape hatch for cases not covered by the
-     * Kozo abstractions (custom headers, streaming, raw request access, etc.).
-     */
-    c: Context<KozoEnv>;
-};
-type KozoHandler<S extends RouteSchema = {}, TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>> = (ctx: KozoContext<S, TServices & TScoped>) => any | Promise<any>;
-interface Services {
-    [key: string]: unknown;
-}
-/**
- * App services injected into every route handler (`ctx.services`).
- *
- * Augment once in your app so file-system routes get full autocompletion
- * without a local `defineRoute` wrapper:
- *
- * @example
- * // src/kozo.d.ts
- * import type { AppServices } from './lib/services/index.js';
- * declare module '@kozojs/core' {
- *   interface KozoServices extends AppServices {}
- * }
- */
-interface KozoServices extends Services {
-}
-/** Handler context for file-system routes — uses augmented {@link KozoServices}. */
-type RouteContext<S extends RouteSchema = {}> = KozoContext<S, KozoServices>;
-interface KozoEnv {
-    Variables: {
-        services: Services;
-        user?: KozoUser;
-    };
-}
-/**
- * Advanced context for handlers that need direct Node.js `IncomingMessage` / `ServerResponse`.
- *
- * Most apps should use {@link KozoContext} — the same handler shape works on `listen()`
- * and `nativeListen()` when you use return values or `ctx.json()`. Use this type with
- * {@link buildNativeContext} when you need raw Node.js I/O or uWS-level control.
- *
- * @typeParam S       - Route schema (body, query, params, response)
- * @typeParam TSvc    - Services type (injected at constructor)
- */
-interface NativeKozoContext<S extends RouteSchema = {}, TSvc extends Services = Services> {
-    /** Raw Node.js incoming request */
-    readonly req: IncomingMessage;
-    /** Raw Node.js server response */
-    readonly res: ServerResponse;
-    /** Route parameters — typed from schema.params */
-    readonly params: InferSchema<S['params']>;
-    /** Parsed query string — typed from schema.query */
-    readonly query: InferSchema<S['query']>;
-    /** Parsed request body — typed from schema.body */
-    readonly body: InferSchema<S['body']>;
-    /** Injected services — typed from Kozo<TServices> */
-    readonly services: TSvc;
-    /** Send a JSON response (default status 200). Uses fast-json-stringify if schema.response is defined. */
-    json(data: InferResponse<S['response']>, status?: number): void;
-    /** Send a plain text response. */
-    text(data: string, status?: number): void;
-    /** Send an HTML response (SSR page rendering). */
-    html(data: string, status?: number): void;
-    /** Set a response header. Returns `this` for chaining. */
-    header(name: string, value: string): this;
-    /** Redirect to another URL (default 302). */
-    redirect(url: string, status?: number): void;
-}
-/**
- * Handler for advanced native routes that write directly to `ServerResponse`.
- *
- * Prefer {@link KozoHandler} for portable handlers; use this with {@link NativeKozoContext}
- * when you need void-returning handlers and raw Node.js response control.
- *
- * @typeParam S    - Route schema
- * @typeParam TSvc - Services shape
- */
-type NativeKozoHandler<S extends RouteSchema = {}, TSvc extends Services = Services> = (ctx: NativeKozoContext<S, TSvc>) => void | Promise<void>;
-interface RouteMeta {
-    summary?: string;
-    description?: string;
-    tags?: string[];
-    auth?: boolean;
-    rateLimit?: {
-        max: number;
-        window: number;
-    };
-}
-/** Single default export: `{ schema?, meta?, handler }` (or `defineRoute(...)`). */
-interface RouteDefinitionOptions<S extends RouteSchema = RouteSchema> {
-    schema?: S;
-    meta?: RouteMeta;
-    handler: KozoHandler<S>;
-}
-interface RouteModule<S extends RouteSchema = RouteSchema> {
-    /** Handler function, or a route definition object with `handler`. */
-    default: KozoHandler<S> | RouteDefinitionOptions<S>;
-    /** Legacy: schema as a separate export (prefer `default.schema`). */
-    schema?: S;
-    /** Legacy: meta as a separate export (prefer `default.meta`). */
-    meta?: RouteMeta;
-}
-interface ResolvedRouteModule<S extends RouteSchema = RouteSchema> {
-    handler: KozoHandler<S>;
-    schema: S;
-    meta?: RouteMeta;
-}
-/**
- * A middleware discovered from a `_middleware.ts` file in the routes directory.
- * The `pathPrefix` determines which routes the middleware applies to.
- */
-interface MiddlewareDefinition {
-    /** URL path prefix this middleware applies to, e.g. '/admin/*' */
-    pathPrefix: string;
-    /** The middleware handler function (Hono MiddlewareHandler signature) */
-    handler: (c: any, next: () => Promise<void>) => Promise<void | Response> | void | Response;
-    /** Absolute path to the source file */
-    filePath: string;
-}
-type HttpMethod$1 = 'get' | 'post' | 'put' | 'patch' | 'delete';
-interface RouteDefinition {
-    path: string;
-    method: HttpMethod$1;
-    filePath: string;
-    module: RouteModule;
-}
-interface OpenAPIConfigRef {
-    info: {
-        title: string;
-        version: string;
-        description?: string;
-    };
-    servers?: Array<{
-        url: string;
-        description?: string;
-    }>;
-    tags?: Array<{
-        name: string;
-        description?: string;
-    }>;
-}
-interface KozoConfig<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>> {
-    routesDir?: string;
-    services?: TServices;
-    /**
-     * Per-request services merged over {@link services} into `ctx.services`.
-     * Runs once per request — use for transactions, correlation IDs, tenant connections.
-     * Zero overhead when omitted (singleton-only apps keep the compile-time fast path).
-     *
-     * @example
-     * createKozo({
-     *   services: { db: pool },
-     *   scopedServices: (base, req) => ({
-     *     reqId: req.header('x-request-id') ?? crypto.randomUUID(),
-     *   }),
-     * });
-     */
-    scopedServices?: (base: TServices, req: KozoRequest) => TScoped | Promise<TScoped>;
-    /**
-     * Called after each request when {@link scopedServices} is configured.
-     * Receives only the scoped slice (not singletons) — use for commit/rollback/release.
-     */
-    onRequestEnd?: (scoped: TScoped, error?: Error) => void | Promise<void>;
-    /** Max request body size in bytes — requests above this get a 413. Default: 1 MB. */
-    maxBodyBytes?: number;
-    port?: number;
-    mode?: 'safe' | 'turbo';
-    runtime?: 'node' | 'bun';
-    target?: 'node' | 'edge' | 'cloudflare' | 'vercel' | 'netlify';
-    monitoring?: {
-        enable: boolean;
-        metrics: ('req/sec' | 'latency' | 'errors')[];
-        port?: number;
-    };
-    basePath?: string;
-    openapi?: OpenAPIConfigRef;
-    onError?: (error: Error, ctx: any) => any;
-    onNotFound?: (ctx: any) => any;
-    /**
-     * Called after the server starts listening.
-     * Use this to initialize connections, warm caches, run migrations, etc.
-     *
-     * @example
-     * createKozo({
-     *   services: { db },
-     *   onStart: async ({ services }) => {
-     *     await services.db.migrate();
-     *     console.log('Database migrated');
-     *   },
-     * });
-     */
-    onStart?: (ctx: {
-        services: TServices;
-    }) => void | Promise<void>;
-    /**
-     * Called before the server shuts down (after draining in-flight requests).
-     * Use this for cleanup: close DB pools, flush queues, release resources.
-     *
-     * @example
-     * createKozo({
-     *   services: { db, redis },
-     *   onStop: async ({ services }) => {
-     *     await services.db.close();
-     *     await services.redis.quit();
-     *   },
-     * });
-     */
-    onStop?: (ctx: {
-        services: TServices;
-    }) => void | Promise<void>;
-}
-/** Typed helper for `export default defineRoute({ schema, handler, meta? })`. */
-declare function defineRoute<S extends RouteSchema = RouteSchema>(options: RouteDefinitionOptions<S> & {
-    handler: KozoHandler<S, KozoServices>;
-}): RouteDefinitionOptions<S>;
 
 /**
  * Client Generator Options
@@ -559,7 +227,12 @@ interface WebSocketHandler<T = unknown> {
 }
 
 interface UwsCorsConfig {
-    origin?: string;
+    /**
+     * Allowed origin. A single string is injected statically; an array enables
+     * per-request origin echo (the request's Origin header is reflected when it
+     * is in the list, with `Vary: Origin`).
+     */
+    origin?: string | string[];
     methods?: string;
     headers?: string;
     maxAge?: number;
@@ -620,6 +293,11 @@ interface SsrConfig {
      * Default: dark background + hidden root until JS loads.
      */
     devCriticalCss?: string;
+    /**
+     * Set to `false` to silence the startup banner.
+     * Inherited from `createKozo({ logger })` when started via `app.listenSsr()`.
+     */
+    logger?: boolean;
 }
 /**
  * Create a unified HTTP server that routes API requests through Hono
@@ -639,6 +317,32 @@ interface Plugin {
     name: string;
     version?: string;
     install: (app: Kozo<Services>) => void | Promise<void>;
+}
+/** Options for {@link Kozo.mountDocs}. */
+interface MountDocsOptions {
+    /**
+     * Base path of the Swagger UI page; the OpenAPI spec is served at
+     * `${path}.json`. Default: `/docs`.
+     */
+    path?: string;
+    /** Title shown in Swagger UI and the spec. Default: `'API'`. */
+    title?: string;
+    /** Spec `info.version`. Default: `'0.0.0'`. */
+    version?: string;
+    /** Spec `info.description`. */
+    description?: string;
+    /** OpenAPI `servers` entries. */
+    servers?: Array<{
+        url: string;
+        description?: string;
+    }>;
+    /**
+     * Whether the docs routes are mounted at all.
+     * Default: `process.env.NODE_ENV !== 'production'` — the spec is a complete
+     * map of the API surface, so in production it stays off unless you opt in
+     * explicitly (e.g. `enabled: env.ENABLE_DOCS`).
+     */
+    enabled?: boolean;
 }
 /**
  * A route sub-router that prepends a fixed prefix to every registered path.
@@ -679,10 +383,17 @@ declare class Kozo<TServices extends Services = Services, TScoped extends Record
     private _onStart?;
     private _onStop?;
     private _maxBodyBytes;
+    private _logger;
+    private _onError?;
+    private _onNotFound?;
+    /** Async plugin installs queued by use() — flushed before the server binds. */
+    private _pendingPluginInstalls;
     /** Normalize bare Zod response schema → { 200: schema } for OpenAPI generators */
     private static normalizeSchema;
     constructor(config?: KozoConfig<TServices, TScoped>);
     use(plugin: Plugin): this;
+    /** Await all async plugin installs registered via use(). Called before bind. */
+    private flushPluginInstalls;
     /**
      * Load routes from the file system using the configured routesDir.
      * Each route file is dynamically imported, its schema compiled, and handler registered.
@@ -756,7 +467,10 @@ declare class Kozo<TServices extends Services = Services, TScoped extends Record
         port: number;
         server: Server;
     }>;
-    listen(port?: number): Promise<void>;
+    listen(port?: number): Promise<{
+        port: number;
+        server: Server;
+    }>;
     /**
      * Start a unified server that handles both API routes and SSR-rendered pages.
      *
@@ -791,14 +505,50 @@ declare class Kozo<TServices extends Services = Services, TScoped extends Record
     /**
      * Register a Hono middleware on the app.
      *
+     * Patterns are tracked so `nativeListen()` can bridge any covered route
+     * through the Hono pipeline (auth, rate limits, CORS, `_middleware.ts`, …).
+     *
+     * NOTE: bridged routes lose the zero-shim uWS fast path. For cross-cutting
+     * security (auth, rate limits, role checks) prefer {@link guard} — it runs
+     * the same check on both transports at native speed. Use `middleware()`
+     * only for logic that genuinely needs the Hono `Context`.
+     *
      * @example
      * app.middleware('/api/*', async (c, next) => {
      *   c.set('user', await verifyJwt(c.req.header('authorization')));
      *   return next();
      * });
      */
+    private _middlewarePatterns;
     middleware(handler: MiddlewareHandler<KozoEnv>): this;
     middleware(path: string, handler: MiddlewareHandler<KozoEnv>): this;
+    /**
+     * Guards registered via {@link guard}. Unlike `_middlewarePatterns`, these
+     * do NOT force routes through the Hono bridge under `nativeListen()` —
+     * they are compiled directly into the uWS fast path.
+     */
+    private _guards;
+    /**
+     * Register a transport-agnostic guard (auth, rate-limit, …).
+     *
+     * The same guard function runs on BOTH transports:
+     * - `listen()`        → as a Hono middleware
+     * - `nativeListen()`  → compiled into the zero-shim uWS path (no Hono,
+     *                       no Request/Response allocation — native speed)
+     *
+     * This is the recommended way to protect routes when using the uWS
+     * transport: `app.middleware()` forces covered routes through the Hono
+     * bridge, `app.guard()` does not.
+     *
+     * @example
+     * app.guard('/api/*', async (req) => {
+     *   const token = req.header('authorization')?.slice(7);
+     *   if (!token) return { deny: { status: 401 } };
+     *   const user = await verifyJwt(token);
+     *   return user ? { user } : { deny: { status: 401 } };
+     * });
+     */
+    guard(pattern: string, guard: KozoGuard): this;
     /**
      * Returns all registered routes (file-system + manual) after {@link loadRoutes} completes.
      * Use this to inspect `meta.auth`, `meta.tags`, etc. at runtime.
@@ -813,6 +563,25 @@ declare class Kozo<TServices extends Services = Services, TScoped extends Record
         schema: RouteSchema;
         meta?: RouteMeta;
     }>;
+    /**
+     * Mounts Swagger UI + the OpenAPI 3.1 spec of every registered route.
+     *
+     * Safe by default: outside `NODE_ENV=production` the docs are on; in
+     * production they are NOT mounted unless `enabled: true` is passed
+     * explicitly. The spec is generated lazily on the first request (and then
+     * cached), so `mountDocs()` can be called before or after `loadRoutes()`
+     * and works with `listen()` and `nativeListen()` alike.
+     *
+     * Both routes carry `meta.auth: false`; auth layers that scan route files
+     * (e.g. `@kozojs/auth`'s `registerAuthBeforeLoadRoutes`) still need the two
+     * paths in `extraPublicPaths`.
+     *
+     * @example
+     * app.mountDocs({ title: 'my-api', version: '1.0.0', path: '/api/docs' });
+     * // production opt-in:
+     * app.mountDocs({ enabled: env.ENABLE_DOCS });
+     */
+    mountDocs(options?: MountDocsOptions): this;
     get fetch(): (request: Request, Env?: unknown, executionCtx?: hono.ExecutionContext) => Response | Promise<Response>;
 }
 declare function createKozo<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>>(config?: KozoConfig<TServices, TScoped>): Kozo<TServices, TScoped>;
@@ -831,7 +600,8 @@ interface KozoAppHooks<TServices extends Services> {
 interface KozoAppDefinition<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>> {
     routesDir: string;
     services: () => TServices | Promise<TServices>;
-    types: KozoAppTypesRef;
+    /** Optional — only used by the augmentation-based typegen (`kozo types`). */
+    types?: KozoAppTypesRef;
     configure?: (ctx: KozoAppHooks<TServices>) => void | Promise<void>;
     onReady?: (ctx: Pick<KozoAppHooks<TServices>, 'app'>) => void | Promise<void>;
     kozo?: Omit<KozoConfig<TServices, TScoped>, 'services' | 'routesDir'>;
@@ -840,7 +610,12 @@ interface KozoAppDefinition<TServices extends Services = Services, TScoped exten
 interface DefineKozoAppOptions<TServices extends Services, TScoped extends Record<string, unknown> = Record<string, never>> {
     routesDir?: string;
     services: () => TServices | Promise<TServices>;
-    types: KozoAppTypesRef;
+    /**
+     * Optional — only needed for the augmentation-based typegen
+     * (`kozo types` / `renderKozoTypesDts`). Apps using
+     * `createRouteFactory` + a `#kozo` subpath import don't need it.
+     */
+    types?: KozoAppTypesRef;
     configure?: (ctx: KozoAppHooks<TServices>) => void | Promise<void>;
     onReady?: (ctx: Pick<KozoAppHooks<TServices>, 'app'>) => void | Promise<void>;
 }
@@ -880,6 +655,8 @@ interface ZValidateResult {
     errors: ZValidatorErrors | null;
 }
 type ZValidator = (data: unknown) => ZValidateResult;
+/** Optional per-app error hook from {@link KozoConfig.onError}. */
+type KozoErrorHook = (error: Error, ctx: unknown) => Response | Promise<Response> | void;
 type CompiledHandler = (c: Context) => Promise<Response> | Response;
 type UserHandler = (c: any) => any;
 type CompiledRoute = {
@@ -891,7 +668,7 @@ type CompiledRoute = {
 declare class SchemaCompiler {
     static compile(schema: RouteSchema): CompiledRoute;
 }
-declare function compileRouteHandler(handler: UserHandler, schema: RouteSchema, services: Services, compiled: CompiledRoute, scope?: AnyScopeConfig): CompiledHandler;
+declare function compileRouteHandler(handler: UserHandler, schema: RouteSchema, services: Services, compiled: CompiledRoute, scope?: AnyScopeConfig, errorHook?: KozoErrorHook): CompiledHandler;
 
 /**
  * Build a NativeKozoContext for a native route handler.
@@ -1384,4 +1161,4 @@ declare const deletedSchema: z.ZodObject<{
     deletedId: z.ZodString;
 }, z.core.$strip>;
 
-export { BadRequestError, type ClientGeneratorOptions, type CompiledRoute, ConflictError, type DefineKozoAppOptions, ERROR_RESPONSES, ForbiddenError, GoneError, type Infer, type InferResponse, type InferSchema, type InflightTracker, KOZO_CONFIG_CANDIDATES, KOZO_TYPES_CANDIDATES, KOZO_TYPES_OUTPUT, Kozo, type KozoAppDefinition, type KozoAppHooks, type KozoAppTypesRef, type KozoConfig, type KozoContext, type KozoEnv, KozoError, KozoGroup, type KozoHandler, type KozoRequest, type KozoServices, type KozoUser, type KozoWebSocket, type MiddlewareDefinition, type NativeKozoContext, type NativeKozoHandler, NotFoundError, type OpenAPIConfig, OpenAPIGenerator, type OpenAPIInfo, type OpenAPISpec, type PaginatedResult, type Plugin, type ProblemDetails, type ResolvedRouteModule, type RouteContext, type RouteDefinitionOptions, type RouteInfo, type RouteMeta, type RouteModule, type RouteSchema, SchemaCompiler, type Services, ShutdownManager, type ShutdownOptions, type ShutdownState, type SsrConfig, type SsrRenderFn, type SsrRenderResult, UnauthorizedError, type ValidationError, ValidationFailedError, type WebSocketHandler, type WsUpgradeRequest, buildKozoApp, buildNativeContext, compileRouteHandler, createInflightTracker, createKozo, createOpenAPIGenerator, createShutdownManager, createSsrServer, defineEnv, defineKozoApp, defineRoute, deletedSchema, fastCL, fastWrite400, fastWrite404, fastWrite500, fastWriteError, fastWriteHtml, fastWriteJson, fastWriteJsonStatus, fastWriteText, fileToPath, forbiddenResponse, formatZodErrors, generateSwaggerHtml, generateTypedClient, idParams, internalErrorResponse, isMiddlewareFile, isRouteFile, notFoundResponse, paginate, paginationSchema, renderKozoTypesDts, resolveRouteModule, scanMiddleware, scanRoutes, searchSchema, sortSchema, successSchema, timestamps, trackRequest, unauthorizedResponse, uuid, uuidParams, validationErrorResponse };
+export { BadRequestError, type ClientGeneratorOptions, type CompiledRoute, ConflictError, type DefineKozoAppOptions, ERROR_RESPONSES, ForbiddenError, GoneError, type InflightTracker, KOZO_CONFIG_CANDIDATES, KOZO_TYPES_CANDIDATES, KOZO_TYPES_OUTPUT, Kozo, type KozoAppDefinition, type KozoAppHooks, type KozoAppTypesRef, KozoConfig, KozoEnv, KozoError, KozoGroup, KozoGuard, KozoHandler, KozoRequest, type KozoWebSocket, MiddlewareDefinition, type MountDocsOptions, NativeKozoContext, NotFoundError, type OpenAPIConfig, OpenAPIGenerator, type OpenAPIInfo, type OpenAPISpec, type PaginatedResult, type Plugin, type ProblemDetails, ResolvedRouteModule, type RouteInfo, RouteMeta, RouteModule, RouteSchema, SchemaCompiler, Services, ShutdownManager, type ShutdownOptions, type ShutdownState, type SsrConfig, type SsrRenderFn, type SsrRenderResult, UnauthorizedError, type ValidationError, ValidationFailedError, type WebSocketHandler, type WsUpgradeRequest, buildKozoApp, buildNativeContext, compileRouteHandler, createInflightTracker, createKozo, createOpenAPIGenerator, createShutdownManager, createSsrServer, defineEnv, defineKozoApp, deletedSchema, fastCL, fastWrite400, fastWrite404, fastWrite500, fastWriteError, fastWriteHtml, fastWriteJson, fastWriteJsonStatus, fastWriteText, fileToPath, forbiddenResponse, formatZodErrors, generateSwaggerHtml, generateTypedClient, idParams, internalErrorResponse, isMiddlewareFile, isRouteFile, notFoundResponse, paginate, paginationSchema, renderKozoTypesDts, resolveRouteModule, scanMiddleware, scanRoutes, searchSchema, sortSchema, successSchema, timestamps, trackRequest, unauthorizedResponse, uuid, uuidParams, validationErrorResponse };

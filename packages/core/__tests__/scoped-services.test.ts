@@ -1,9 +1,20 @@
 import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
+import http from 'node:http';
 import { createKozo } from '../src/app.js';
-import { SchemaCompiler, compileNativeHandler } from '../src/compiler.js';
-import type { ScopeConfig } from '../src/scoped-services.js';
-import { createServer, request as httpRequest } from 'node:http';
+import { tryLoadUws } from '../src/uws-transport.js';
+
+async function httpGet(port: number, path: string, headers?: Record<string, string>): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ hostname: '127.0.0.1', port, path, method: 'GET', headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode!, body: Buffer.concat(chunks).toString() }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 describe('scopedServices (A3)', () => {
   it('merges scoped values over singletons in ctx.services', async () => {
@@ -136,45 +147,30 @@ describe('scopedServices (A3)', () => {
   });
 });
 
-describe('native scopedServices via compileNativeHandler', () => {
+const uwsAvailable = (await tryLoadUws()) !== null;
+
+describe.skipIf(!uwsAvailable)('native scopedServices via nativeListen', () => {
   it('merges scoped services on native path', async () => {
-    const scope: ScopeConfig = {
-      base: { pool: 'main' },
-      factory: (_base, req) => ({ rid: req.header('x-rid') ?? 'none' }),
-    };
-    const compiled = SchemaCompiler.compile({});
-    const handler = compileNativeHandler(
-      (ctx: any) => ({ rid: ctx.services.rid, pool: ctx.services.pool }),
-      {},
-      scope.base,
-      compiled,
-      scope,
-    );
-
-    const port = await new Promise<number>((resolve) => {
-      const srv = createServer((req, res) => handler(req, res, {}));
-      srv.listen(0, () => resolve((srv.address() as any).port));
-      setTimeout(() => srv.close(), 5000);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const app = createKozo({
+      services: { pool: 'main' },
+      scopedServices: (_base, req) => ({ rid: req.header('x-rid') ?? 'none' }),
     });
+    app.get('/scoped', (ctx) => ({ rid: (ctx.services as any).rid, pool: (ctx.services as any).pool }));
 
-    const body = await new Promise<string>((resolve, reject) => {
-      const req = httpRequest({
-        hostname: '127.0.0.1', port, path: '/', method: 'GET',
-        headers: { 'x-rid': 'native-1' },
-      }, (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve(Buffer.concat(chunks).toString()));
-      });
-      req.on('error', reject);
-      req.end();
-    });
-
-    expect(JSON.parse(body)).toEqual({ rid: 'native-1', pool: 'main' });
+    const { port, server } = await app.nativeListen({ port: 0 });
+    try {
+      const res = await httpGet(port, '/scoped', { 'x-rid': 'native-1' });
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ rid: 'native-1', pool: 'main' });
+    } finally {
+      server.close();
+      await app.shutdown({ timeoutMs: 3000 }).catch(() => {});
+    }
   });
 });
 
-describe('handler portability (A4)', () => {
+describe.skipIf(!uwsAvailable)('handler portability (A4)', () => {
   const portableHandler = (ctx: { json: (d: unknown) => unknown }) => ctx.json({ portable: true });
 
   it('same handler works via app.fetch (Hono)', async () => {
@@ -184,57 +180,35 @@ describe('handler portability (A4)', () => {
     expect(await res.json()).toEqual({ portable: true });
   });
 
-  it('same handler works via compileNativeHandler (return path)', async () => {
-    const returnHandler = () => ({ portable: true });
-    const compiled = SchemaCompiler.compile({});
-    const handler = compileNativeHandler(returnHandler, {}, {}, compiled);
+  it('same handler works via nativeListen (return path)', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const app = createKozo();
+    app.get('/p', () => ({ portable: true }));
 
-    const { port, close } = await new Promise<{ port: number; close: () => void }>((resolve) => {
-      const srv = createServer((req, res) => handler(req, res, {}));
-      srv.listen(0, () => resolve({
-        port: (srv.address() as any).port,
-        close: () => srv.close(),
-      }));
-    });
-
-    const body = await new Promise<string>((resolve, reject) => {
-      httpRequest({ hostname: '127.0.0.1', port, path: '/', method: 'GET' }, (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve(Buffer.concat(chunks).toString()));
-      }).on('error', reject).end();
-    });
-
-    expect(JSON.parse(body)).toEqual({ portable: true });
-    close();
+    const { port, server } = await app.nativeListen({ port: 0 });
+    try {
+      const res = await httpGet(port, '/p');
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ portable: true });
+    } finally {
+      server.close();
+      await app.shutdown({ timeoutMs: 3000 }).catch(() => {});
+    }
   });
 
   it('native handler supports ctx.json() without return value', async () => {
-    const compiled = SchemaCompiler.compile({});
-    const handler = compileNativeHandler(
-      (ctx: any) => { ctx.json({ via: 'json' }); },
-      {},
-      {},
-      compiled,
-    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const app = createKozo();
+    app.get('/p', (ctx: any) => { ctx.json({ via: 'json' }); });
 
-    const { port, close } = await new Promise<{ port: number; close: () => void }>((resolve) => {
-      const srv = createServer((req, res) => handler(req, res, {}));
-      srv.listen(0, () => resolve({
-        port: (srv.address() as any).port,
-        close: () => srv.close(),
-      }));
-    });
-
-    const body = await new Promise<string>((resolve, reject) => {
-      httpRequest({ hostname: '127.0.0.1', port, path: '/', method: 'GET' }, (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => resolve(Buffer.concat(chunks).toString()));
-      }).on('error', reject).end();
-    });
-
-    expect(JSON.parse(body)).toEqual({ via: 'json' });
-    close();
+    const { port, server } = await app.nativeListen({ port: 0 });
+    try {
+      const res = await httpGet(port, '/p');
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ via: 'json' });
+    } finally {
+      server.close();
+      await app.shutdown({ timeoutMs: 3000 }).catch(() => {});
+    }
   });
 });
