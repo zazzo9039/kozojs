@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/redis",
-  "version": "0.5.21",
+  "version": "0.5.22",
   "description": "Redis integration for Kozo framework — cache, pub/sub, and distributed rate-limit store",
   "type": "module",
   "engines": {
@@ -43,7 +43,7 @@
   "dependencies": {},
   "peerDependencies": {
     "ioredis": ">=5.0.0",
-    "@kozojs/core": "^0.5.21"
+    "@kozojs/core": "^0.5.22"
   },
   "peerDependenciesMeta": {
     "@kozojs/core": {

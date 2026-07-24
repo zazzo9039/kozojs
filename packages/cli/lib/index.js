@@ -4948,7 +4948,7 @@ ${import_picocolors9.default.dim("Generate client:")} ${import_picocolors9.defau
 // package.json
 var package_default = {
   name: "@kozojs/cli",
-  version: "0.5.21",
+  version: "0.5.22",
   description: "Scaffold a Kozo backend \u2014 file-system routes, services and auth, structured from day one.",
   type: "commonjs",
   bin: {

@@ -1,5 +1,12 @@
 # @kozojs/db
 
+## 0.5.22
+
+### Patch Changes
+
+- Updated dependencies [a146360]
+  - @kozojs/core@0.5.22
+
 ## 0.5.10
 
 ## 0.5.9
