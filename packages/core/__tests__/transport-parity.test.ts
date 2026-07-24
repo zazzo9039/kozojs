@@ -124,6 +124,10 @@ function createParityApp() {
     scopedServices: (_base, req) => ({
       reqId: req.header('x-request-id') ?? 'anonymous',
     }),
+    // '/date-response' deliberately exercises the uncompilable-schema fallback
+    // (see H4 / F-11). Opt in so this suite also runs under NODE_ENV=production,
+    // where an unenforced response schema otherwise throws at registration.
+    dangerouslyAllowUnenforcedResponse: true,
   });
 
   app.get('/health', () => ({ status: 'ok' }));

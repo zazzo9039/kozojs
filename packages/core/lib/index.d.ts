@@ -2,8 +2,8 @@ import * as hono from 'hono';
 import { MiddlewareHandler, Context } from 'hono';
 import { Hono } from 'hono/quick';
 import { Server, IncomingMessage, ServerResponse } from 'node:http';
-import { R as RouteSchema, S as Services, K as KozoConfig, a as KozoHandler, b as RouteMeta, c as KozoEnv, d as KozoGuard, H as HttpMethod$1, e as KozoRequest, N as NativeKozoContext, f as RouteDefinition, M as MiddlewareDefinition, g as RouteModule, h as ResolvedRouteModule } from './index-nddav2ow.js';
-export { C as ClientAddressSource, B as CorsOptions, X as FileSystemRoutingOptions, w as GuardDeny, x as GuardEntry, v as GuardOutcome, G as GuardRequest, u as GuardResult, p as Infer, o as InferResponse, I as InferSchema, j as KozoContext, l as KozoServices, k as KozoUser, L as LoggerOptions, Z as ManifestHttpMethod, Y as ManifestRoute, n as NativeKozoHandler, O as RateLimitGuardOptions, J as RateLimitOptions, P as RateLimitStore, Q as RateLimitStoreRecord, m as RouteContext, i as RouteDefinitionOptions, _ as RoutesManifest, T as TrustProxy, a0 as WebhookVerifyOptions, V as applyFileSystemRouting, F as clearRateLimitStore, t as compileGuardPattern, A as cors, W as createFileSystemRouting, r as createRouteFactory, q as defineRoute, U as errorHandler, s as guardToHonoMiddleware, z as logger, D as rateLimit, E as rateLimitGuard, y as resolveClientIp, $ as verifyWebhookSignature } from './index-nddav2ow.js';
+import { R as RouteSchema, S as Services, K as KozoConfig, a as KozoHandler, b as RouteMeta, c as KozoEnv, d as KozoGuard, H as HttpMethod$1, e as KozoRequest, N as NativeKozoContext, f as RouteDefinition, M as MiddlewareDefinition, g as RouteModule, h as ResolvedRouteModule } from './index-DCQtR9X2.js';
+export { C as ClientAddressSource, B as CorsOptions, X as FileSystemRoutingOptions, w as GuardDeny, x as GuardEntry, v as GuardOutcome, G as GuardRequest, u as GuardResult, p as Infer, o as InferResponse, I as InferSchema, j as KozoContext, l as KozoServices, k as KozoUser, L as LoggerOptions, Z as ManifestHttpMethod, Y as ManifestRoute, n as NativeKozoHandler, O as RateLimitGuardOptions, J as RateLimitOptions, P as RateLimitStore, Q as RateLimitStoreRecord, m as RouteContext, i as RouteDefinitionOptions, _ as RoutesManifest, T as TrustProxy, a0 as WebhookVerifyOptions, V as applyFileSystemRouting, F as clearRateLimitStore, t as compileGuardPattern, A as cors, W as createFileSystemRouting, r as createRouteFactory, q as defineRoute, U as errorHandler, s as guardToHonoMiddleware, z as logger, D as rateLimit, E as rateLimitGuard, y as resolveClientIp, $ as verifyWebhookSignature } from './index-DCQtR9X2.js';
 import { Writable } from 'node:stream';
 import { z } from 'zod';
 export { z } from 'zod';
@@ -386,6 +386,7 @@ declare class Kozo<TServices extends Services = Services, TScoped extends Record
     private _logger;
     private _onError?;
     private _onNotFound?;
+    private _allowUnenforcedResponse;
     /** Async plugin installs queued by use() — flushed before the server binds. */
     private _pendingPluginInstalls;
     /** Normalize bare Zod response schema → { 200: schema } for OpenAPI generators */
@@ -665,8 +666,24 @@ type CompiledRoute = {
     validateParams?: ZValidator;
     serialize?: (data: any) => string;
 };
+/** Options controlling diagnostics for {@link SchemaCompiler.compile}. */
+interface CompileOptions {
+    /** Human-readable route label for diagnostics, e.g. `"GET /api/users"`. */
+    route?: string;
+    /**
+     * Register a route whose response schema could **not** be compiled to an
+     * enforcing serializer. The response contract is NOT enforced for such a
+     * route: fields not declared in the schema (passwordHash, tokens, internal
+     * flags) are serialized verbatim. Off by default. In production an
+     * uncompilable response schema throws at startup unless this is set.
+     *
+     * The name is deliberately alarming — reaching for it in a review should
+     * prompt the question "why can this route not describe its own response?".
+     */
+    dangerouslyAllowUnenforcedResponse?: boolean;
+}
 declare class SchemaCompiler {
-    static compile(schema: RouteSchema): CompiledRoute;
+    static compile(schema: RouteSchema, opts?: CompileOptions): CompiledRoute;
 }
 declare function compileRouteHandler(handler: UserHandler, schema: RouteSchema, services: Services, compiled: CompiledRoute, scope?: AnyScopeConfig, errorHook?: KozoErrorHook): CompiledHandler;
 

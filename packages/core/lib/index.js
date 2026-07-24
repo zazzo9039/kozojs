@@ -1591,12 +1591,13 @@ function compileResponseSerializerWithMeta(response) {
         return stringify(data);
       }
     };
-  } catch {
-    return { serialize: toJsonBody, mode: "json-stringify" };
+  } catch (err) {
+    return {
+      serialize: toJsonBody,
+      mode: "json-stringify",
+      unsafeFallback: { reason: err?.message ?? String(err) }
+    };
   }
-}
-function compileResponseSerializer(response) {
-  return compileResponseSerializerWithMeta(response)?.serialize;
 }
 
 // src/compiler.ts
@@ -1884,8 +1885,19 @@ function jsonResponse200(body) {
 }
 var EMPTY_BODY = Object.freeze({});
 var EMPTY_BODY_HANDLER = () => EMPTY_BODY;
+function reportUnsafeResponseFallback(reason, opts) {
+  const where = opts.route ? ` for ${opts.route}` : "";
+  const msg = `[Kozo] Response schema${where} could not be compiled to an enforcing serializer \u2014 falling back to JSON.stringify WITHOUT field filtering. Fields not declared in the response schema (e.g. passwordHash, tokens, internal flags) will be included in responses. Cause: ${reason}`;
+  if (process.env.NODE_ENV === "production" && !opts.dangerouslyAllowUnenforcedResponse) {
+    throw new Error(
+      `${msg}
+Refusing to start: fix the response schema, or pass dangerouslyAllowUnenforcedResponse to ship it unenforced.`
+    );
+  }
+  console.warn(msg);
+}
 var SchemaCompiler = class {
-  static compile(schema) {
+  static compile(schema, opts = {}) {
     const compiled = {};
     if (schema.body && isZodSchema2(schema.body)) {
       compiled.validateBody = makeZValidator(schema.body);
@@ -1897,7 +1909,13 @@ var SchemaCompiler = class {
       compiled.validateParams = makeZValidator(schema.params);
     }
     if (schema.response) {
-      compiled.serialize = compileResponseSerializer(schema.response);
+      const meta = compileResponseSerializerWithMeta(schema.response);
+      if (meta) {
+        compiled.serialize = meta.serialize;
+        if (meta.unsafeFallback) {
+          reportUnsafeResponseFallback(meta.unsafeFallback.reason, opts);
+        }
+      }
     }
     return compiled;
   }
@@ -3345,6 +3363,7 @@ var Kozo = class _Kozo {
   _logger;
   _onError;
   _onNotFound;
+  _allowUnenforcedResponse;
   /** Async plugin installs queued by use() — flushed before the server binds. */
   _pendingPluginInstalls = [];
   /** Normalize bare Zod response schema → { 200: schema } for OpenAPI generators */
@@ -3364,6 +3383,7 @@ var Kozo = class _Kozo {
     this._logger = config.logger !== false;
     this._onError = config.onError;
     this._onNotFound = config.onNotFound;
+    this._allowUnenforcedResponse = config.dangerouslyAllowUnenforcedResponse === true;
     if (config.scopedServices) {
       this._scope = {
         base: this.services,
@@ -3452,7 +3472,10 @@ var Kozo = class _Kozo {
         const { path: path2, method, module } = route;
         const resolved = resolveRouteModule(module);
         const { handler, schema, meta } = resolved;
-        const compiledSchema = SchemaCompiler.compile(schema);
+        const compiledSchema = SchemaCompiler.compile(schema, {
+          route: `${method.toUpperCase()} ${path2}`,
+          dangerouslyAllowUnenforcedResponse: this._allowUnenforcedResponse
+        });
         return { path: path2, method, handler, schema, meta, compiledSchema };
       })
     );
@@ -3545,7 +3568,10 @@ var Kozo = class _Kozo {
   register(method, path2, schema, handler, meta) {
     const normalizedSchema = _Kozo.normalizeSchema(schema);
     this.routes.push({ method, path: path2, schema: normalizedSchema, meta });
-    const compiled = SchemaCompiler.compile(normalizedSchema);
+    const compiled = SchemaCompiler.compile(normalizedSchema, {
+      route: `${method.toUpperCase()} ${path2}`,
+      dangerouslyAllowUnenforcedResponse: this._allowUnenforcedResponse
+    });
     const optimizedHandler = compileRouteHandler(
       handler,
       normalizedSchema,

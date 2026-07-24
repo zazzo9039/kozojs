@@ -6,7 +6,7 @@ import { fastParseQuery } from './native-context.js';
 import type { AnyScopeConfig } from './scoped-services.js';
 import { resolveScopedServices, UwsReqAdapter } from './scoped-services.js';
 import { z } from 'zod';
-import { compileResponseSerializer, toJsonBody } from './response-serializer.js';
+import { compileResponseSerializerWithMeta, toJsonBody } from './response-serializer.js';
 
 // ============================================================================
 // Zod-native validator — replaces Ajv (removes eval/URL-string supply chain flags)
@@ -376,8 +376,52 @@ function jsonResponse200(body: string): Response {
 const EMPTY_BODY: Record<string, never> = Object.freeze({}) as Record<string, never>;
 const EMPTY_BODY_HANDLER = () => EMPTY_BODY;
 
+/** Options controlling diagnostics for {@link SchemaCompiler.compile}. */
+export interface CompileOptions {
+  /** Human-readable route label for diagnostics, e.g. `"GET /api/users"`. */
+  route?: string;
+  /**
+   * Register a route whose response schema could **not** be compiled to an
+   * enforcing serializer. The response contract is NOT enforced for such a
+   * route: fields not declared in the schema (passwordHash, tokens, internal
+   * flags) are serialized verbatim. Off by default. In production an
+   * uncompilable response schema throws at startup unless this is set.
+   *
+   * The name is deliberately alarming — reaching for it in a review should
+   * prompt the question "why can this route not describe its own response?".
+   */
+  dangerouslyAllowUnenforcedResponse?: boolean;
+}
+
+/**
+ * Report a response schema that fell back to unfiltered serialization because
+ * it could not be compiled. Warns in development; throws at startup in
+ * production so an unenforced response contract cannot ship unnoticed. The
+ * `dangerouslyAllowUnenforcedResponse` escape hatch downgrades the throw to a
+ * warning even in production.
+ */
+export function reportUnsafeResponseFallback(
+  reason: string,
+  opts: CompileOptions,
+): void {
+  const where = opts.route ? ` for ${opts.route}` : '';
+  const msg =
+    `[Kozo] Response schema${where} could not be compiled to an enforcing serializer — ` +
+    `falling back to JSON.stringify WITHOUT field filtering. Fields not declared in the ` +
+    `response schema (e.g. passwordHash, tokens, internal flags) will be included in ` +
+    `responses. Cause: ${reason}`;
+
+  if (process.env.NODE_ENV === 'production' && !opts.dangerouslyAllowUnenforcedResponse) {
+    throw new Error(
+      `${msg}\nRefusing to start: fix the response schema, or pass ` +
+      `dangerouslyAllowUnenforcedResponse to ship it unenforced.`,
+    );
+  }
+  console.warn(msg);
+}
+
 export class SchemaCompiler {
-  static compile(schema: RouteSchema): CompiledRoute {
+  static compile(schema: RouteSchema, opts: CompileOptions = {}): CompiledRoute {
     const compiled: CompiledRoute = {};
 
     // 1. Body — Zod-native validation (no Ajv, no eval)
@@ -395,9 +439,17 @@ export class SchemaCompiler {
       compiled.validateParams = makeZValidator(schema.params);
     }
 
-    // 4. Serializer — fast-json-stringify from Zod response schema (fallback: JSON.stringify)
+    // 4. Serializer — fast-json-stringify from Zod response schema. A schema
+    //    that cannot be compiled falls back to JSON.stringify; that fallback is
+    //    reported (warn in dev, throw in prod) so it is never silent — see F-11.
     if (schema.response) {
-      compiled.serialize = compileResponseSerializer(schema.response);
+      const meta = compileResponseSerializerWithMeta(schema.response);
+      if (meta) {
+        compiled.serialize = meta.serialize;
+        if (meta.unsafeFallback) {
+          reportUnsafeResponseFallback(meta.unsafeFallback.reason, opts);
+        }
+      }
     }
 
     return compiled;

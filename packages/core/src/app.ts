@@ -136,6 +136,7 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
   private _logger: boolean;
   private _onError?: KozoConfig['onError'];
   private _onNotFound?: KozoConfig['onNotFound'];
+  private _allowUnenforcedResponse: boolean;
   /** Async plugin installs queued by use() — flushed before the server binds. */
   private _pendingPluginInstalls: Promise<void>[] = [];
 
@@ -157,6 +158,7 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     this._logger = config.logger !== false;
     this._onError = config.onError;
     this._onNotFound = config.onNotFound;
+    this._allowUnenforcedResponse = config.dangerouslyAllowUnenforcedResponse === true;
     if (config.scopedServices) {
       this._scope = {
         base: this.services,
@@ -263,7 +265,10 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
         const { path, method, module } = route;
         const resolved = resolveRouteModule(module)!;
         const { handler, schema, meta } = resolved;
-        const compiledSchema = SchemaCompiler.compile(schema);
+        const compiledSchema = SchemaCompiler.compile(schema, {
+          route: `${method.toUpperCase()} ${path}`,
+          dangerouslyAllowUnenforcedResponse: this._allowUnenforcedResponse,
+        });
         return { path, method, handler, schema, meta, compiledSchema };
       })
     );
@@ -386,7 +391,10 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     this.routes.push({ method: method as HttpMethod, path, schema: normalizedSchema, meta });
 
     // 1. Compile schemas (Zod validators + fast-json-stringify response serializer)
-    const compiled = SchemaCompiler.compile(normalizedSchema);
+    const compiled = SchemaCompiler.compile(normalizedSchema, {
+      route: `${method.toUpperCase()} ${path}`,
+      dangerouslyAllowUnenforcedResponse: this._allowUnenforcedResponse,
+    });
 
     // 2. Generate the optimized Hono handler
     const optimizedHandler = compileRouteHandler(

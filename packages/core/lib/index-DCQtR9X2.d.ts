@@ -315,6 +315,17 @@ interface KozoConfig<TServices extends Services = Services, TScoped extends Reco
     onStop?: (ctx: {
         services: TServices;
     }) => void | Promise<void>;
+    /**
+     * Allow routes whose response schema cannot be compiled to an enforcing
+     * serializer (e.g. `.transform()` or `z.date()` in the response) to start in
+     * production. Such routes fall back to unfiltered `JSON.stringify`, so fields
+     * not declared in the response schema — `passwordHash`, tokens, internal
+     * flags — are sent verbatim. Off by default: in production an uncompilable
+     * response schema throws at startup instead of shipping unenforced.
+     *
+     * Prefer fixing the schema. The name is intentionally alarming.
+     */
+    dangerouslyAllowUnenforcedResponse?: boolean;
 }
 /** Typed helper for `export default defineRoute({ schema, handler, meta? })`. */
 declare function defineRoute<S extends RouteSchema = RouteSchema>(options: RouteDefinitionOptions<S> & {

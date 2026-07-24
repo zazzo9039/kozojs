@@ -26,6 +26,18 @@ export type ResponseSerializerMode = 'fast-json-stringify' | 'json-stringify';
 export interface CompiledResponseSerializer {
   serialize: (data: unknown) => string;
   mode: ResponseSerializerMode;
+  /**
+   * Present only when the schema was meant to be enforced but **could not be
+   * compiled** (z.toJSONSchema / fast-json-stringify threw), so the serializer
+   * silently fell back to unfiltered `JSON.stringify`. The response contract is
+   * NOT a whitelist for such a route: undeclared fields are sent verbatim.
+   *
+   * This flag exists so the caller can react — warn in development, refuse to
+   * start in production (see `SchemaCompiler.compile`). It is deliberately
+   * **absent** for a `z.any()` response, where unfiltered serialization is the
+   * author's explicit choice rather than a compile failure.
+   */
+  unsafeFallback?: { reason: string };
 }
 
 function dateReplacer(_key: string, value: unknown): unknown {
@@ -72,8 +84,15 @@ export function compileResponseSerializerWithMeta(
         return stringify(data);
       },
     };
-  } catch {
-    return { serialize: toJsonBody, mode: 'json-stringify' };
+  } catch (err) {
+    // Involuntary fallback: the schema was meant to enforce the response but
+    // could not be compiled. Report the cause so the caller can decide whether
+    // shipping an unenforced response is acceptable (dev) or fatal (prod).
+    return {
+      serialize: toJsonBody,
+      mode: 'json-stringify',
+      unsafeFallback: { reason: (err as Error)?.message ?? String(err) },
+    };
   }
 }
 
