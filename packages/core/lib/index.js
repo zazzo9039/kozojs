@@ -2072,8 +2072,46 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope, max
   };
 }
 
+// src/client-ip.ts
+function trustedHops(trustProxy) {
+  if (trustProxy === true) return 1;
+  if (typeof trustProxy === "number" && Number.isInteger(trustProxy) && trustProxy > 0) {
+    return trustProxy;
+  }
+  return 0;
+}
+function resolveClientIp(source, trustProxy) {
+  const connection = source.connectionAddress.trim();
+  const depth = trustedHops(trustProxy);
+  if (depth > 0) {
+    const xff = source.header("x-forwarded-for");
+    if (xff) {
+      const hops = xff.split(",").map((h) => h.trim()).filter(Boolean);
+      if (hops.length >= depth) return hops[hops.length - depth];
+    }
+    const realIp = source.header("x-real-ip")?.trim();
+    if (realIp) return realIp;
+  }
+  return connection || "anonymous";
+}
+
 // src/middleware/rate-limit.ts
+function honoSource(c) {
+  const raw = c.req.raw;
+  return {
+    connectionAddress: raw?.socket?.remoteAddress ?? "",
+    header: (name) => c.req.header(name)
+  };
+}
+function guardSource(req) {
+  return {
+    connectionAddress: req.remoteAddress ?? "",
+    header: (name) => req.header(name)
+  };
+}
 var memoryMap = /* @__PURE__ */ new Map();
+var MAX_MEMORY_KEYS = 1e5;
+var maxMemoryKeys = MAX_MEMORY_KEYS;
 var cleanupTimer = null;
 function ensureCleanup() {
   if (cleanupTimer) return;
@@ -2089,6 +2127,14 @@ function ensureCleanup() {
   }, 6e4);
   cleanupTimer.unref();
 }
+function evictIfNeeded() {
+  if (memoryMap.size <= maxMemoryKeys) return;
+  let overflow = memoryMap.size - maxMemoryKeys;
+  for (const oldest of memoryMap.keys()) {
+    memoryMap.delete(oldest);
+    if (--overflow <= 0) break;
+  }
+}
 var memoryStore = {
   async increment(key, windowMs) {
     const now = Date.now();
@@ -2098,6 +2144,7 @@ var memoryStore = {
     }
     record.count++;
     memoryMap.set(key, record);
+    evictIfNeeded();
     ensureCleanup();
     return record;
   },
@@ -2105,11 +2152,15 @@ var memoryStore = {
     memoryMap.delete(key);
   }
 };
+function retryAfterSeconds(record) {
+  return Math.max(0, Math.ceil((record.resetAt - Date.now()) / 1e3));
+}
 function rateLimit(options) {
   const {
     max = 100,
     window = 60,
-    keyGenerator = (c) => c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "anonymous",
+    trustProxy = false,
+    keyGenerator = (c) => resolveClientIp(honoSource(c), trustProxy),
     message = "Too many requests",
     store = memoryStore
   } = options;
@@ -2121,6 +2172,7 @@ function rateLimit(options) {
     c.header("X-RateLimit-Remaining", String(Math.max(0, max - record.count)));
     c.header("X-RateLimit-Reset", String(Math.ceil(record.resetAt / 1e3)));
     if (record.count > max) {
+      c.header("Retry-After", String(retryAfterSeconds(record)));
       return c.json({ error: message }, 429);
     }
     await next();
@@ -2130,7 +2182,8 @@ function rateLimitGuard(options) {
   const {
     max,
     window,
-    keyGenerator = (req) => req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? req.header("x-real-ip") ?? req.remoteAddress ?? "anonymous",
+    trustProxy = false,
+    keyGenerator = (req) => resolveClientIp(guardSource(req), trustProxy),
     message = "Too many requests",
     store = memoryStore
   } = options;
@@ -2143,6 +2196,7 @@ function rateLimitGuard(options) {
       "X-RateLimit-Reset": String(Math.ceil(record.resetAt / 1e3))
     };
     if (record.count > max) {
+      headers["Retry-After"] = String(retryAfterSeconds(record));
       return { deny: { status: 429, body: { error: message }, headers } };
     }
     return { headers };
@@ -2769,7 +2823,7 @@ var IMMUTABLE_RE = /[.-][a-f0-9]{8,}\.(js|css|svg|png|jpg|jpeg|gif|webp|woff2?)$
 var STATIC_CACHE = /* @__PURE__ */ new Map();
 var MAX_CACHE_SIZE = 1024 * 1024;
 var cacheSize = 0;
-function evictIfNeeded() {
+function evictIfNeeded2() {
   if (cacheSize <= 50 * 1024 * 1024) return;
   for (const [key, entry] of STATIC_CACHE) {
     STATIC_CACHE.delete(key);
@@ -2838,7 +2892,7 @@ async function serveStaticFile(staticDir, urlPath, res) {
       const content = await fs.readFile(filePath);
       STATIC_CACHE.set(filePath, { content, mime, size: stat.size });
       cacheSize += stat.size;
-      evictIfNeeded();
+      evictIfNeeded2();
       res.writeHead(200, headers);
       res.end(content);
       return true;
@@ -4315,6 +4369,7 @@ export {
   rateLimitGuard,
   renderKozoTypesDts,
   requireSecret,
+  resolveClientIp,
   resolveRouteModule,
   scanMiddleware,
   scanRoutes,

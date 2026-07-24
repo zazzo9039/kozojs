@@ -414,6 +414,38 @@ declare function compileGuardPattern(pattern: string): RegExp;
  */
 declare function guardToHonoMiddleware(guard: KozoGuard): MiddlewareHandler<KozoEnv>;
 
+/**
+ * Proxy trust configuration.
+ * - `false` (default): never read forwarding headers; key on the connection.
+ * - `true`: exactly one trusted proxy in front of the app.
+ * - `n`: `n` trusted proxies in front of the app.
+ */
+type TrustProxy = boolean | number;
+/** Minimal transport-agnostic view needed to identify a client. */
+interface ClientAddressSource {
+    /** The connection (socket / uWS) remote address, or '' when unavailable. */
+    connectionAddress: string;
+    /** Case-insensitive header lookup. */
+    header(name: string): string | undefined;
+}
+/**
+ * Resolve the client IP used as a rate-limit / audit identity.
+ *
+ * With `trustProxy` falsy the connection address is authoritative and no header
+ * can change it. With `trustProxy = n` the client is the entry `n` positions
+ * from the right of `x-forwarded-for` (the hop the nearest trusted proxy
+ * added); a shorter-than-expected header means the chain was truncated or the
+ * proxy count is wrong, so we fall back to the connection rather than to a
+ * client-writable hop. `x-real-ip` is honored only as a last resort under a
+ * trusted proxy.
+ *
+ * Returns `'anonymous'` only when there is genuinely no address to key on —
+ * which under a real `listen()` / `nativeListen()` transport does not happen,
+ * because the socket address is always present. (The old default keyed *every*
+ * client on `'anonymous'` by never consulting the connection at all.)
+ */
+declare function resolveClientIp(source: ClientAddressSource, trustProxy: TrustProxy): string;
+
 interface LoggerOptions {
     prefix?: string;
     colorize?: boolean;
@@ -448,7 +480,19 @@ interface RateLimitStore {
 interface RateLimitOptions {
     max: number;
     window: number;
+    /**
+     * Override the identity used to bucket requests. When omitted, the client is
+     * derived from the connection address, honoring `x-forwarded-for` only under
+     * `trustProxy`.
+     */
     keyGenerator?: (c: Context) => string;
+    /**
+     * Proxy trust for the default key derivation. `false` (default) ignores
+     * forwarding headers entirely. `true` trusts one proxy; a number trusts that
+     * many. Ignored when a custom `keyGenerator` is supplied. Designed to be
+     * inherited from an app-level `trustProxy` (S2) without renaming.
+     */
+    trustProxy?: TrustProxy;
     message?: string;
     /** External store (Redis, etc.). Falls back to in-memory Map when omitted. */
     store?: RateLimitStore;
@@ -463,15 +507,19 @@ declare function rateLimit(options: RateLimitOptions): (c: Context, next: Next) 
 interface RateLimitGuardOptions {
     max: number;
     window: number;
+    /** See {@link RateLimitOptions.keyGenerator}. */
     keyGenerator?: (req: GuardRequest) => string;
+    /** See {@link RateLimitOptions.trustProxy}. */
+    trustProxy?: TrustProxy;
     message?: string;
     /** External store (Redis, etc.). Falls back to in-memory Map when omitted. */
     store?: RateLimitStore;
 }
 /**
- * Rate limiting as a guard for `app.guard()` — same semantics and store as
- * the `rateLimit` middleware (X-RateLimit-* headers, 429 on excess), but it
- * runs on the uWS native fast path instead of forcing the Hono bridge.
+ * Rate limiting as a guard for `app.guard()` — same semantics, same store and
+ * the same key derivation as the `rateLimit` middleware (so a client is bucketed
+ * identically on both transports), but it runs on the uWS native fast path
+ * instead of forcing the Hono bridge.
  *
  * @example
  * app.guard('/api/auth/login', rateLimitGuard({ max: 20, window: 900 }));
@@ -599,4 +647,4 @@ interface WebhookVerifyOptions {
  */
 declare function verifyWebhookSignature(options: WebhookVerifyOptions): (c: Context, next: Next) => Promise<Response | void>;
 
-export { rateLimit as A, rateLimitGuard as B, type CorsOptions as C, clearRateLimitStore as D, type RateLimitOptions as E, type RateLimitGuardOptions as F, type GuardRequest as G, type HttpMethod as H, type InferSchema as I, type RateLimitStore as J, type KozoConfig as K, type LoggerOptions as L, type MiddlewareDefinition as M, type NativeKozoContext as N, type RateLimitStoreRecord as O, errorHandler as P, applyFileSystemRouting as Q, type RouteSchema as R, type Services as S, createFileSystemRouting as T, type FileSystemRoutingOptions as U, type ManifestRoute as V, type ManifestHttpMethod as W, type RoutesManifest as X, verifyWebhookSignature as Y, type WebhookVerifyOptions as Z, type KozoHandler as a, type RouteMeta as b, type KozoEnv as c, type KozoGuard as d, type KozoRequest as e, type RouteDefinition as f, type RouteModule as g, type ResolvedRouteModule as h, type RouteDefinitionOptions as i, type KozoContext as j, type KozoUser as k, type KozoServices as l, type RouteContext as m, type NativeKozoHandler as n, type InferResponse as o, type Infer as p, defineRoute as q, createRouteFactory as r, guardToHonoMiddleware as s, compileGuardPattern as t, type GuardResult as u, type GuardOutcome as v, type GuardDeny as w, type GuardEntry as x, logger as y, cors as z };
+export { verifyWebhookSignature as $, cors as A, type CorsOptions as B, type ClientAddressSource as C, rateLimit as D, rateLimitGuard as E, clearRateLimitStore as F, type GuardRequest as G, type HttpMethod as H, type InferSchema as I, type RateLimitOptions as J, type KozoConfig as K, type LoggerOptions as L, type MiddlewareDefinition as M, type NativeKozoContext as N, type RateLimitGuardOptions as O, type RateLimitStore as P, type RateLimitStoreRecord as Q, type RouteSchema as R, type Services as S, type TrustProxy as T, errorHandler as U, applyFileSystemRouting as V, createFileSystemRouting as W, type FileSystemRoutingOptions as X, type ManifestRoute as Y, type ManifestHttpMethod as Z, type RoutesManifest as _, type KozoHandler as a, type WebhookVerifyOptions as a0, type RouteMeta as b, type KozoEnv as c, type KozoGuard as d, type KozoRequest as e, type RouteDefinition as f, type RouteModule as g, type ResolvedRouteModule as h, type RouteDefinitionOptions as i, type KozoContext as j, type KozoUser as k, type KozoServices as l, type RouteContext as m, type NativeKozoHandler as n, type InferResponse as o, type Infer as p, defineRoute as q, createRouteFactory as r, guardToHonoMiddleware as s, compileGuardPattern as t, type GuardResult as u, type GuardOutcome as v, type GuardDeny as w, type GuardEntry as x, resolveClientIp as y, logger as z };

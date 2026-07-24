@@ -149,6 +149,10 @@ export type {
   GuardEntry,
 } from './guard.js';
 
+// Client IP resolution (shared by rate limiting; app-level trustProxy builds on it)
+export { resolveClientIp } from './client-ip.js';
+export type { TrustProxy, ClientAddressSource } from './client-ip.js';
+
 // Middleware
 export * from './middleware/index.js';
 
