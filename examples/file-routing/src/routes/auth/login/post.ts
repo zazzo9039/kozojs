@@ -1,8 +1,13 @@
 import { z } from 'zod';
+import { requireSecret } from '@kozojs/core';
 import { createJWT } from '@kozojs/auth';
 import type { AppServices } from '../../services.js';
 
 export const meta = { auth: false, tags: ['auth'] };
+
+// Read once, at module load — so a missing JWT_SECRET fails the boot instead of
+// the first login attempt.
+const JWT_SECRET = requireSecret('JWT_SECRET');
 
 const LoginSchema = z.object({
   email: z.string().email(),
@@ -21,7 +26,7 @@ export default async (ctx: { body: z.infer<typeof LoginSchema>; services: AppSer
   }
   const token = await createJWT(
     { sub: user.id, email: user.email, role: user.role },
-    process.env.JWT_SECRET ?? 'dev-secret-must-be-at-least-32-characters-long',
+    JWT_SECRET,
   );
   return { token, user: { id: user.id, email: user.email, role: user.role } };
 };

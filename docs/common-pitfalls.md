@@ -23,7 +23,9 @@ Quick reference for mistakes that look like framework bugs but are usually confi
 **Fix:** Use `registerAuthGuard()` **before** `loadRoutes()`, then `roleGuard`:
 
 ```typescript
-await registerAuthGuard(app, process.env.JWT_SECRET!, {
+import { requireSecret } from '@kozojs/core';
+
+await registerAuthGuard(app, requireSecret('JWT_SECRET'), {
   routesDir: './src/routes',
   prefix: '',
 });

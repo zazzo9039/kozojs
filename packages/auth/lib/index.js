@@ -1,6 +1,18 @@
 // src/index.ts
 import { jwtVerify, decodeJwt } from "jose";
+import { assertStrongSecret } from "@kozojs/core";
 import { KozoError, UnauthorizedError } from "@kozojs/core";
+function guardSecret(secretOrPublicKey, getKey, source) {
+  if (getKey) return;
+  if (secretOrPublicKey === void 0 || secretOrPublicKey === null) {
+    throw new Error(
+      `[Kozo] ${source} received no secret \u2014 the environment variable it reads is unset.
+  Use requireSecret('JWT_SECRET') from @kozojs/core, which fails here instead of signing with nothing.`
+    );
+  }
+  if (typeof secretOrPublicKey !== "string") return;
+  assertStrongSecret(secretOrPublicKey, { source });
+}
 function defaultGetToken(c) {
   const authHeader = c.req.header("Authorization");
   if (!authHeader) return void 0;
@@ -19,6 +31,7 @@ function authenticateJWT(secretOrPublicKey, opts = {}) {
     allowedAlgorithms = ["HS256", "HS384", "HS512"],
     optional = false
   } = opts;
+  guardSecret(secretOrPublicKey, getKey, "authenticateJWT(secret)");
   const key = typeof secretOrPublicKey === "string" ? new TextEncoder().encode(secretOrPublicKey) : secretOrPublicKey;
   return async (c, next) => {
     if (prefix !== "") {
@@ -204,6 +217,7 @@ function jwtGuard(secretOrPublicKey, options = {}) {
     expectedClaims,
     getKey
   } = options;
+  guardSecret(secretOrPublicKey, getKey, "jwtGuard(secret)");
   const key = typeof secretOrPublicKey === "string" ? new TextEncoder().encode(secretOrPublicKey) : secretOrPublicKey;
   const publicSet = publicPaths ? new Set(publicPaths) : null;
   return async (req) => {

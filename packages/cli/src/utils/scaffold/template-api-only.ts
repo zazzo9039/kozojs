@@ -123,7 +123,8 @@ export async function createDockerCompose(
     environment:
       NODE_ENV: production
       DATABASE_URL: ${dbUrl}
-      JWT_SECRET: \${JWT_SECRET:-change-me-in-production}
+      # No default on purpose: compose refuses to start the stack without it.
+      JWT_SECRET: \${JWT_SECRET:?required - set JWT_SECRET in .env or the shell, at least 32 bytes}
     depends_on:
       db:
         condition: service_healthy
@@ -156,7 +157,8 @@ export async function createDockerCompose(
     environment:
       NODE_ENV: production
       DATABASE_URL: ${dbUrl}
-      JWT_SECRET: \${JWT_SECRET:-change-me-in-production}
+      # No default on purpose: compose refuses to start the stack without it.
+      JWT_SECRET: \${JWT_SECRET:?required - set JWT_SECRET in .env or the shell, at least 32 bytes}
     depends_on:
       db:
         condition: service_healthy

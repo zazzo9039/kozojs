@@ -4,7 +4,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createKozo } from '@kozojs/core';
-import { logger } from '@kozojs/core';
+import { logger, requireSecret } from '@kozojs/core';
 import { registerAuthBeforeLoadRoutes } from '@kozojs/auth';
 import { userStore, type AppServices } from './services.js';
 
@@ -19,7 +19,9 @@ export async function buildApp() {
 
   app.middleware(logger());
 
-  const secret = process.env.JWT_SECRET ?? 'dev-secret-must-be-at-least-32-characters-long';
+  // No fallback on purpose: without JWT_SECRET the app refuses to start rather
+  // than signing tokens with a value that would be public knowledge.
+  const secret = requireSecret('JWT_SECRET');
   await registerAuthBeforeLoadRoutes(app, secret, { routesDir, prefix: '' });
   await app.loadRoutes();
 

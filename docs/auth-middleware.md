@@ -7,15 +7,45 @@ Kozo uses **`@kozojs/auth`** with the [`jose`](https://github.com/panva/jose) li
 > middleware-based API is deprecated: on core ≤ 0.5.15 it was **silently
 > bypassed** under `nativeListen()`.
 
+## The secret
+
+`jwtGuard` and `authenticateJWT` validate the secret **when you construct them**,
+so a bad one stops the process from starting rather than failing every request.
+They refuse:
+
+- any secret Kozo has itself published — the placeholders that used to ship in
+  the starter templates — on every `NODE_ENV`;
+- an unset variable (`undefined` reaching the constructor);
+- anything shorter than 32 bytes when `NODE_ENV=production`. Outside production
+  a short secret warns once instead, so a development setup still boots.
+
+Read it with `requireSecret()`, which has no fallback:
+
+```typescript
+import { requireSecret } from '@kozojs/core';
+
+const secret = requireSecret('JWT_SECRET'); // throws if unset, short, or a known placeholder
+```
+
+Generate one with:
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
+```
+
+> **If you scaffolded a project before 0.5.22**, its secret is a literal that
+> shipped inside the published packages. Rotate `JWT_SECRET` and treat every
+> token issued before the rotation as forgeable.
+
 ## Recommended: `registerAuthGuard` before `loadRoutes`
 
 ```typescript
-import { createKozo } from '@kozojs/core';
+import { createKozo, requireSecret } from '@kozojs/core';
 import { registerAuthGuard, roleGuard } from '@kozojs/auth';
 
 const app = createKozo({ routesDir: './src/routes' });
 
-await registerAuthGuard(app, process.env.JWT_SECRET!, {
+await registerAuthGuard(app, requireSecret('JWT_SECRET'), {
   routesDir: './src/routes',
   prefix: '/api',
   extraPublicPaths: ['/api/docs', '/api/docs.json'],
@@ -41,12 +71,12 @@ Use when you need custom composition (e.g. rate limits before JWT enforcement,
 as in **kozo-native-api** `registerApiSecurity`):
 
 ```typescript
-import { rateLimitGuard } from '@kozojs/core';
+import { rateLimitGuard, requireSecret } from '@kozojs/core';
 import { jwtGuard } from '@kozojs/auth';
 
 // Still register **before** loadRoutes()
 app.guard('/api/auth/*', rateLimitGuard({ max: 20, window: 60 }));
-app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, {
+app.guard('/api/*', jwtGuard(requireSecret('JWT_SECRET'), {
   publicPaths: ['/api/auth', '/api/health'],
 }));
 ```
@@ -67,9 +97,10 @@ Register **after** the JWT guard (guards chain in registration order).
 
 ```typescript
 // Deprecated — forces the Hono bridge under nativeListen()
+import { requireSecret } from '@kozojs/core';
 import { authenticateJWT, canActivate, isAuthenticated, hasRole } from '@kozojs/auth';
 
-app.middleware('/api/*', authenticateJWT(process.env.JWT_SECRET!));
+app.middleware('/api/*', authenticateJWT(requireSecret('JWT_SECRET')));
 
 // routes/api/admin/_middleware.ts
 export default canActivate(isAuthenticated, hasRole('admin'));

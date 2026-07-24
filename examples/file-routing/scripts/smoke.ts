@@ -1,4 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import { buildApp } from '../src/app.js';
+
+// This smoke check runs outside any deployment, so it mints a throwaway secret
+// for the duration of the process. An application must never do this — it would
+// invalidate every previously issued token on restart.
+process.env.JWT_SECRET = randomBytes(48).toString('base64url');
 
 const app = await buildApp();
 

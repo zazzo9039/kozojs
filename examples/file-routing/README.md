@@ -8,6 +8,9 @@ From the monorepo root:
 
 ```bash
 pnpm install
+cp examples/file-routing/.env.example examples/file-routing/.env
+# Fill in JWT_SECRET — there is no default and the app will not start without one:
+node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
 pnpm --filter file-routing dev
 ```
 

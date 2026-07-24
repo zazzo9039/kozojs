@@ -1048,6 +1048,32 @@ declare function scanMiddleware(options: ScanOptions): Promise<MiddlewareDefinit
  * app.listen(env.PORT);
  */
 declare function defineEnv<T extends z.ZodRawShape>(shape: T): z.infer<z.ZodObject<T>>;
+/** Options for {@link requireSecret}. */
+interface RequireSecretOptions {
+    /**
+     * Minimum accepted length in bytes. Defaults to 32 — the SHA-256 output size,
+     * past which an HMAC-SHA256 key gains no further strength.
+     */
+    minBytes?: number;
+}
+/**
+ * Read a signing secret from the environment, or refuse to start.
+ *
+ * Unlike reading the variable directly and defaulting to a literal, this has no
+ * fallback: a missing, too-short or publicly-known secret throws here, at
+ * startup, instead of silently signing tokens with a value an attacker has too.
+ *
+ * Throws when the variable is unset, empty, shorter than `minBytes`, or equal
+ * to one of the secrets Kozo has itself published (see `KNOWN_WEAK_SECRETS`).
+ * Unlike the `@kozojs/auth` guards, which only warn about a short secret outside
+ * production, this is strict on every `NODE_ENV` — you asked for a secret.
+ *
+ * @example
+ * import { requireSecret } from '@kozojs/core';
+ * const secret = requireSecret('JWT_SECRET');
+ * app.guard('/api/*', jwtGuard(secret));
+ */
+declare function requireSecret(name: string, options?: RequireSecretOptions): string;
 interface PaginatedResult<T> {
     data: T[];
     total: number;
@@ -1161,4 +1187,85 @@ declare const deletedSchema: z.ZodObject<{
     deletedId: z.ZodString;
 }, z.core.$strip>;
 
-export { BadRequestError, type ClientGeneratorOptions, type CompiledRoute, ConflictError, type DefineKozoAppOptions, ERROR_RESPONSES, ForbiddenError, GoneError, type InflightTracker, KOZO_CONFIG_CANDIDATES, KOZO_TYPES_CANDIDATES, KOZO_TYPES_OUTPUT, Kozo, type KozoAppDefinition, type KozoAppHooks, type KozoAppTypesRef, KozoConfig, KozoEnv, KozoError, KozoGroup, KozoGuard, KozoHandler, KozoRequest, type KozoWebSocket, MiddlewareDefinition, type MountDocsOptions, NativeKozoContext, NotFoundError, type OpenAPIConfig, OpenAPIGenerator, type OpenAPIInfo, type OpenAPISpec, type PaginatedResult, type Plugin, type ProblemDetails, ResolvedRouteModule, type RouteInfo, RouteMeta, RouteModule, RouteSchema, SchemaCompiler, Services, ShutdownManager, type ShutdownOptions, type ShutdownState, type SsrConfig, type SsrRenderFn, type SsrRenderResult, UnauthorizedError, type ValidationError, ValidationFailedError, type WebSocketHandler, type WsUpgradeRequest, buildKozoApp, buildNativeContext, compileRouteHandler, createInflightTracker, createKozo, createOpenAPIGenerator, createShutdownManager, createSsrServer, defineEnv, defineKozoApp, deletedSchema, fastCL, fastWrite400, fastWrite404, fastWrite500, fastWriteError, fastWriteHtml, fastWriteJson, fastWriteJsonStatus, fastWriteText, fileToPath, forbiddenResponse, formatZodErrors, generateSwaggerHtml, generateTypedClient, idParams, internalErrorResponse, isMiddlewareFile, isRouteFile, notFoundResponse, paginate, paginationSchema, renderKozoTypesDts, resolveRouteModule, scanMiddleware, scanRoutes, searchSchema, sortSchema, successSchema, timestamps, trackRequest, unauthorizedResponse, uuid, uuidParams, validationErrorResponse };
+/**
+ * Known-weak secrets, and the shared "is this secret usable" check.
+ *
+ * Every literal in {@link KNOWN_WEAK_SECRETS} has been published — in a starter
+ * template, a scaffold generator or a docs example — and is therefore public
+ * knowledge. A service signing tokens with one of them can have any token,
+ * including an admin one, forged by anyone who has read the package.
+ *
+ * This module is the single place those strings are allowed to appear. A test
+ * (`packages/cli/__tests__/no-weak-secrets.test.ts`) asserts they exist nowhere
+ * else in the repository.
+ *
+ * Consumers:
+ * - `requireSecret()` in `helpers.ts` — strict, for application startup.
+ * - `authenticateJWT()` / `jwtGuard()` in `@kozojs/auth` — construction-time,
+ *   so a bad secret fails the boot rather than the first request.
+ */
+/**
+ * Minimum accepted secret length, in bytes.
+ *
+ * 32 bytes is the output size of SHA-256 and the point past which HMAC-SHA256
+ * gains no further strength from a longer key. Anything shorter is a shorter
+ * key than the algorithm it feeds.
+ */
+declare const MIN_SECRET_BYTES = 32;
+/** Shell one-liner that produces a secret this module accepts. */
+declare const GENERATE_SECRET_COMMAND = "node -e \"console.log(require('node:crypto').randomBytes(48).toString('base64url'))\"";
+/**
+ * Secret values that must never protect a running service.
+ *
+ * Tier 1 — literals shipped inside a released Kozo artefact (starter templates,
+ * `.env.example` files, scaffold generators). These are the ones an operator can
+ * be running today without knowing it.
+ *
+ * Tier 2 — placeholders used in Kozo's own documentation and JSDoc examples.
+ * Both are below {@link MIN_SECRET_BYTES} and so would be refused in production
+ * on length alone; listing them makes them fail in development too, which is
+ * where the mistake is actually made.
+ *
+ * Entries are deliberately unambiguous hyphenated tokens. Bare words like
+ * `secret` or `password` are not listed: they are already refused on length,
+ * and as blocklist entries they are useless — they match a JSON key, a prose
+ * sentence and a database column as readily as a secret, which would make the
+ * repository-wide scan that guards this list unusable.
+ */
+declare const KNOWN_WEAK_SECRETS: ReadonlySet<string>;
+/** True when `value` is a secret Kozo has published and must refuse. */
+declare function isKnownWeakSecret(value: string): boolean;
+/** UTF-8 byte length of a secret — not `.length`, which counts UTF-16 units. */
+declare function secretByteLength(value: string): number;
+/** Options for {@link assertStrongSecret}. */
+interface AssertStrongSecretOptions {
+    /**
+     * What supplied the secret, quoted verbatim in the message so the operator can
+     * find it — an env var name (`'JWT_SECRET'`) or an API (`'jwtGuard(secret)'`).
+     */
+    source: string;
+    /** Minimum accepted length in bytes. Defaults to {@link MIN_SECRET_BYTES}. */
+    minBytes?: number;
+    /**
+     * What to do with a secret that is merely too short — a known-weak literal is
+     * always thrown on, regardless of this setting.
+     *
+     * - `'throw'` — always reject. Used by `requireSecret()`.
+     * - `'auto'`  — reject when `NODE_ENV === 'production'`, otherwise warn once
+     *   per distinct secret. Used by the `@kozojs/auth` guards, so that adding the
+     *   check does not stop an existing development setup from booting.
+     *
+     * @default 'auto'
+     */
+    onShort?: 'throw' | 'auto';
+}
+/**
+ * Throw if `value` cannot be trusted as a signing secret.
+ *
+ * Call this at construction or startup — never per request. A server that
+ * refuses to boot is a fixable incident; one that boots and 500s on request 1
+ * is an outage.
+ */
+declare function assertStrongSecret(value: string, options: AssertStrongSecretOptions): void;
+
+export { type AssertStrongSecretOptions, BadRequestError, type ClientGeneratorOptions, type CompiledRoute, ConflictError, type DefineKozoAppOptions, ERROR_RESPONSES, ForbiddenError, GENERATE_SECRET_COMMAND, GoneError, type InflightTracker, KNOWN_WEAK_SECRETS, KOZO_CONFIG_CANDIDATES, KOZO_TYPES_CANDIDATES, KOZO_TYPES_OUTPUT, Kozo, type KozoAppDefinition, type KozoAppHooks, type KozoAppTypesRef, KozoConfig, KozoEnv, KozoError, KozoGroup, KozoGuard, KozoHandler, KozoRequest, type KozoWebSocket, MIN_SECRET_BYTES, MiddlewareDefinition, type MountDocsOptions, NativeKozoContext, NotFoundError, type OpenAPIConfig, OpenAPIGenerator, type OpenAPIInfo, type OpenAPISpec, type PaginatedResult, type Plugin, type ProblemDetails, type RequireSecretOptions, ResolvedRouteModule, type RouteInfo, RouteMeta, RouteModule, RouteSchema, SchemaCompiler, Services, ShutdownManager, type ShutdownOptions, type ShutdownState, type SsrConfig, type SsrRenderFn, type SsrRenderResult, UnauthorizedError, type ValidationError, ValidationFailedError, type WebSocketHandler, type WsUpgradeRequest, assertStrongSecret, buildKozoApp, buildNativeContext, compileRouteHandler, createInflightTracker, createKozo, createOpenAPIGenerator, createShutdownManager, createSsrServer, defineEnv, defineKozoApp, deletedSchema, fastCL, fastWrite400, fastWrite404, fastWrite500, fastWriteError, fastWriteHtml, fastWriteJson, fastWriteJsonStatus, fastWriteText, fileToPath, forbiddenResponse, formatZodErrors, generateSwaggerHtml, generateTypedClient, idParams, internalErrorResponse, isKnownWeakSecret, isMiddlewareFile, isRouteFile, notFoundResponse, paginate, paginationSchema, renderKozoTypesDts, requireSecret, resolveRouteModule, scanMiddleware, scanRoutes, searchSchema, secretByteLength, sortSchema, successSchema, timestamps, trackRequest, unauthorizedResponse, uuid, uuidParams, validationErrorResponse };

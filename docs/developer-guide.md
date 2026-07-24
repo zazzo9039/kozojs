@@ -75,10 +75,10 @@ limits — the same check runs on `listen()` and `nativeListen()` (compiled into
 the uWS fast path):
 
 ```typescript
-import { rateLimitGuard } from '@kozojs/core';
+import { rateLimitGuard, requireSecret } from '@kozojs/core';
 import { jwtGuard, roleGuard } from '@kozojs/auth';
 
-app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!));
+app.guard('/api/*', jwtGuard(requireSecret('JWT_SECRET')));
 app.guard('/api/admin/*', roleGuard('admin'));
 app.guard('/api/auth/*', rateLimitGuard({ max: 20, window: 60 }));
 ```
@@ -198,10 +198,11 @@ All errors include:
 JWT authentication guards.
 
 ```typescript
+import { requireSecret } from '@kozojs/core';
 import { registerAuthGuard, jwtGuard, roleGuard } from '@kozojs/auth';
 
 // Recommended with file-system routes + meta.auth
-await registerAuthGuard(app, process.env.JWT_SECRET!, {
+await registerAuthGuard(app, requireSecret('JWT_SECRET'), {
   routesDir: './src/routes',
   prefix: '/api',
 });
@@ -209,7 +210,7 @@ app.guard('/api/admin/*', roleGuard('admin'));
 await app.loadRoutes();
 
 // Or a manual guard:
-app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, { publicPaths: ['/api/health'] }));
+app.guard('/api/*', jwtGuard(requireSecret('JWT_SECRET'), { publicPaths: ['/api/health'] }));
 ```
 
 The authenticated user is available as `ctx.user` in handlers.

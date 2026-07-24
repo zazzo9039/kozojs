@@ -67,6 +67,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Must run BEFORE build: the CLI build syncs templates/ into
+      # packages/cli/templates, so afterwards any drift has been repaired and a
+      # fix applied to the wrong copy would be silently discarded.
+      - name: Templates in sync (templates/ -> packages/cli/templates)
+        run: node scripts/copy-cli-templates.mjs --check
+
       - name: Build
         run: pnpm build
 

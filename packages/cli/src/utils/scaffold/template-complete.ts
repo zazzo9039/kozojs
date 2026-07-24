@@ -1,6 +1,7 @@
 import fs from 'fs-extra';
 import path from 'node:path';
 import type { ScaffoldOptions } from './types.js';
+import { ENV_SECRET_HELP, generateSecret } from '../secret.js';
 
 export function getDatabaseSchema(database: string): string {
   if (database === 'postgresql') {
@@ -290,8 +291,9 @@ dist/
     ? `mysql://root:root@localhost:3306/${projectName}`
     : undefined;
 
-  // Create .env.example
-  const envExample = `# Server
+  // Create .env.example — committed by the user, so it carries instructions,
+  // never a value. `.env` below gets a secret minted on this machine instead.
+  const envBody = (jwtSecret: string) => `# Server
 PORT=3000
 NODE_ENV=development
 ${database !== 'none' && dbUrl ? `
@@ -299,7 +301,8 @@ ${database !== 'none' && dbUrl ? `
 DATABASE_URL=${dbUrl}
 ` : ''}
 ${auth ? `# JWT Authentication
-JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
+${ENV_SECRET_HELP}
+JWT_SECRET=${jwtSecret}
 ` : ''}
 # CORS
 CORS_ORIGIN=http://localhost:5173
@@ -308,9 +311,10 @@ CORS_ORIGIN=http://localhost:5173
 RATE_LIMIT_MAX=100
 RATE_LIMIT_WINDOW=60000
 `;
-  await fs.writeFile(path.join(projectDir, '.env.example'), envExample);
-  // Also create a .env with defaults for instant dev
-  await fs.writeFile(path.join(projectDir, '.env'), envExample);
+  await fs.writeFile(path.join(projectDir, '.env.example'), envBody(''));
+  // Also create a .env so `pnpm dev` works immediately — with a secret unique
+  // to this project, generated now, rather than one shipped inside the CLI.
+  await fs.writeFile(path.join(projectDir, '.env'), envBody(auth ? generateSecret() : ''));
 
   // Create drizzle.config.ts if database is selected
   if (hasDb) {
@@ -330,8 +334,11 @@ export default defineConfig({
     await fs.writeFile(path.join(projectDir, 'drizzle.config.ts'), drizzleConfig);
   }
 
-  // Create modular index.ts entry point
-  const indexTs = `import { createKozo, rateLimitGuard } from '@kozojs/core';
+  // Create modular index.ts entry point.
+  // dotenv first, before anything reads process.env — requireSecret() below has
+  // no fallback, so the .env file has to be loaded by the time it runs.
+  const indexTs = `import 'dotenv/config';
+import { createKozo, rateLimitGuard${auth ? ', requireSecret' : ''} } from '@kozojs/core';
 ${auth ? "import { jwtGuard } from '@kozojs/auth';" : ''}
 ${auth ? "import { registerAuthRoutes } from './routes/auth/index.js';" : ''}
 import { registerUserRoutes } from './routes/users/index.js';
@@ -342,7 +349,7 @@ ${hasDb ? "import { db } from './db/index.js';" : ''}
 
 // ─── Config ────────────────────────────────────────────────────────────
 const PORT = Number(process.env.PORT) || 3000;
-${auth ? "const JWT_SECRET = process.env.JWT_SECRET || 'change-me-to-a-random-secret';" : ''}
+${auth ? "// No fallback: a missing or weak JWT_SECRET stops the boot, it does not\n// silently sign tokens with a value anyone could guess.\nconst JWT_SECRET = requireSecret('JWT_SECRET');" : ''}
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 100;
 const RATE_LIMIT_WINDOW = Number(process.env.RATE_LIMIT_WINDOW) || 60_000;
@@ -513,7 +520,7 @@ curl http://localhost:3000/health
 | Variable | Default | Description |
 |----------|---------|-------------|
 | PORT | 3000 | Server port |
-| JWT_SECRET | change-me… | HMAC secret for JWT signing |
+| JWT_SECRET | _none — required_ | HMAC secret for JWT signing. At least 32 bytes; the server will not start without it. \\\`.env\\\` was generated with a fresh one; use a different value in every other environment. |
 | CORS_ORIGIN | * | Allowed CORS origin |
 | RATE_LIMIT_MAX | 100 | Max requests per window |
 | RATE_LIMIT_WINDOW | 60000 | Window duration (ms) |
@@ -808,11 +815,14 @@ export function registerStatsRoute(app: Kozo) {
   // src/routes/auth/index.ts
   const authRoutes = `import { z } from 'zod';
 import type { Kozo } from '@kozojs/core';
+import { requireSecret } from '@kozojs/core';
 import { createJWT } from '@kozojs/auth';
 import { UserSchema } from '../../schemas/user.js';
 import { users } from '../../data/store.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me-to-a-random-secret';
+// Read once at module load, with no fallback — a missing JWT_SECRET fails the
+// boot rather than the first login request.
+const JWT_SECRET = requireSecret('JWT_SECRET');
 
 export function registerAuthRoutes(app: Kozo) {
   // POST /auth/login — public (no JWT required)

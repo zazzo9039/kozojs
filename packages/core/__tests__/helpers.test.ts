@@ -2,10 +2,13 @@
 // Tests for helpers.ts — defineEnv, paginate, uuid, schemas
 // ============================================================================
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { z } from 'zod';
+import { randomBytes } from 'node:crypto';
+import { KNOWN_WEAK_SECRETS } from '../src/weak-secrets.js';
 import {
   defineEnv,
+  requireSecret,
   paginate,
   uuid,
   paginationSchema,
@@ -59,6 +62,78 @@ describe('defineEnv', () => {
     expect(() => defineEnv({
       BAD_PORT: z.coerce.number().int().positive(),
     })).toThrow('[Kozo] Invalid environment variables');
+  });
+});
+
+// ── requireSecret ────────────────────────────────────────────────────────
+
+describe('requireSecret', () => {
+  const VAR = 'TEST_REQUIRE_SECRET';
+  const originalNodeEnv = process.env.NODE_ENV;
+
+  /** Generated per call — never a committed fixture. */
+  const strong = () => randomBytes(48).toString('base64url');
+
+  afterEach(() => {
+    delete process.env[VAR];
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    vi.restoreAllMocks();
+  });
+
+  it('returns the value when it is long enough', () => {
+    const secret = strong();
+    process.env[VAR] = secret;
+    expect(requireSecret(VAR)).toBe(secret);
+  });
+
+  it('throws when the variable is not set, naming it', () => {
+    expect(() => requireSecret(VAR)).toThrow(/^\[Kozo\] Missing required environment variable: TEST_REQUIRE_SECRET/);
+  });
+
+  it('throws when the variable is empty', () => {
+    process.env[VAR] = '';
+    expect(() => requireSecret(VAR)).toThrow(/is empty/);
+  });
+
+  it('throws when the value is shorter than 32 bytes', () => {
+    process.env[VAR] = randomBytes(8).toString('hex'); // 16 chars
+    expect(() => requireSecret(VAR)).toThrow(/at least 32 are required/);
+  });
+
+  it('is strict outside production too — unlike the auth guards, it never just warns', () => {
+    process.env.NODE_ENV = 'development';
+    process.env[VAR] = randomBytes(8).toString('hex');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() => requireSecret(VAR)).toThrow(/at least 32 are required/);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('throws on a secret Kozo has published, however long it is', () => {
+    // Read from the blocklist rather than retyped: the repository-wide scan in
+    // packages/cli/__tests__/no-weak-secrets.test.ts allows these literals in
+    // exactly one file, and this is not it.
+    const longest = [...KNOWN_WEAK_SECRETS].sort((a, b) => b.length - a.length)[0]!;
+    expect(longest.length).toBeGreaterThanOrEqual(32); // long enough to pass the length check
+    process.env[VAR] = longest;
+    expect(() => requireSecret(VAR)).toThrow(/ships publicly with Kozo/);
+  });
+
+  it('tells the operator how to generate a replacement', () => {
+    expect(() => requireSecret(VAR)).toThrow(/randomBytes\(48\)/);
+  });
+
+  it('honours a custom minimum', () => {
+    process.env[VAR] = randomBytes(32).toString('base64url'); // 43 chars
+    expect(() => requireSecret(VAR, { minBytes: 64 })).toThrow(/at least 64 are required/);
+    expect(requireSecret(VAR, { minBytes: 16 })).toBe(process.env[VAR]);
+  });
+
+  it('counts bytes, not UTF-16 code units', () => {
+    // 16 characters, 48 bytes in UTF-8 — long enough despite a .length of 16.
+    process.env[VAR] = '🔥'.repeat(8);
+    expect(process.env[VAR]!.length).toBeLessThan(32);
+    expect(() => requireSecret(VAR)).not.toThrow();
   });
 });
 

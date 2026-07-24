@@ -167,7 +167,19 @@ export {
   searchSchema,
   successSchema,
   defineEnv,
+  requireSecret,
   paginate,
   uuid,
 } from './helpers.js';
-export type { PaginatedResult } from './helpers.js';
+export type { PaginatedResult, RequireSecretOptions } from './helpers.js';
+
+// Secret hygiene — shared by requireSecret() and the @kozojs/auth guards
+export {
+  MIN_SECRET_BYTES,
+  GENERATE_SECRET_COMMAND,
+  KNOWN_WEAK_SECRETS,
+  isKnownWeakSecret,
+  secretByteLength,
+  assertStrongSecret,
+} from './weak-secrets.js';
+export type { AssertStrongSecretOptions } from './weak-secrets.js';

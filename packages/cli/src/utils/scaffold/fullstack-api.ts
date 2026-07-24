@@ -4,6 +4,7 @@ import type { ScaffoldOptions } from './types.js';
 import { getDatabaseSchema, getDatabaseIndex, getSQLiteSeed } from './template-complete.js';
 import { createDockerCompose, createDockerfile, createGitHubActions } from './template-api-only.js';
 import { scaffoldFullstackWeb, scaffoldFullstackReadme } from './fullstack-web.js';
+import { ENV_SECRET_HELP, generateSecret } from '../secret.js';
 
 export async function scaffoldFullstackProject(
   projectDir: string,
@@ -106,14 +107,17 @@ export default defineConfig({
   },
 });
 `);
-    // .env
-    const envContent = `PORT=3000\nNODE_ENV=development\n${dbUrl ? `DATABASE_URL=${dbUrl}\n` : ''}${auth ? 'JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars\n' : ''}`;
-    await fs.writeFile(path.join(apiDir, '.env'), envContent);
-    await fs.writeFile(path.join(apiDir, '.env.example'), envContent);
+    // .env gets a secret minted on this machine; .env.example is committed by
+    // the user, so it ships instructions and no value.
+    const envContent = (jwtSecret: string) =>
+      `PORT=3000\nNODE_ENV=development\n${dbUrl ? `DATABASE_URL=${dbUrl}\n` : ''}${auth ? `${ENV_SECRET_HELP}\nJWT_SECRET=${jwtSecret}\n` : ''}`;
+    await fs.writeFile(path.join(apiDir, '.env'), envContent(auth ? generateSecret() : ''));
+    await fs.writeFile(path.join(apiDir, '.env.example'), envContent(''));
   } else {
-    const envContent = `PORT=3000\nNODE_ENV=development\n${auth ? 'JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars\n' : ''}`;
-    await fs.writeFile(path.join(apiDir, '.env'), envContent);
-    await fs.writeFile(path.join(apiDir, '.env.example'), envContent);
+    const envContent = (jwtSecret: string) =>
+      `PORT=3000\nNODE_ENV=development\n${auth ? `${ENV_SECRET_HELP}\nJWT_SECRET=${jwtSecret}\n` : ''}`;
+    await fs.writeFile(path.join(apiDir, '.env'), envContent(auth ? generateSecret() : ''));
+    await fs.writeFile(path.join(apiDir, '.env.example'), envContent(''));
   }
 
   // package.json
@@ -176,7 +180,7 @@ export default defineConfig({
   // The db/ files are scaffolded for future Drizzle usage but not wired into routes.
   const authImport = auth ? `import { jwtGuard } from '@kozojs/auth';\n` : '';
   const authMiddleware = auth
-    ? `\n// JWT protects all /api/* routes except public ones.\n// app.guard runs on BOTH transports (listen + nativeListen) at native speed.\nconst JWT_SECRET = process.env.JWT_SECRET || 'change-me';\napp.guard('/api/*', jwtGuard(JWT_SECRET, {\n  publicPaths: ['/api/auth', '/api/health', '/api/stats'],\n}));\n`
+    ? `\n// JWT protects all /api/* routes except public ones.\n// app.guard runs on BOTH transports (listen + nativeListen) at native speed.\n// requireSecret has no fallback: a missing JWT_SECRET stops the boot.\nconst JWT_SECRET = requireSecret('JWT_SECRET');\napp.guard('/api/*', jwtGuard(JWT_SECRET, {\n  publicPaths: ['/api/auth', '/api/health', '/api/stats'],\n}));\n`
     : '';
 
   const listenCode = ssr
@@ -187,7 +191,7 @@ export default defineConfig({
     : runtime === 'node' ? 'await app.nativeListen();' : 'await app.listen();';
 
   await fs.outputFile(path.join(apiDir, 'src', 'index.ts'), `import 'dotenv/config';
-import { createKozo } from '@kozojs/core';
+import { createKozo${auth ? ', requireSecret' : ''} } from '@kozojs/core';
 ${authImport}import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -719,9 +723,12 @@ export default async ({ params }: { params: { id: string } }) => {
   // routes/api/auth/login/post.ts (only when auth is enabled)
   if (auth) {
     await fs.outputFile(path.join(apiDir, 'src', 'routes', 'api', 'auth', 'login', 'post.ts'), `import { z } from 'zod';
+import { requireSecret } from '@kozojs/core';
 import { createJWT, UnauthorizedError } from '@kozojs/auth';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
+// Read once at module load, with no fallback — a missing JWT_SECRET fails the
+// boot rather than the first login request.
+const JWT_SECRET = requireSecret('JWT_SECRET');
 
 const DEMO_USERS = [
   { email: 'admin@demo.com', password: 'admin123', role: 'admin', name: 'Admin' },

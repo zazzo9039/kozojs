@@ -4122,6 +4122,63 @@ function verifyWebhookSignature(options) {
 // src/helpers.ts
 import { z as z3 } from "zod";
 import { randomUUID } from "crypto";
+
+// src/weak-secrets.ts
+import { createHash } from "crypto";
+var MIN_SECRET_BYTES = 32;
+var GENERATE_SECRET_COMMAND = `node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"`;
+var KNOWN_WEAK_SECRETS = /* @__PURE__ */ new Set([
+  // Tier 1 — shipped in @kozojs/cli <= 0.5.21
+  "dev-secret-must-be-at-least-32-characters-long",
+  "change-me-to-a-random-secret-at-least-32-chars",
+  "change-me-to-a-random-secret",
+  "change-me-in-production",
+  "change-me",
+  // Tier 2 — documentation placeholders
+  "my-secret-key",
+  "your-secret-key"
+]);
+function isKnownWeakSecret(value) {
+  return KNOWN_WEAK_SECRETS.has(value);
+}
+function secretByteLength(value) {
+  return Buffer.byteLength(value, "utf8");
+}
+var warned = /* @__PURE__ */ new Set();
+function fingerprint(value) {
+  return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 16);
+}
+function hint() {
+  return `  Generate one:  ${GENERATE_SECRET_COMMAND}`;
+}
+function assertStrongSecret(value, options) {
+  const { source, minBytes = MIN_SECRET_BYTES, onShort = "auto" } = options;
+  if (isKnownWeakSecret(value)) {
+    throw new Error(
+      `[Kozo] ${source} is set to a secret that ships publicly with Kozo.
+  That value is in the published packages, so anyone can forge a token for this service \u2014 including an admin one.
+  Rotate it now; tokens signed with the old secret must be treated as compromised.
+` + hint()
+    );
+  }
+  const bytes = secretByteLength(value);
+  if (bytes >= minBytes) return;
+  const problem = bytes === 0 ? `${source} is empty` : `${source} is ${bytes} byte${bytes === 1 ? "" : "s"} long; at least ${minBytes} are required`;
+  if (bytes === 0 || onShort === "throw" || process.env.NODE_ENV === "production") {
+    throw new Error(`[Kozo] ${problem}.
+${hint()}`);
+  }
+  const id = fingerprint(value);
+  if (warned.has(id)) return;
+  warned.add(id);
+  console.warn(
+    `[Kozo] Warning: ${problem}.
+  This is tolerated because NODE_ENV is not 'production'. It will throw there.
+` + hint()
+  );
+}
+
+// src/helpers.ts
 function defineEnv(shape) {
   const schema = z3.object(shape);
   const result = schema.safeParse(process.env);
@@ -4131,6 +4188,19 @@ function defineEnv(shape) {
 ${errors}`);
   }
   return result.data;
+}
+function requireSecret(name, options = {}) {
+  const { minBytes = MIN_SECRET_BYTES } = options;
+  const value = process.env[name];
+  if (value === void 0) {
+    throw new Error(
+      `[Kozo] Missing required environment variable: ${name}
+  It must be at least ${minBytes} bytes and must not be shared or committed.
+  Generate one:  ${GENERATE_SECRET_COMMAND}`
+    );
+  }
+  assertStrongSecret(value, { source: name, minBytes, onShort: "throw" });
+  return value;
 }
 function paginate(items, page, limit) {
   const start = (page - 1) * limit;
@@ -4181,13 +4251,16 @@ export {
   ConflictError,
   ERROR_RESPONSES,
   ForbiddenError,
+  GENERATE_SECRET_COMMAND,
   GoneError,
+  KNOWN_WEAK_SECRETS,
   KOZO_CONFIG_CANDIDATES,
   KOZO_TYPES_CANDIDATES,
   KOZO_TYPES_OUTPUT,
   Kozo,
   KozoError,
   KozoGroup,
+  MIN_SECRET_BYTES,
   NotFoundError,
   OpenAPIGenerator,
   SchemaCompiler,
@@ -4195,6 +4268,7 @@ export {
   UnauthorizedError,
   ValidationFailedError,
   applyFileSystemRouting,
+  assertStrongSecret,
   buildKozoApp,
   buildNativeContext,
   clearRateLimitStore,
@@ -4230,6 +4304,7 @@ export {
   guardToHonoMiddleware,
   idParams,
   internalErrorResponse,
+  isKnownWeakSecret,
   isMiddlewareFile,
   isRouteFile,
   logger,
@@ -4239,10 +4314,12 @@ export {
   rateLimit,
   rateLimitGuard,
   renderKozoTypesDts,
+  requireSecret,
   resolveRouteModule,
   scanMiddleware,
   scanRoutes,
   searchSchema,
+  secretByteLength,
   sortSchema,
   successSchema,
   timestamps,

@@ -232,10 +232,10 @@ middleware under `listen()` and **compiled into the uWS fast path** under
 roles, and rate limits.
 
 ```typescript
-import { rateLimitGuard } from '@kozojs/core';
+import { rateLimitGuard, requireSecret } from '@kozojs/core';
 import { jwtGuard, roleGuard } from '@kozojs/auth';
 
-app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, { publicPaths: ['/api/health'] }));
+app.guard('/api/*', jwtGuard(requireSecret('JWT_SECRET'), { publicPaths: ['/api/health'] }));
 app.guard('/api/admin/*', roleGuard('admin'));
 app.guard('/api/auth/*', rateLimitGuard({ max: 20, window: 60 }));
 

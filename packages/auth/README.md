@@ -15,12 +15,12 @@ same check runs on `listen()` (Hono) AND on `nativeListen()` (uWebSockets.js)
 at native speed — no Hono bridge, no middleware bypass.
 
 ```typescript
-import { createKozo } from '@kozojs/core';
+import { createKozo, requireSecret } from '@kozojs/core';
 import { registerAuthGuard, roleGuard } from '@kozojs/auth';
 
 const app = createKozo({ routesDir: './src/routes' });
 
-await registerAuthGuard(app, process.env.JWT_SECRET!, {
+await registerAuthGuard(app, requireSecret('JWT_SECRET'), {
   routesDir: './src/routes',
   prefix: '/api',
   extraPublicPaths: ['/api/docs', '/api/docs.json'],
@@ -38,9 +38,10 @@ Public routes: set `export const meta = { auth: false }` in the route file.
 ## Composable guards
 
 ```typescript
+import { requireSecret } from '@kozojs/core';
 import { jwtGuard, roleGuard } from '@kozojs/auth';
 
-app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, {
+app.guard('/api/*', jwtGuard(requireSecret('JWT_SECRET'), {
   publicPaths: ['/api/health', '/api/docs'],
 }));
 app.guard('/api/admin/*', roleGuard(['admin', 'owner']));
@@ -99,11 +100,12 @@ export default async (ctx: KozoContext) => {
 ## Create tokens
 
 ```typescript
+import { requireSecret } from '@kozojs/core';
 import { createJWT } from '@kozojs/auth';
 
 const token = await createJWT(
   { email: 'user@example.com', role: 'admin' },
-  process.env.JWT_SECRET!,
+  requireSecret('JWT_SECRET'),
   { expiresIn: '24h' },
 );
 ```
@@ -117,9 +119,10 @@ const token = await createJWT(
 > bypassed** under `nativeListen()` — upgrade immediately.
 
 ```typescript
+import { requireSecret } from '@kozojs/core';
 import { authenticateJWT } from '@kozojs/auth';
 
-app.middleware('/api/*', authenticateJWT(process.env.JWT_SECRET!));
+app.middleware('/api/*', authenticateJWT(requireSecret('JWT_SECRET')));
 ```
 
 ## Role guards (Hono `_middleware.ts` style — legacy)

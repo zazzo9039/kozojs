@@ -45,6 +45,21 @@ var import_node_path5 = __toESM(require("path"));
 // src/utils/scaffold/template-complete.ts
 var import_fs_extra = __toESM(require("fs-extra"));
 var import_node_path = __toESM(require("path"));
+
+// src/utils/secret.ts
+var import_node_crypto = require("crypto");
+var GENERATE_SECRET_COMMAND = `node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"`;
+function generateSecret() {
+  return (0, import_node_crypto.randomBytes)(48).toString("base64url");
+}
+var ENV_SECRET_HELP = [
+  "# Required \u2014 no default. The app refuses to start without it.",
+  "# Generate one and paste it below:",
+  `#   ${GENERATE_SECRET_COMMAND}`,
+  "# Use a different value per environment, and never commit the filled-in .env."
+].join("\n");
+
+// src/utils/scaffold/template-complete.ts
 function getDatabaseSchema(database) {
   if (database === "postgresql") {
     return `import { pgTable, uuid, varchar, timestamp } from 'drizzle-orm/pg-core';
@@ -288,7 +303,7 @@ dist/
   await import_fs_extra.default.writeFile(import_node_path.default.join(projectDir, ".gitignore"), gitignore);
   const pgPort = dbPort ?? 5436;
   const dbUrl = database === "postgresql" ? `postgresql://postgres:postgres@localhost:${pgPort}/${projectName}` : database === "mysql" ? `mysql://root:root@localhost:3306/${projectName}` : void 0;
-  const envExample = `# Server
+  const envBody = (jwtSecret) => `# Server
 PORT=3000
 NODE_ENV=development
 ${database !== "none" && dbUrl ? `
@@ -296,7 +311,8 @@ ${database !== "none" && dbUrl ? `
 DATABASE_URL=${dbUrl}
 ` : ""}
 ${auth ? `# JWT Authentication
-JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
+${ENV_SECRET_HELP}
+JWT_SECRET=${jwtSecret}
 ` : ""}
 # CORS
 CORS_ORIGIN=http://localhost:5173
@@ -305,8 +321,8 @@ CORS_ORIGIN=http://localhost:5173
 RATE_LIMIT_MAX=100
 RATE_LIMIT_WINDOW=60000
 `;
-  await import_fs_extra.default.writeFile(import_node_path.default.join(projectDir, ".env.example"), envExample);
-  await import_fs_extra.default.writeFile(import_node_path.default.join(projectDir, ".env"), envExample);
+  await import_fs_extra.default.writeFile(import_node_path.default.join(projectDir, ".env.example"), envBody(""));
+  await import_fs_extra.default.writeFile(import_node_path.default.join(projectDir, ".env"), envBody(auth ? generateSecret() : ""));
   if (hasDb) {
     const dialect = database === "postgresql" ? "postgresql" : database === "mysql" ? "mysql" : "sqlite";
     const drizzleConfig = `import { defineConfig } from 'drizzle-kit';
@@ -323,7 +339,8 @@ export default defineConfig({
 `;
     await import_fs_extra.default.writeFile(import_node_path.default.join(projectDir, "drizzle.config.ts"), drizzleConfig);
   }
-  const indexTs = `import { createKozo, rateLimitGuard } from '@kozojs/core';
+  const indexTs = `import 'dotenv/config';
+import { createKozo, rateLimitGuard${auth ? ", requireSecret" : ""} } from '@kozojs/core';
 ${auth ? "import { jwtGuard } from '@kozojs/auth';" : ""}
 ${auth ? "import { registerAuthRoutes } from './routes/auth/index.js';" : ""}
 import { registerUserRoutes } from './routes/users/index.js';
@@ -334,7 +351,7 @@ ${hasDb ? "import { db } from './db/index.js';" : ""}
 
 // \u2500\u2500\u2500 Config \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 const PORT = Number(process.env.PORT) || 3000;
-${auth ? "const JWT_SECRET = process.env.JWT_SECRET || 'change-me-to-a-random-secret';" : ""}
+${auth ? "// No fallback: a missing or weak JWT_SECRET stops the boot, it does not\n// silently sign tokens with a value anyone could guess.\nconst JWT_SECRET = requireSecret('JWT_SECRET');" : ""}
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 100;
 const RATE_LIMIT_WINDOW = Number(process.env.RATE_LIMIT_WINDOW) || 60_000;
@@ -495,7 +512,7 @@ curl http://localhost:3000/health
 | Variable | Default | Description |
 |----------|---------|-------------|
 | PORT | 3000 | Server port |
-| JWT_SECRET | change-me\u2026 | HMAC secret for JWT signing |
+| JWT_SECRET | _none \u2014 required_ | HMAC secret for JWT signing. At least 32 bytes; the server will not start without it. \\\`.env\\\` was generated with a fresh one; use a different value in every other environment. |
 | CORS_ORIGIN | * | Allowed CORS origin |
 | RATE_LIMIT_MAX | 100 | Max requests per window |
 | RATE_LIMIT_WINDOW | 60000 | Window duration (ms) |
@@ -770,11 +787,14 @@ export function registerStatsRoute(app: Kozo) {
   await import_fs_extra.default.writeFile(import_node_path.default.join(projectDir, "src", "routes", "stats.ts"), statsRoute);
   const authRoutes = `import { z } from 'zod';
 import type { Kozo } from '@kozojs/core';
+import { requireSecret } from '@kozojs/core';
 import { createJWT } from '@kozojs/auth';
 import { UserSchema } from '../../schemas/user.js';
 import { users } from '../../data/store.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me-to-a-random-secret';
+// Read once at module load, with no fallback \u2014 a missing JWT_SECRET fails the
+// boot rather than the first login request.
+const JWT_SECRET = requireSecret('JWT_SECRET');
 
 export function registerAuthRoutes(app: Kozo) {
   // POST /auth/login \u2014 public (no JWT required)
@@ -1079,7 +1099,8 @@ async function createDockerCompose(dir, projectName, database, dbPort, includeAp
     environment:
       NODE_ENV: production
       DATABASE_URL: ${dbUrl}
-      JWT_SECRET: \${JWT_SECRET:-change-me-in-production}
+      # No default on purpose: compose refuses to start the stack without it.
+      JWT_SECRET: \${JWT_SECRET:?required - set JWT_SECRET in .env or the shell, at least 32 bytes}
     depends_on:
       db:
         condition: service_healthy
@@ -1114,7 +1135,8 @@ async function createDockerCompose(dir, projectName, database, dbPort, includeAp
     environment:
       NODE_ENV: production
       DATABASE_URL: ${dbUrl}
-      JWT_SECRET: \${JWT_SECRET:-change-me-in-production}
+      # No default on purpose: compose refuses to start the stack without it.
+      JWT_SECRET: \${JWT_SECRET:?required - set JWT_SECRET in .env or the shell, at least 32 bytes}
     depends_on:
       db:
         condition: service_healthy
@@ -2905,18 +2927,22 @@ export default defineConfig({
   },
 });
 `);
-    const envContent = `PORT=3000
+    const envContent = (jwtSecret) => `PORT=3000
 NODE_ENV=development
 ${dbUrl ? `DATABASE_URL=${dbUrl}
-` : ""}${auth ? "JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars\n" : ""}`;
-    await import_fs_extra4.default.writeFile(import_node_path4.default.join(apiDir, ".env"), envContent);
-    await import_fs_extra4.default.writeFile(import_node_path4.default.join(apiDir, ".env.example"), envContent);
+` : ""}${auth ? `${ENV_SECRET_HELP}
+JWT_SECRET=${jwtSecret}
+` : ""}`;
+    await import_fs_extra4.default.writeFile(import_node_path4.default.join(apiDir, ".env"), envContent(auth ? generateSecret() : ""));
+    await import_fs_extra4.default.writeFile(import_node_path4.default.join(apiDir, ".env.example"), envContent(""));
   } else {
-    const envContent = `PORT=3000
+    const envContent = (jwtSecret) => `PORT=3000
 NODE_ENV=development
-${auth ? "JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars\n" : ""}`;
-    await import_fs_extra4.default.writeFile(import_node_path4.default.join(apiDir, ".env"), envContent);
-    await import_fs_extra4.default.writeFile(import_node_path4.default.join(apiDir, ".env.example"), envContent);
+${auth ? `${ENV_SECRET_HELP}
+JWT_SECRET=${jwtSecret}
+` : ""}`;
+    await import_fs_extra4.default.writeFile(import_node_path4.default.join(apiDir, ".env"), envContent(auth ? generateSecret() : ""));
+    await import_fs_extra4.default.writeFile(import_node_path4.default.join(apiDir, ".env.example"), envContent(""));
   }
   const apiPackageJson = {
     name: `@${projectName}/api`,
@@ -2974,7 +3000,8 @@ ${auth ? "JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars\n" : ""}`;
   const authMiddleware = auth ? `
 // JWT protects all /api/* routes except public ones.
 // app.guard runs on BOTH transports (listen + nativeListen) at native speed.
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
+// requireSecret has no fallback: a missing JWT_SECRET stops the boot.
+const JWT_SECRET = requireSecret('JWT_SECRET');
 app.guard('/api/*', jwtGuard(JWT_SECRET, {
   publicPaths: ['/api/auth', '/api/health', '/api/stats'],
 }));
@@ -2984,7 +3011,7 @@ app.guard('/api/*', jwtGuard(JWT_SECRET, {
   entryServer: 'src/entry-server.tsx',
 });` : runtime === "node" ? "await app.nativeListen();" : "await app.listen();";
   await import_fs_extra4.default.outputFile(import_node_path4.default.join(apiDir, "src", "index.ts"), `import 'dotenv/config';
-import { createKozo } from '@kozojs/core';
+import { createKozo${auth ? ", requireSecret" : ""} } from '@kozojs/core';
 ${authImport}import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -3469,9 +3496,12 @@ export default async ({ params }: { params: { id: string } }) => {
 `);
   if (auth) {
     await import_fs_extra4.default.outputFile(import_node_path4.default.join(apiDir, "src", "routes", "api", "auth", "login", "post.ts"), `import { z } from 'zod';
+import { requireSecret } from '@kozojs/core';
 import { createJWT, UnauthorizedError } from '@kozojs/auth';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me';
+// Read once at module load, with no fallback \u2014 a missing JWT_SECRET fails the
+// boot rather than the first login request.
+const JWT_SECRET = requireSecret('JWT_SECRET');
 
 const DEMO_USERS = [
   { email: 'admin@demo.com', password: 'admin123', role: 'admin', name: 'Admin' },
@@ -3913,7 +3943,7 @@ var import_fs_extra6 = __toESM(require("fs-extra"));
 var import_node_path8 = __toESM(require("path"));
 
 // src/routing/manifest.ts
-var import_node_crypto = require("crypto");
+var import_node_crypto2 = require("crypto");
 var import_node_fs2 = require("fs");
 var import_node_path7 = require("path");
 var import_glob2 = require("glob");
@@ -4056,7 +4086,7 @@ async function hashRouteFiles(routesDir) {
   });
   const files = [.../* @__PURE__ */ new Set([...routeFiles, ...middlewareFiles])];
   files.sort();
-  const hash = (0, import_node_crypto.createHash)("sha256");
+  const hash = (0, import_node_crypto2.createHash)("sha256");
   for (const file of files) {
     hash.update(file);
     try {

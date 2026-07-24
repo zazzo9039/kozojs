@@ -49,13 +49,14 @@ interface AuthOptions {
  *
  * @example
  * ```ts
- * import { Kozo } from '@kozojs/core';
+ * import { Kozo, requireSecret } from '@kozojs/core';
  * import { authenticateJWT } from '@kozojs/auth';
  *
  * const app = new Kozo();
  *
- * // Protect /api routes with JWT
- * app.use('/*', authenticateJWT('my-secret-key'));
+ * // Protect /api routes with JWT. requireSecret() refuses to start without
+ * // a real JWT_SECRET, rather than falling back to a literal.
+ * app.use('/*', authenticateJWT(requireSecret('JWT_SECRET')));
  *
  * // Use with custom options
  * app.use('/*', authenticateJWT(publicKey, {
@@ -63,6 +64,10 @@ interface AuthOptions {
  *   getKey: async (header) => getKeyFromJWKS(header.kid)
  * }));
  * ```
+ *
+ * @throws when `secretOrPublicKey` is a string that Kozo has published as a
+ * placeholder, or (under `NODE_ENV=production`) is shorter than 32 bytes.
+ * The check runs here, at construction — never per request.
  */
 declare function authenticateJWT(secretOrPublicKey: string | Uint8Array, opts?: AuthOptions): (c: Context<KozoEnv>, next: Next) => Promise<void | (Response & hono.TypedResponse<{
     type: string;
@@ -187,7 +192,7 @@ interface RegisterAuthOptions extends AuthOptions {
  * version forces every covered route through the Hono bridge (~35% slower).
  *
  * @example
- * await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
+ * await registerAuthBeforeLoadRoutes(app, requireSecret('JWT_SECRET'), {
  *   routesDir: './src/routes',
  *   prefix: '/api',
  *   extraPublicPaths: ['/api/docs', '/api/docs.json'],
@@ -219,7 +224,7 @@ interface JwtGuardOptions {
  * `req.user` and to handlers via `ctx.user`).
  *
  * @example
- * app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, {
+ * app.guard('/api/*', jwtGuard(requireSecret('JWT_SECRET'), {
  *   publicPaths: ['/api/health', '/api/docs'],
  * }));
  */
@@ -245,7 +250,7 @@ interface KozoGuardAppLike {
  * `nativeListen()` — this is the recommended setup for native apps.
  *
  * @example
- * await registerAuthGuard(app, process.env.JWT_SECRET!, {
+ * await registerAuthGuard(app, requireSecret('JWT_SECRET'), {
  *   routesDir: './src/routes',
  *   extraPublicPaths: ['/api/docs', '/api/docs.json'],
  * });

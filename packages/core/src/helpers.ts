@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
+import {
+  assertStrongSecret,
+  GENERATE_SECRET_COMMAND,
+  MIN_SECRET_BYTES,
+} from './weak-secrets.js';
 
 // ============================================
 // ENV VALIDATION
@@ -29,6 +34,48 @@ export function defineEnv<T extends z.ZodRawShape>(shape: T): z.infer<z.ZodObjec
     throw new Error(`[Kozo] Invalid environment variables:\n${errors}`);
   }
   return result.data;
+}
+
+/** Options for {@link requireSecret}. */
+export interface RequireSecretOptions {
+  /**
+   * Minimum accepted length in bytes. Defaults to 32 — the SHA-256 output size,
+   * past which an HMAC-SHA256 key gains no further strength.
+   */
+  minBytes?: number;
+}
+
+/**
+ * Read a signing secret from the environment, or refuse to start.
+ *
+ * Unlike reading the variable directly and defaulting to a literal, this has no
+ * fallback: a missing, too-short or publicly-known secret throws here, at
+ * startup, instead of silently signing tokens with a value an attacker has too.
+ *
+ * Throws when the variable is unset, empty, shorter than `minBytes`, or equal
+ * to one of the secrets Kozo has itself published (see `KNOWN_WEAK_SECRETS`).
+ * Unlike the `@kozojs/auth` guards, which only warn about a short secret outside
+ * production, this is strict on every `NODE_ENV` — you asked for a secret.
+ *
+ * @example
+ * import { requireSecret } from '@kozojs/core';
+ * const secret = requireSecret('JWT_SECRET');
+ * app.guard('/api/*', jwtGuard(secret));
+ */
+export function requireSecret(name: string, options: RequireSecretOptions = {}): string {
+  const { minBytes = MIN_SECRET_BYTES } = options;
+  const value = process.env[name];
+
+  if (value === undefined) {
+    throw new Error(
+      `[Kozo] Missing required environment variable: ${name}\n` +
+        `  It must be at least ${minBytes} bytes and must not be shared or committed.\n` +
+        `  Generate one:  ${GENERATE_SECRET_COMMAND}`,
+    );
+  }
+
+  assertStrongSecret(value, { source: name, minBytes, onShort: 'throw' });
+  return value;
 }
 
 // ============================================

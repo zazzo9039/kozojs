@@ -7,9 +7,46 @@
 
 import { jwtVerify, decodeJwt, type JWTVerifyGetKey } from 'jose';
 import type { Context, Next } from 'hono';
+import { assertStrongSecret } from '@kozojs/core';
 import type { KozoEnv } from '@kozojs/core';
 
 export { KozoError, UnauthorizedError, type KozoUser } from '@kozojs/core';
+
+/**
+ * Refuse a secret that Kozo itself has published, or one too short to be worth
+ * an HMAC, before the middleware or guard is built.
+ *
+ * Deliberately construction-time: a process that will not boot is a deploy
+ * failure someone fixes in minutes, whereas one that boots and 401s every
+ * request looks like an application bug and gets debugged for an hour.
+ *
+ * Only the `string` branch is inspectable. A `Uint8Array` is raw key material —
+ * its length is the caller's business and it carries no accidental placeholder.
+ * A `getKey` resolver means the secret argument is unused (asymmetric
+ * verification), so checking it would reject a valid configuration.
+ */
+function guardSecret(
+  secretOrPublicKey: string | Uint8Array,
+  getKey: JWTVerifyGetKey | undefined,
+  source: string,
+): void {
+  if (getKey) return;
+
+  // Reading the variable with a non-null assertion used to be the documented
+  // pattern, and the assertion is a compile-time claim the runtime does not
+  // honour: an unset variable arrives here as `undefined`, and TextEncoder
+  // would turn it into a nine-byte key spelling "undefined". Do not trust
+  // the declared type.
+  if (secretOrPublicKey === undefined || secretOrPublicKey === null) {
+    throw new Error(
+      `[Kozo] ${source} received no secret — the environment variable it reads is unset.\n` +
+        `  Use requireSecret('JWT_SECRET') from @kozojs/core, which fails here instead of signing with nothing.`,
+    );
+  }
+
+  if (typeof secretOrPublicKey !== 'string') return;
+  assertStrongSecret(secretOrPublicKey, { source });
+}
 
 /**
  * Authentication options
@@ -76,20 +113,25 @@ function defaultGetToken(c: Context): string | undefined {
  * 
  * @example
  * ```ts
- * import { Kozo } from '@kozojs/core';
+ * import { Kozo, requireSecret } from '@kozojs/core';
  * import { authenticateJWT } from '@kozojs/auth';
- * 
+ *
  * const app = new Kozo();
- * 
- * // Protect /api routes with JWT
- * app.use('/*', authenticateJWT('my-secret-key'));
- * 
+ *
+ * // Protect /api routes with JWT. requireSecret() refuses to start without
+ * // a real JWT_SECRET, rather than falling back to a literal.
+ * app.use('/*', authenticateJWT(requireSecret('JWT_SECRET')));
+ *
  * // Use with custom options
  * app.use('/*', authenticateJWT(publicKey, {
  *   prefix: '/api',
  *   getKey: async (header) => getKeyFromJWKS(header.kid)
  * }));
  * ```
+ *
+ * @throws when `secretOrPublicKey` is a string that Kozo has published as a
+ * placeholder, or (under `NODE_ENV=production`) is shorter than 32 bytes.
+ * The check runs here, at construction — never per request.
  */
 export function authenticateJWT(
   secretOrPublicKey: string | Uint8Array,
@@ -103,6 +145,9 @@ export function authenticateJWT(
     allowedAlgorithms = ['HS256', 'HS384', 'HS512'] as string[],
     optional = false,
   } = opts;
+
+  // Fail the boot, not request #1, on a secret that cannot protect anything.
+  guardSecret(secretOrPublicKey, getKey, 'authenticateJWT(secret)');
 
   // Convert secret to Uint8Array if it's a string
   const key = typeof secretOrPublicKey === 'string'
@@ -421,7 +466,7 @@ async function collectPublicPaths(routesDir: string, extraPublicPaths: string[])
  * version forces every covered route through the Hono bridge (~35% slower).
  *
  * @example
- * await registerAuthBeforeLoadRoutes(app, process.env.JWT_SECRET!, {
+ * await registerAuthBeforeLoadRoutes(app, requireSecret('JWT_SECRET'), {
  *   routesDir: './src/routes',
  *   prefix: '/api',
  *   extraPublicPaths: ['/api/docs', '/api/docs.json'],
@@ -497,7 +542,7 @@ export interface JwtGuardOptions {
  * `req.user` and to handlers via `ctx.user`).
  *
  * @example
- * app.guard('/api/*', jwtGuard(process.env.JWT_SECRET!, {
+ * app.guard('/api/*', jwtGuard(requireSecret('JWT_SECRET'), {
  *   publicPaths: ['/api/health', '/api/docs'],
  * }));
  */
@@ -511,6 +556,9 @@ export function jwtGuard(
     expectedClaims,
     getKey,
   } = options;
+
+  // Fail the boot, not request #1, on a secret that cannot protect anything.
+  guardSecret(secretOrPublicKey, getKey, 'jwtGuard(secret)');
 
   const key = typeof secretOrPublicKey === 'string'
     ? new TextEncoder().encode(secretOrPublicKey)
@@ -606,7 +654,7 @@ export interface KozoGuardAppLike {
  * `nativeListen()` — this is the recommended setup for native apps.
  *
  * @example
- * await registerAuthGuard(app, process.env.JWT_SECRET!, {
+ * await registerAuthGuard(app, requireSecret('JWT_SECRET'), {
  *   routesDir: './src/routes',
  *   extraPublicPaths: ['/api/docs', '/api/docs.json'],
  * });

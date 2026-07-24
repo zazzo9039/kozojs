@@ -77,9 +77,10 @@ Use singletons for pools/clients; use `scopedServices` when state must not leak 
 Security is **guard-based** (0.5.16+): the same checks run on `listen()` and `nativeListen()` at native speed. Register guards **before** `loadRoutes()`:
 
 ```typescript
+import { requireSecret } from '@kozojs/core';
 import { registerAuthGuard, roleGuard } from '@kozojs/auth';
 
-await registerAuthGuard(app, process.env.JWT_SECRET!, {
+await registerAuthGuard(app, requireSecret('JWT_SECRET'), {
   routesDir: './src/routes',
   prefix: '',
 });
