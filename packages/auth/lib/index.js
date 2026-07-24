@@ -66,7 +66,6 @@ function authenticateJWT(secretOrPublicKey, opts = {}) {
         }
       }
       c.set("user", payload);
-      c.set("user", payload);
       await next();
     } catch (error) {
       let detail = "Invalid or expired token";
@@ -156,7 +155,10 @@ var isSelf = (c) => {
   const user = getUser(c);
   if (!user) return false;
   const paramId = c.req.param("id");
-  return user.sub === paramId || user.id === paramId;
+  if (typeof paramId !== "string" || paramId === "") return false;
+  const sub = typeof user.sub === "string" && user.sub !== "" ? user.sub : null;
+  const id = typeof user.id === "string" && user.id !== "" ? user.id : null;
+  return sub === paramId || id === paramId;
 };
 function anyOf(...guards) {
   return async (c) => {

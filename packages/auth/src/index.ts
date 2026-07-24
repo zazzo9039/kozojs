@@ -199,9 +199,6 @@ export function authenticateJWT(
 
       // Set the decoded user on the context
       c.set('user', payload);
-      
-      // Also set on hono's context for direct access
-      (c as any).set('user', payload);
 
       await next();
     } catch (error: any) {
@@ -398,7 +395,14 @@ export const isSelf: Guard = (c) => {
   const user = getUser(c);
   if (!user) return false;
   const paramId = c.req.param('id');
-  return user.sub === paramId || (user as any).id === paramId;
+  // Never compare two possibly-undefined values: on a route without an `:id`
+  // param `paramId` is undefined, and a token payload lacking `sub`/`id` would
+  // otherwise yield `undefined === undefined` → access granted (F-02). Both the
+  // param and the identity claim must be present, non-empty strings.
+  if (typeof paramId !== 'string' || paramId === '') return false;
+  const sub = typeof user.sub === 'string' && user.sub !== '' ? user.sub : null;
+  const id = typeof (user as any).id === 'string' && (user as any).id !== '' ? (user as any).id : null;
+  return sub === paramId || id === paramId;
 };
 
 /**
