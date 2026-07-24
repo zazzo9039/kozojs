@@ -2867,6 +2867,21 @@ function pipeStreamResponse(res, headPart, tailPart, pipe) {
   });
   pipe(sink);
 }
+function hasDotfileSegment(relPath) {
+  for (const seg of relPath.split(/[/\\]+/)) {
+    if (seg.startsWith(".") && seg !== "." && seg !== "..") return true;
+  }
+  return false;
+}
+var realRootCache = /* @__PURE__ */ new Map();
+async function getRealRoot(staticDir) {
+  let real = realRootCache.get(staticDir);
+  if (real === void 0) {
+    real = await fs.realpath(staticDir);
+    realRootCache.set(staticDir, real);
+  }
+  return real;
+}
 async function serveStaticFile(staticDir, urlPath, res) {
   let decoded;
   try {
@@ -2877,6 +2892,7 @@ async function serveStaticFile(staticDir, urlPath, res) {
     return true;
   }
   const safePath = path.normalize(decoded).replace(/^(\.\.[/\\])+/, "");
+  if (hasDotfileSegment(safePath)) return false;
   const filePath = path.join(staticDir, safePath);
   if (!filePath.startsWith(staticDir)) return false;
   const cached = STATIC_CACHE.get(filePath);
@@ -2897,6 +2913,8 @@ async function serveStaticFile(staticDir, urlPath, res) {
   try {
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) return false;
+    const [realFile, realRoot] = await Promise.all([fs.realpath(filePath), getRealRoot(staticDir)]);
+    if (!realFile.startsWith(realRoot + path.sep)) return false;
     const ext = path.extname(filePath).toLowerCase();
     const mime = MIME[ext] ?? "application/octet-stream";
     const headers = {

@@ -175,6 +175,31 @@ function pipeStreamResponse(
 // ── Static file serving ────────────────────────────────────────────────
 
 /**
+ * True if any segment of an (already normalized) relative path is a dotfile —
+ * `.env`, `.git/config`, `.npmrc`, editor backups. Such files are never served,
+ * matching `serve-static`'s default. `.`/`..` segments have already been
+ * collapsed by `path.normalize` + the leading-`..` strip, so in practice this
+ * only sees real dot-prefixed names; `.`/`..` are excluded defensively.
+ */
+function hasDotfileSegment(relPath: string): boolean {
+  for (const seg of relPath.split(/[/\\]+/)) {
+    if (seg.startsWith('.') && seg !== '.' && seg !== '..') return true;
+  }
+  return false;
+}
+
+/** Realpath of each static root, resolved once (symlinked deploy roots are common). */
+const realRootCache = new Map<string, string>();
+async function getRealRoot(staticDir: string): Promise<string> {
+  let real = realRootCache.get(staticDir);
+  if (real === undefined) {
+    real = await fs.realpath(staticDir);
+    realRootCache.set(staticDir, real);
+  }
+  return real;
+}
+
+/**
  * Try to serve a static file from `staticDir`.
  * Returns `true` if the file was served, `false` if it should fall through.
  */
@@ -197,9 +222,18 @@ async function serveStaticFile(
     return true; // response sent — caller must not fall through to SSR render
   }
   const safePath = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '');
+
+  // Dotfile deny: a `.env`, `.git/config`, `.npmrc` or editor backup that ends
+  // up inside the static root must not be served. Cheap string check, always
+  // run (before the cache) so a dotfile can never be cached or returned.
+  if (hasDotfileSegment(safePath)) return false;
+
   const filePath = path.join(staticDir, safePath);
 
-  // Path traversal protection
+  // Lexical traversal protection. This is adequate as-is: path.normalize on the
+  // decoded path clamps `..` at the root and path.join re-anchors under
+  // staticDir, so `%2e%2e%2f` and friends cannot escape. Symlink escapes are
+  // handled below via realpath (path.join does not resolve symlinks).
   if (!filePath.startsWith(staticDir)) return false;
 
   // Check cache first (LRU: delete + re-insert to move to end of iteration order)
@@ -222,6 +256,14 @@ async function serveStaticFile(
   try {
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) return false;
+
+    // Symlink containment: resolve the real path and confirm it stays under the
+    // real static root. A symlink inside staticDir pointing outside it
+    // (dist/client/data -> /etc) would otherwise be a filesystem read
+    // primitive. Runs only on this cache-MISS path — a cached entry was already
+    // validated here, so cache hits pay no realpath syscall.
+    const [realFile, realRoot] = await Promise.all([fs.realpath(filePath), getRealRoot(staticDir)]);
+    if (!realFile.startsWith(realRoot + path.sep)) return false;
 
     const ext = path.extname(filePath).toLowerCase();
     const mime = MIME[ext] ?? 'application/octet-stream';
