@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> ### 🔴 Rotate `JWT_SECRET` in every project generated before this release
+>
+> Projects scaffolded with `kozo create` on **0.5.21 or earlier** sign their JWTs
+> with a secret that ships inside the published npm packages. It is public
+> knowledge, so anyone can forge any token against those deployments — including
+> an admin one. **Upgrading the packages does not fix a running service.**
+>
+> For every affected deployment:
+>
+> 1. Generate a new secret:
+>    `node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"`
+> 2. Set `JWT_SECRET` to it in every environment (a different value per environment).
+> 3. Redeploy.
+> 4. Treat every token issued before the rotation as compromised — invalidate
+>    sessions and re-authenticate users. Audit access logs for the period the old
+>    secret was live.
+>
+> Affected values, in case you are grepping your own configuration:
+> `dev-secret-must-be-at-least-32-characters-long`,
+> `change-me-to-a-random-secret-at-least-32-chars`,
+> `change-me-to-a-random-secret`, `change-me-in-production`, `change-me`.
+
+### Security
+
+- **`@kozojs/auth`: `authenticateJWT` and `jwtGuard` now validate the secret at construction time**, not per request — a bad secret stops the process from starting instead of failing every request. A placeholder Kozo has published is refused on every `NODE_ENV`; an unset variable is refused; a secret shorter than 32 bytes throws under `NODE_ENV=production` and warns once otherwise. `Uint8Array` key material and asymmetric `getKey` flows are unaffected.
+- **`@kozojs/core`: new `requireSecret(name, { minBytes })`**, alongside `defineEnv`. Reads a secret from the environment with no fallback and throws at startup when it is missing, empty, under 32 bytes, or a known placeholder. Also exports `KNOWN_WEAK_SECRETS`, `isKnownWeakSecret`, `assertStrongSecret`, `secretByteLength`, `MIN_SECRET_BYTES`.
+- **`@kozojs/cli`: no template or generator emits a secret literal.** Scaffolded projects read `JWT_SECRET` through `requireSecret()`, get a freshly generated secret written into their local `.env`, and ship a `.env.example` with the field blank. Generated `docker-compose.yml` requires `JWT_SECRET` instead of defaulting it.
+
+### Changed
+
+- Starter template loads `.env` (`tsx --env-file-if-exists`), and the generated `complete` project imports `dotenv/config`, so removing the secret fallback does not leave either unable to boot.
+- Docs and READMEs use `requireSecret('JWT_SECRET')` in place of `process.env.JWT_SECRET!` — the non-null assertion is a compile-time claim only, and an unset variable reached the verifier as `undefined`.
+- `templates/` is now the single source of truth for the starter trees. `scripts/copy-cli-templates.mjs --check` runs in CI before the build and fails when `packages/cli/templates/` has drifted; a test holds `examples/file-routing/` to the same content.
+
 ## [0.5.21] — 2026-07-14
 
 > **P2 polish + post-0.5.20 fixes.** Additive DX/correctness across core, db,
