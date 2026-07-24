@@ -723,17 +723,44 @@ export default async ({ params }: { params: { id: string } }) => {
   // routes/api/auth/login/post.ts (only when auth is enabled)
   if (auth) {
     await fs.outputFile(path.join(apiDir, 'src', 'routes', 'api', 'auth', 'login', 'post.ts'), `import { z } from 'zod';
+import { scrypt, randomBytes, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 import { requireSecret } from '@kozojs/core';
 import { createJWT, UnauthorizedError } from '@kozojs/auth';
 
 // Read once at module load, with no fallback — a missing JWT_SECRET fails the
 // boot rather than the first login request.
 const JWT_SECRET = requireSecret('JWT_SECRET');
+const scryptAsync = promisify(scrypt);
 
-const DEMO_USERS = [
-  { email: 'admin@demo.com', password: 'admin123', role: 'admin', name: 'Admin' },
-  { email: 'user@demo.com', password: 'user123', role: 'user', name: 'User' },
-];
+// scrypt password hashing — no external dependency. The cost parameters are
+// stored in each hash, so they can be raised later without invalidating hashes
+// already on disk. The format is: scrypt$N$r$p$salt$key (salt and key base64url).
+async function hashPassword(pw: string): Promise<string> {
+  const salt = randomBytes(16);
+  const key = (await scryptAsync(pw, salt, 32, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 })) as Buffer;
+  return 'scrypt$32768$8$1$' + salt.toString('base64url') + '$' + key.toString('base64url');
+}
+async function verifyPassword(pw: string, stored: string): Promise<boolean> {
+  const parts = stored.split('$');
+  if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
+  const salt = Buffer.from(parts[4], 'base64url');
+  const expected = Buffer.from(parts[5], 'base64url');
+  if (expected.length === 0) return false;
+  const key = (await scryptAsync(pw, salt, expected.length, {
+    N: Number(parts[1]), r: Number(parts[2]), p: Number(parts[3]), maxmem: 64 * 1024 * 1024,
+  })) as Buffer;
+  return key.length === expected.length && timingSafeEqual(key, expected);
+}
+
+// Demo accounts. The passwords below are what you log in with; they are hashed
+// at startup and are never stored or compared in plaintext.
+const DEMO_USERS = await Promise.all(
+  [
+    { email: 'admin@demo.com', password: 'admin123', role: 'admin', name: 'Admin' },
+    { email: 'user@demo.com', password: 'user123', role: 'user', name: 'User' },
+  ].map(async (u) => ({ ...u, password: await hashPassword(u.password) })),
+);
 
 export const schema = {
   body: z.object({
@@ -751,8 +778,10 @@ export const schema = {
 };
 
 export default async ({ body }: { body: { email: string; password: string } }) => {
-  const user = DEMO_USERS.find(u => u.email === body.email && u.password === body.password);
-  if (!user) throw new UnauthorizedError('Invalid credentials');
+  const user = DEMO_USERS.find(u => u.email === body.email);
+  if (!user || !(await verifyPassword(body.password, user.password))) {
+    throw new UnauthorizedError('Invalid credentials');
+  }
   const token = await createJWT(
     { email: user.email, role: user.role, name: user.name },
     JWT_SECRET,

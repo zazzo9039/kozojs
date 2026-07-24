@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AppServices } from '../../services.js';
+import type { AppServices } from '../../../services.js';
 
 export const meta = { auth: false, tags: ['auth'] };
 
@@ -14,9 +14,10 @@ export const schema = {
   response: z.object({ id: z.string(), name: z.string(), email: z.string(), role: z.string() }),
 };
 
-export default (ctx: { body: z.infer<typeof RegisterSchema>; services: AppServices }) => {
+export default async (ctx: { body: z.infer<typeof RegisterSchema>; services: AppServices }) => {
   if (ctx.services.users.findByEmail(ctx.body.email)) {
     return ctx.json({ detail: 'Email already registered' }, 409);
   }
+  // create() hashes the password before storing it (see services.ts).
   return ctx.services.users.create({ ...ctx.body, role: 'user' });
 };

@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { requireSecret } from '@kozojs/core';
 import { createJWT } from '@kozojs/auth';
-import type { AppServices } from '../../services.js';
+import { verifyPassword } from '../../../lib/password.js';
+import type { AppServices } from '../../../services.js';
 
 export const meta = { auth: false, tags: ['auth'] };
 
@@ -21,7 +22,7 @@ export const schema = {
 
 export default async (ctx: { body: z.infer<typeof LoginSchema>; services: AppServices }) => {
   const user = ctx.services.users.findByEmail(ctx.body.email);
-  if (!user || user.password !== ctx.body.password) {
+  if (!user || !(await verifyPassword(ctx.body.password, user.password))) {
     return ctx.json({ detail: 'Invalid credentials' }, 401);
   }
   const token = await createJWT(
