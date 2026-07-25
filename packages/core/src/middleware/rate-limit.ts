@@ -1,6 +1,11 @@
 import type { Context, Next } from 'hono';
 import type { GuardRequest, KozoGuard } from '../guard.js';
-import { resolveClientIp, type TrustProxy, type ClientAddressSource } from '../client-ip.js';
+import {
+  honoConnectionAddress,
+  resolveClientIp,
+  type TrustProxy,
+  type ClientAddressSource,
+} from '../client-ip.js';
 
 // ── Store interface ──────────────────────────────────────────────────────────
 
@@ -24,9 +29,8 @@ export interface RateLimitStore {
 
 /** Adapt a Hono context to the transport-agnostic client-address source. */
 function honoSource(c: Context): ClientAddressSource {
-  const raw = c.req.raw as { socket?: { remoteAddress?: string } } | undefined;
   return {
-    connectionAddress: raw?.socket?.remoteAddress ?? '',
+    connectionAddress: honoConnectionAddress(c),
     header: (name) => c.req.header(name),
   };
 }
@@ -41,8 +45,6 @@ function guardSource(req: GuardRequest): ClientAddressSource {
 
 // ── In-memory store (default) ────────────────────────────────────────────────
 
-const memoryMap = new Map<string, RateLimitStoreRecord>();
-
 /**
  * Hard cap on distinct keys held in memory. Without it, an attacker rotating a
  * spoofed identity inserts one live record per request and the 60s sweep never
@@ -56,7 +58,9 @@ const MAX_MEMORY_KEYS = 100_000;
 /** Live cap; overridable in tests via {@link _setMaxMemoryKeysForTest}. */
 let maxMemoryKeys = MAX_MEMORY_KEYS;
 
+const memoryMap = new Map<string, RateLimitStoreRecord>();
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
+let nextLimiterId = 1;
 
 function ensureCleanup(): void {
   if (cleanupTimer) return;
@@ -73,7 +77,7 @@ function ensureCleanup(): void {
   cleanupTimer.unref();
 }
 
-/** Drop oldest-inserted keys until the store is back within the cap. */
+/** Drop oldest-inserted keys until the global store is back within the cap. */
 function evictIfNeeded(): void {
   if (memoryMap.size <= maxMemoryKeys) return;
   let overflow = memoryMap.size - maxMemoryKeys;
@@ -83,7 +87,7 @@ function evictIfNeeded(): void {
   }
 }
 
-const memoryStore: RateLimitStore = {
+const sharedMemoryStore: RateLimitStore = {
   async increment(key, windowMs) {
     const now = Date.now();
     let record = memoryMap.get(key);
@@ -100,6 +104,20 @@ const memoryStore: RateLimitStore = {
     memoryMap.delete(key);
   },
 };
+
+/**
+ * Namespace one limiter inside the globally bounded in-memory store.
+ *
+ * The namespace prevents unrelated policies from sharing counters, while the
+ * single backing map preserves the process-wide memory cap from F-09.
+ */
+function createMemoryStore(): RateLimitStore {
+  const prefix = `limiter:${nextLimiterId++}:`;
+  return {
+    increment: (key, windowMs) => sharedMemoryStore.increment(prefix + key, windowMs),
+    reset: (key) => sharedMemoryStore.reset(prefix + key),
+  };
+}
 
 /** Seconds until the window resets, floored at 0 — the `Retry-After` value. */
 function retryAfterSeconds(record: RateLimitStoreRecord): number {
@@ -142,7 +160,7 @@ export function rateLimit(options: RateLimitOptions) {
     trustProxy = false,
     keyGenerator = (c: Context) => resolveClientIp(honoSource(c), trustProxy),
     message = 'Too many requests',
-    store = memoryStore,
+    store = createMemoryStore(),
   } = options;
 
   const windowMs = window * 1000;
@@ -194,7 +212,7 @@ export function rateLimitGuard(options: RateLimitGuardOptions): KozoGuard {
     trustProxy = false,
     keyGenerator = (req: GuardRequest) => resolveClientIp(guardSource(req), trustProxy),
     message = 'Too many requests',
-    store = memoryStore,
+    store = createMemoryStore(),
   } = options;
 
   const windowMs = window * 1000;
@@ -219,7 +237,8 @@ export function rateLimitGuard(options: RateLimitGuardOptions): KozoGuard {
  */
 export function clearRateLimitStore() {
   memoryMap.clear();
-  if (cleanupTimer) { clearInterval(cleanupTimer); cleanupTimer = null; }
+  if (cleanupTimer) clearInterval(cleanupTimer);
+  cleanupTimer = null;
 }
 
 // ── Test seams (not part of the public API) ─────────────────────────────────

@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/auth",
-  "version": "0.5.22",
+  "version": "0.5.23",
   "description": "Authentication for Kozo that stays on the native uWebSockets fast path — JWT guards, roles, no bridge tax.",
   "type": "module",
   "engines": {
@@ -53,7 +53,7 @@
     "vitest": "^2.1.0"
   },
   "peerDependencies": {
-    "@kozojs/core": "^0.5.22",
+    "@kozojs/core": "^0.5.23",
     "hono": "^4.0.0"
   }
 }

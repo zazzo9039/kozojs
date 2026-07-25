@@ -143,7 +143,7 @@ describe('JWT Authentication', () => {
 
     it('should return 401 for invalid signature', async () => {
       const payload = { sub: 'user123' };
-      const token = await createJWT(payload, 'wrong-secret');
+      const token = await createJWT(payload, 'wrong-secret-that-is-at-least-32-bytes');
       
       app.use('/*', authenticateJWT(TEST_SECRET));
       app.get('/api/test', (c) => c.json({ ok: true }));

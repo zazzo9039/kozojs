@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/queue",
-  "version": "0.5.22",
+  "version": "0.5.23",
   "description": "Multi-backend job queue integration for Kozo framework — Redis (BullMQ) and AMQP (RabbitMQ)",
   "type": "module",
   "main": "./lib/index.js",
@@ -48,7 +48,7 @@
   },
   "dependencies": {},
   "peerDependencies": {
-    "@kozojs/core": "^0.5.22",
+    "@kozojs/core": "^0.5.23",
     "bullmq": "^5.0.0",
     "amqplib": "^0.10.0"
   },

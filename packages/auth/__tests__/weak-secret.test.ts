@@ -11,7 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { KNOWN_WEAK_SECRETS } from '@kozojs/core';
-import { authenticateJWT, jwtGuard } from '../src/index.js';
+import { authenticateJWT, createJWT, jwtGuard } from '../src/index.js';
 
 /** 48 random bytes → 64 base64url chars. Comfortably over the 32-byte floor. */
 const strongSecret = () => randomBytes(48).toString('base64url');
@@ -100,17 +100,24 @@ describe('short secrets', () => {
   });
 });
 
-describe('non-string key material is left alone', () => {
-  it('accepts a Uint8Array, even one that spells a weak literal', () => {
+describe('non-string HMAC key material', () => {
+  it('refuses a Uint8Array that spells a known-weak literal', () => {
     const bytes = new TextEncoder().encode('change-me-in-production');
-    expect(() => jwtGuard(bytes)).not.toThrow();
-    expect(() => authenticateJWT(bytes)).not.toThrow();
+    expect(() => jwtGuard(bytes)).toThrow(/ships publicly with Kozo/);
+    expect(() => authenticateJWT(bytes)).toThrow(/ships publicly with Kozo/);
   });
 
-  it('accepts a short Uint8Array under NODE_ENV=production', () => {
+  it('refuses a short Uint8Array under NODE_ENV=production', () => {
     process.env.NODE_ENV = 'production';
-    expect(() => jwtGuard(randomBytes(8))).not.toThrow();
-    expect(() => authenticateJWT(randomBytes(8))).not.toThrow();
+    expect(() => jwtGuard(randomBytes(8))).toThrow(/at least 32/);
+    expect(() => authenticateJWT(randomBytes(8))).toThrow(/at least 32/);
+  });
+
+  it('accepts sufficiently long random byte key material', () => {
+    process.env.NODE_ENV = 'production';
+    const bytes = randomBytes(48);
+    expect(() => jwtGuard(bytes)).not.toThrow();
+    expect(() => authenticateJWT(bytes)).not.toThrow();
   });
 
   it('skips the check entirely when an asymmetric getKey resolver is supplied', () => {
@@ -120,6 +127,29 @@ describe('non-string key material is left alone', () => {
     }) as never;
     expect(() => jwtGuard('change-me', { getKey })).not.toThrow();
     expect(() => authenticateJWT('change-me', { getKey })).not.toThrow();
+  });
+});
+
+describe('createJWT signing secret policy', () => {
+  it('refuses a known-weak signing secret in every environment', async () => {
+    for (const env of ['production', 'development', 'test']) {
+      process.env.NODE_ENV = env;
+      await expect(createJWT({ sub: 'u1' }, 'change-me')).rejects.toThrow(
+        /ships publicly with Kozo/,
+      );
+    }
+  });
+
+  it('refuses a short signing secret in production', async () => {
+    process.env.NODE_ENV = 'production';
+    await expect(createJWT({ sub: 'u1' }, shortSecret())).rejects.toThrow(/at least 32/);
+  });
+
+  it('accepts a freshly generated signing secret', async () => {
+    process.env.NODE_ENV = 'production';
+    await expect(createJWT({ sub: 'u1' }, strongSecret())).resolves.toMatch(
+      /^[^.]+\.[^.]+\.[^.]+$/,
+    );
   });
 });
 

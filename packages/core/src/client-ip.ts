@@ -28,6 +28,29 @@ export interface ClientAddressSource {
   header(name: string): string | undefined;
 }
 
+/**
+ * Read the direct peer address from a Hono context without consulting
+ * client-controlled forwarding headers.
+ *
+ * `@hono/node-server` exposes the Node IncomingMessage through
+ * `c.env.incoming` (or `c.env.server.incoming`), not through
+ * `c.req.raw.socket`. Some other adapters do attach a socket to the raw
+ * Request, so that remains a safe fallback.
+ */
+export function honoConnectionAddress(context: unknown): string {
+  const c = context as {
+    env?: {
+      incoming?: { socket?: { remoteAddress?: string } };
+      server?: { incoming?: { socket?: { remoteAddress?: string } } };
+    };
+    req?: { raw?: { socket?: { remoteAddress?: string } } };
+  };
+  const bindings = c.env?.server ?? c.env;
+  return bindings?.incoming?.socket?.remoteAddress
+    ?? c.req?.raw?.socket?.remoteAddress
+    ?? '';
+}
+
 /** Normalize `trustProxy` to the number of trusted hops (0 ⇒ do not trust headers). */
 function trustedHops(trustProxy: TrustProxy): number {
   if (trustProxy === true) return 1;

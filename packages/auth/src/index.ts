@@ -20,10 +20,9 @@ export { KozoError, UnauthorizedError, type KozoUser } from '@kozojs/core';
  * failure someone fixes in minutes, whereas one that boots and 401s every
  * request looks like an application bug and gets debugged for an hour.
  *
- * Only the `string` branch is inspectable. A `Uint8Array` is raw key material —
- * its length is the caller's business and it carries no accidental placeholder.
- * A `getKey` resolver means the secret argument is unused (asymmetric
- * verification), so checking it would reject a valid configuration.
+ * String and raw byte keys both need enough entropy for HMAC. A `getKey`
+ * resolver means the secret argument is unused (asymmetric verification), so
+ * checking it would reject a valid configuration.
  */
 function guardSecret(
   secretOrPublicKey: string | Uint8Array,
@@ -44,7 +43,6 @@ function guardSecret(
     );
   }
 
-  if (typeof secretOrPublicKey !== 'string') return;
   assertStrongSecret(secretOrPublicKey, { source });
 }
 
@@ -244,6 +242,7 @@ export async function createJWT(
 ): Promise<string> {
   const { SignJWT } = await import('jose');
 
+  assertStrongSecret(secret, { source: 'createJWT(secret)' });
   const key = new TextEncoder().encode(secret);
 
   return new SignJWT(payload)

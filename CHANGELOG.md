@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.23] — 2026-07-25
+
+### Security
+
+- Rate limiting now uses the direct Hono connection address and ignores
+  client-controlled forwarding headers unless proxy trust is explicitly enabled.
+- Independent in-memory limiter policies no longer share counters, while the
+  process-wide store remains bounded.
+- JWT secret checks now cover `Uint8Array` keys and direct `createJWT` calls.
+- Filesystem middleware loading fails closed when a middleware module cannot be
+  imported.
+
+### CI
+
+- Manual npm publishing has a dedicated, non-cancelling concurrency group, so a
+  push cannot interrupt a release partway through the package sequence.
+
+## [0.5.22] — 2026-07-24
+
 > ### 🔴 Rotate `JWT_SECRET` in every project generated before this release
 >
 > Projects scaffolded with `kozo create` on **0.5.21 or earlier** sign their JWTs

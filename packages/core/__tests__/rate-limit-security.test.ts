@@ -18,7 +18,11 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
+import { serve } from '@hono/node-server';
+import { once } from 'node:events';
+import { request as httpRequest } from 'node:http';
 import { resolveClientIp, type ClientAddressSource } from '../src/client-ip.js';
+import { guardToHonoMiddleware } from '../src/guard.js';
 import {
   rateLimit,
   rateLimitGuard,
@@ -27,6 +31,43 @@ import {
   _setMaxMemoryKeysForTest,
 } from '../src/middleware/rate-limit.js';
 import type { GuardRequest } from '../src/guard.js';
+
+async function startNodeServer(app: Hono): Promise<{
+  server: ReturnType<typeof serve>;
+  port: number;
+}> {
+  const server = serve({ fetch: app.fetch, port: 0 });
+  await once(server, 'listening');
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Expected an ephemeral TCP port');
+  return { server, port: address.port };
+}
+
+function nodeRequest(
+  port: number,
+  options: { localAddress?: string; headers?: Record<string, string> } = {},
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({
+      hostname: '127.0.0.1',
+      port,
+      path: '/',
+      localAddress: options.localAddress,
+      headers: options.headers,
+    }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode ?? 0));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+async function closeNodeServer(server: ReturnType<typeof serve>): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => err ? reject(err) : resolve());
+  });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // A source builder: a fixed connection address + a header bag.
@@ -143,6 +184,80 @@ describe('rateLimit middleware — F-08 header-rotation bypass is closed', () =>
     expect((await hit('client-a')).status).toBe(200); // a: 1st
     expect((await hit('client-b')).status).toBe(200); // b: 1st, separate bucket
     expect((await hit('client-a')).status).toBe(429); // a: 2nd → over max 1
+  });
+});
+
+describe('real @hono/node-server connection identity', () => {
+  beforeEach(() => clearRateLimitStore());
+  afterEach(() => clearRateLimitStore());
+
+  it('keeps distinct direct connections in distinct middleware buckets', async () => {
+    const app = new Hono();
+    app.use('*', rateLimit({ max: 1, window: 60 }));
+    app.get('/', (c) => c.text('ok'));
+    const { server, port } = await startNodeServer(app);
+
+    try {
+      expect(await nodeRequest(port, { localAddress: '127.0.0.1' })).toBe(200);
+      expect(await nodeRequest(port, { localAddress: '127.0.0.2' })).toBe(200);
+    } finally {
+      await closeNodeServer(server);
+    }
+  });
+
+  it('does not let rotating X-Forwarded-For bypass rateLimitGuard by default', async () => {
+    const app = new Hono();
+    app.use('*', guardToHonoMiddleware(rateLimitGuard({ max: 1, window: 60 })));
+    app.get('/', (c) => c.text('ok'));
+    const { server, port } = await startNodeServer(app);
+
+    try {
+      expect(await nodeRequest(port, { headers: { 'x-forwarded-for': '1.1.1.1' } })).toBe(200);
+      expect(await nodeRequest(port, { headers: { 'x-forwarded-for': '2.2.2.2' } })).toBe(429);
+      expect(await nodeRequest(port, { headers: { 'x-forwarded-for': '3.3.3.3' } })).toBe(429);
+    } finally {
+      await closeNodeServer(server);
+    }
+  });
+});
+
+describe('default in-memory stores are isolated per limiter', () => {
+  beforeEach(() => clearRateLimitStore());
+  afterEach(() => clearRateLimitStore());
+
+  it('traffic counted by one policy cannot exhaust another policy', async () => {
+    const app = new Hono();
+    app.use('/a', rateLimit({ max: 10, window: 60, keyGenerator: () => 'same-client' }));
+    app.use('/b', rateLimit({ max: 1, window: 60, keyGenerator: () => 'same-client' }));
+    app.get('/a', (c) => c.text('a'));
+    app.get('/b', (c) => c.text('b'));
+
+    expect((await app.request('/a')).status).toBe(200);
+    expect((await app.request('/b')).status).toBe(200);
+    expect((await app.request('/b')).status).toBe(429);
+  });
+
+  it('keeps the memory cap global across isolated limiter namespaces', async () => {
+    const previousCap = _setMaxMemoryKeysForTest(5);
+    const a = rateLimitGuard({ max: 100, window: 60 });
+    const b = rateLimitGuard({ max: 100, window: 60 });
+    const req = (ip: string): GuardRequest => ({
+      method: 'GET',
+      path: '/',
+      url: '/',
+      remoteAddress: ip,
+      params: {},
+      user: null,
+      header: () => undefined,
+    });
+
+    try {
+      for (let i = 0; i < 4; i++) await a(req(`10.0.0.${i}`));
+      for (let i = 0; i < 4; i++) await b(req(`10.0.1.${i}`));
+      expect(_memoryStoreSize()).toBe(5);
+    } finally {
+      _setMaxMemoryKeysForTest(previousCap);
+    }
   });
 });
 

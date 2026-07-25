@@ -12,8 +12,8 @@
  *
  * Consumers:
  * - `requireSecret()` in `helpers.ts` — strict, for application startup.
- * - `authenticateJWT()` / `jwtGuard()` in `@kozojs/auth` — construction-time,
- *   so a bad secret fails the boot rather than the first request.
+ * - `authenticateJWT()` / `jwtGuard()` / `createJWT()` in `@kozojs/auth` —
+ *   construction/signing-time, so a bad secret fails before it protects data.
  */
 
 import { createHash } from 'node:crypto';
@@ -77,8 +77,8 @@ export function secretByteLength(value: string): number {
  */
 const warned = new Set<string>();
 
-function fingerprint(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('hex').slice(0, 16);
+function fingerprint(value: string | Uint8Array): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
 
 function hint(): string {
@@ -115,10 +115,19 @@ export interface AssertStrongSecretOptions {
  * refuses to boot is a fixable incident; one that boots and 500s on request 1
  * is an outage.
  */
-export function assertStrongSecret(value: string, options: AssertStrongSecretOptions): void {
+export function assertStrongSecret(
+  value: string | Uint8Array,
+  options: AssertStrongSecretOptions,
+): void {
   const { source, minBytes = MIN_SECRET_BYTES, onShort = 'auto' } = options;
 
-  if (isKnownWeakSecret(value)) {
+  const knownWeak = typeof value === 'string'
+    ? isKnownWeakSecret(value)
+    : [...KNOWN_WEAK_SECRETS].some((weak) =>
+        Buffer.from(weak, 'utf8').equals(Buffer.from(value)),
+      );
+
+  if (knownWeak) {
     throw new Error(
       `[Kozo] ${source} is set to a secret that ships publicly with Kozo.\n` +
         `  That value is in the published packages, so anyone can forge a token for this service — including an admin one.\n` +
@@ -127,7 +136,7 @@ export function assertStrongSecret(value: string, options: AssertStrongSecretOpt
     );
   }
 
-  const bytes = secretByteLength(value);
+  const bytes = typeof value === 'string' ? secretByteLength(value) : value.byteLength;
   if (bytes >= minBytes) return;
 
   const problem =

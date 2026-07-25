@@ -1,5 +1,18 @@
 # @kozojs/core
 
+## 0.5.23
+
+### Patch Changes
+
+- Rate limiting now derives direct connection addresses correctly under Hono,
+  ignores spoofed forwarding headers unless proxy trust is explicitly enabled,
+  and isolates the default in-memory counters of independent limiter policies
+  while retaining a process-wide memory bound.
+- Filesystem middleware loading now fails closed instead of silently starting
+  without a route's middleware.
+- `assertStrongSecret` now validates string and `Uint8Array` key material
+  consistently.
+
 ## 0.5.22
 
 ### Patch Changes

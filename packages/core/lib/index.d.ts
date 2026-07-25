@@ -1218,8 +1218,8 @@ declare const deletedSchema: z.ZodObject<{
  *
  * Consumers:
  * - `requireSecret()` in `helpers.ts` — strict, for application startup.
- * - `authenticateJWT()` / `jwtGuard()` in `@kozojs/auth` — construction-time,
- *   so a bad secret fails the boot rather than the first request.
+ * - `authenticateJWT()` / `jwtGuard()` / `createJWT()` in `@kozojs/auth` —
+ *   construction/signing-time, so a bad secret fails before it protects data.
  */
 /**
  * Minimum accepted secret length, in bytes.
@@ -1283,6 +1283,6 @@ interface AssertStrongSecretOptions {
  * refuses to boot is a fixable incident; one that boots and 500s on request 1
  * is an outage.
  */
-declare function assertStrongSecret(value: string, options: AssertStrongSecretOptions): void;
+declare function assertStrongSecret(value: string | Uint8Array, options: AssertStrongSecretOptions): void;
 
 export { type AssertStrongSecretOptions, BadRequestError, type ClientGeneratorOptions, type CompiledRoute, ConflictError, type DefineKozoAppOptions, ERROR_RESPONSES, ForbiddenError, GENERATE_SECRET_COMMAND, GoneError, type InflightTracker, KNOWN_WEAK_SECRETS, KOZO_CONFIG_CANDIDATES, KOZO_TYPES_CANDIDATES, KOZO_TYPES_OUTPUT, Kozo, type KozoAppDefinition, type KozoAppHooks, type KozoAppTypesRef, KozoConfig, KozoEnv, KozoError, KozoGroup, KozoGuard, KozoHandler, KozoRequest, type KozoWebSocket, MIN_SECRET_BYTES, MiddlewareDefinition, type MountDocsOptions, NativeKozoContext, NotFoundError, type OpenAPIConfig, OpenAPIGenerator, type OpenAPIInfo, type OpenAPISpec, type PaginatedResult, type Plugin, type ProblemDetails, type RequireSecretOptions, ResolvedRouteModule, type RouteInfo, RouteMeta, RouteModule, RouteSchema, SchemaCompiler, Services, ShutdownManager, type ShutdownOptions, type ShutdownState, type SsrConfig, type SsrRenderFn, type SsrRenderResult, UnauthorizedError, type ValidationError, ValidationFailedError, type WebSocketHandler, type WsUpgradeRequest, assertStrongSecret, buildKozoApp, buildNativeContext, compileRouteHandler, createInflightTracker, createKozo, createOpenAPIGenerator, createShutdownManager, createSsrServer, defineEnv, defineKozoApp, deletedSchema, fastCL, fastWrite400, fastWrite404, fastWrite500, fastWriteError, fastWriteHtml, fastWriteJson, fastWriteJsonStatus, fastWriteText, fileToPath, forbiddenResponse, formatZodErrors, generateSwaggerHtml, generateTypedClient, idParams, internalErrorResponse, isKnownWeakSecret, isMiddlewareFile, isRouteFile, notFoundResponse, paginate, paginationSchema, renderKozoTypesDts, requireSecret, resolveRouteModule, scanMiddleware, scanRoutes, searchSchema, secretByteLength, sortSchema, successSchema, timestamps, trackRequest, unauthorizedResponse, uuid, uuidParams, validationErrorResponse };

@@ -237,7 +237,10 @@ export async function scanMiddleware(options: ScanOptions): Promise<MiddlewareDe
         console.log(`   🛡️  ${pathPrefix.padEnd(30)} ← ${file}`);
       }
     } catch (err) {
-      console.error(`❌ Failed to load middleware ${file}:`, (err as Error).message);
+      throw new Error(
+        `[Kozo] Failed to load middleware ${file}: ${(err as Error).message}`,
+        { cause: err },
+      );
     }
   }
 

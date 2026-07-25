@@ -2091,6 +2091,11 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope, max
 }
 
 // src/client-ip.ts
+function honoConnectionAddress(context) {
+  const c = context;
+  const bindings = c.env?.server ?? c.env;
+  return bindings?.incoming?.socket?.remoteAddress ?? c.req?.raw?.socket?.remoteAddress ?? "";
+}
 function trustedHops(trustProxy) {
   if (trustProxy === true) return 1;
   if (typeof trustProxy === "number" && Number.isInteger(trustProxy) && trustProxy > 0) {
@@ -2115,9 +2120,8 @@ function resolveClientIp(source, trustProxy) {
 
 // src/middleware/rate-limit.ts
 function honoSource(c) {
-  const raw = c.req.raw;
   return {
-    connectionAddress: raw?.socket?.remoteAddress ?? "",
+    connectionAddress: honoConnectionAddress(c),
     header: (name) => c.req.header(name)
   };
 }
@@ -2127,10 +2131,11 @@ function guardSource(req) {
     header: (name) => req.header(name)
   };
 }
-var memoryMap = /* @__PURE__ */ new Map();
 var MAX_MEMORY_KEYS = 1e5;
 var maxMemoryKeys = MAX_MEMORY_KEYS;
+var memoryMap = /* @__PURE__ */ new Map();
 var cleanupTimer = null;
+var nextLimiterId = 1;
 function ensureCleanup() {
   if (cleanupTimer) return;
   cleanupTimer = setInterval(() => {
@@ -2153,7 +2158,7 @@ function evictIfNeeded() {
     if (--overflow <= 0) break;
   }
 }
-var memoryStore = {
+var sharedMemoryStore = {
   async increment(key, windowMs) {
     const now = Date.now();
     let record = memoryMap.get(key);
@@ -2170,6 +2175,13 @@ var memoryStore = {
     memoryMap.delete(key);
   }
 };
+function createMemoryStore() {
+  const prefix = `limiter:${nextLimiterId++}:`;
+  return {
+    increment: (key, windowMs) => sharedMemoryStore.increment(prefix + key, windowMs),
+    reset: (key) => sharedMemoryStore.reset(prefix + key)
+  };
+}
 function retryAfterSeconds(record) {
   return Math.max(0, Math.ceil((record.resetAt - Date.now()) / 1e3));
 }
@@ -2180,7 +2192,7 @@ function rateLimit(options) {
     trustProxy = false,
     keyGenerator = (c) => resolveClientIp(honoSource(c), trustProxy),
     message = "Too many requests",
-    store = memoryStore
+    store = createMemoryStore()
   } = options;
   const windowMs = window * 1e3;
   return async (c, next) => {
@@ -2203,7 +2215,7 @@ function rateLimitGuard(options) {
     trustProxy = false,
     keyGenerator = (req) => resolveClientIp(guardSource(req), trustProxy),
     message = "Too many requests",
-    store = memoryStore
+    store = createMemoryStore()
   } = options;
   const windowMs = window * 1e3;
   return async (req) => {
@@ -2222,10 +2234,8 @@ function rateLimitGuard(options) {
 }
 function clearRateLimitStore() {
   memoryMap.clear();
-  if (cleanupTimer) {
-    clearInterval(cleanupTimer);
-    cleanupTimer = null;
-  }
+  if (cleanupTimer) clearInterval(cleanupTimer);
+  cleanupTimer = null;
 }
 
 // src/shutdown.ts
@@ -2645,7 +2655,10 @@ async function scanMiddleware(options) {
         console.log(`   \u{1F6E1}\uFE0F  ${pathPrefix.padEnd(30)} \u2190 ${file}`);
       }
     } catch (err) {
-      console.error(`\u274C Failed to load middleware ${file}:`, err.message);
+      throw new Error(
+        `[Kozo] Failed to load middleware ${file}: ${err.message}`,
+        { cause: err }
+      );
     }
   }
   definitions.sort((a, b) => {
@@ -2724,10 +2737,7 @@ function honoUser(c) {
   }
 }
 function honoRemoteAddress(c) {
-  const raw = c.req.raw;
-  const direct = raw?.socket?.remoteAddress;
-  if (direct) return direct;
-  return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? "";
+  return honoConnectionAddress(c);
 }
 function compileGuards(entries) {
   return entries.map((e) => ({ re: compileGuardPattern(e.pattern), guard: e.guard }));
@@ -4244,14 +4254,17 @@ function secretByteLength(value) {
 }
 var warned = /* @__PURE__ */ new Set();
 function fingerprint(value) {
-  return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 16);
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 function hint() {
   return `  Generate one:  ${GENERATE_SECRET_COMMAND}`;
 }
 function assertStrongSecret(value, options) {
   const { source, minBytes = MIN_SECRET_BYTES, onShort = "auto" } = options;
-  if (isKnownWeakSecret(value)) {
+  const knownWeak = typeof value === "string" ? isKnownWeakSecret(value) : [...KNOWN_WEAK_SECRETS].some(
+    (weak) => Buffer.from(weak, "utf8").equals(Buffer.from(value))
+  );
+  if (knownWeak) {
     throw new Error(
       `[Kozo] ${source} is set to a secret that ships publicly with Kozo.
   That value is in the published packages, so anyone can forge a token for this service \u2014 including an admin one.
@@ -4259,7 +4272,7 @@ function assertStrongSecret(value, options) {
 ` + hint()
     );
   }
-  const bytes = secretByteLength(value);
+  const bytes = typeof value === "string" ? secretByteLength(value) : value.byteLength;
   if (bytes >= minBytes) return;
   const problem = bytes === 0 ? `${source} is empty` : `${source} is ${bytes} byte${bytes === 1 ? "" : "s"} long; at least ${minBytes} are required`;
   if (bytes === 0 || onShort === "throw" || process.env.NODE_ENV === "production") {

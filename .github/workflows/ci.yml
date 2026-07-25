@@ -17,8 +17,10 @@ on:
         default: false
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Verification runs remain replaceable, but a manual publish has its own
+  # queue and is never cancelled mid-loop by a push to main.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.publish) }}
 
 permissions:
   contents: read

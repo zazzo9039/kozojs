@@ -10,7 +10,6 @@ function guardSecret(secretOrPublicKey, getKey, source) {
   Use requireSecret('JWT_SECRET') from @kozojs/core, which fails here instead of signing with nothing.`
     );
   }
-  if (typeof secretOrPublicKey !== "string") return;
   assertStrongSecret(secretOrPublicKey, { source });
 }
 function defaultGetToken(c) {
@@ -93,6 +92,7 @@ function authenticateJWT(secretOrPublicKey, opts = {}) {
 }
 async function createJWT(payload, secret, options = {}) {
   const { SignJWT } = await import("jose");
+  assertStrongSecret(secret, { source: "createJWT(secret)" });
   const key = new TextEncoder().encode(secret);
   return new SignJWT(payload).setProtectedHeader({ alg: options.algorithm || "HS256" }).setIssuedAt().setExpirationTime(options.expiresIn || "1h").sign(key);
 }

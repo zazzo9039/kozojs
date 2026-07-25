@@ -23,6 +23,7 @@
 
 import type { Context, MiddlewareHandler } from 'hono';
 import type { KozoEnv } from './types.js';
+import { honoConnectionAddress } from './client-ip.js';
 import type { UwsNativeHandler } from './uws-transport.js';
 import {
   uwsCorkRespond,
@@ -167,12 +168,10 @@ function honoUser(c: Context<KozoEnv>): unknown {
 }
 
 function honoRemoteAddress(c: Context<KozoEnv>): string {
-  const raw = c.req.raw as { socket?: { remoteAddress?: string } } | undefined;
-  const direct = raw?.socket?.remoteAddress;
-  if (direct) return direct;
-  return c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
-    ?? c.req.header('x-real-ip')
-    ?? '';
+  // Forwarding headers are intentionally not considered here. A guard that
+  // supports proxies receives them separately and applies its explicit
+  // trustProxy policy.
+  return honoConnectionAddress(c);
 }
 
 // ── uWS native adapter ───────────────────────────────────────────────────────

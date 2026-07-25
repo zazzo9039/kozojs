@@ -1,5 +1,15 @@
 # @kozojs/auth
 
+## 0.5.23
+
+### Patch Changes
+
+- JWT secret validation now applies equally to string and `Uint8Array` key
+  material, including keys passed directly to `createJWT`.
+
+- Updated dependencies
+  - @kozojs/core@0.5.23
+
 ## 0.5.22
 
 ### Patch Changes

@@ -31,6 +31,11 @@ function cors(options = {}) {
 }
 
 // src/client-ip.ts
+function honoConnectionAddress(context) {
+  const c = context;
+  const bindings = c.env?.server ?? c.env;
+  return bindings?.incoming?.socket?.remoteAddress ?? c.req?.raw?.socket?.remoteAddress ?? "";
+}
 function trustedHops(trustProxy) {
   if (trustProxy === true) return 1;
   if (typeof trustProxy === "number" && Number.isInteger(trustProxy) && trustProxy > 0) {
@@ -55,9 +60,8 @@ function resolveClientIp(source, trustProxy) {
 
 // src/middleware/rate-limit.ts
 function honoSource(c) {
-  const raw = c.req.raw;
   return {
-    connectionAddress: raw?.socket?.remoteAddress ?? "",
+    connectionAddress: honoConnectionAddress(c),
     header: (name) => c.req.header(name)
   };
 }
@@ -67,10 +71,11 @@ function guardSource(req) {
     header: (name) => req.header(name)
   };
 }
-var memoryMap = /* @__PURE__ */ new Map();
 var MAX_MEMORY_KEYS = 1e5;
 var maxMemoryKeys = MAX_MEMORY_KEYS;
+var memoryMap = /* @__PURE__ */ new Map();
 var cleanupTimer = null;
+var nextLimiterId = 1;
 function ensureCleanup() {
   if (cleanupTimer) return;
   cleanupTimer = setInterval(() => {
@@ -93,7 +98,7 @@ function evictIfNeeded() {
     if (--overflow <= 0) break;
   }
 }
-var memoryStore = {
+var sharedMemoryStore = {
   async increment(key, windowMs) {
     const now = Date.now();
     let record = memoryMap.get(key);
@@ -110,6 +115,13 @@ var memoryStore = {
     memoryMap.delete(key);
   }
 };
+function createMemoryStore() {
+  const prefix = `limiter:${nextLimiterId++}:`;
+  return {
+    increment: (key, windowMs) => sharedMemoryStore.increment(prefix + key, windowMs),
+    reset: (key) => sharedMemoryStore.reset(prefix + key)
+  };
+}
 function retryAfterSeconds(record) {
   return Math.max(0, Math.ceil((record.resetAt - Date.now()) / 1e3));
 }
@@ -120,7 +132,7 @@ function rateLimit(options) {
     trustProxy = false,
     keyGenerator = (c) => resolveClientIp(honoSource(c), trustProxy),
     message = "Too many requests",
-    store = memoryStore
+    store = createMemoryStore()
   } = options;
   const windowMs = window * 1e3;
   return async (c, next) => {
@@ -143,7 +155,7 @@ function rateLimitGuard(options) {
     trustProxy = false,
     keyGenerator = (req) => resolveClientIp(guardSource(req), trustProxy),
     message = "Too many requests",
-    store = memoryStore
+    store = createMemoryStore()
   } = options;
   const windowMs = window * 1e3;
   return async (req) => {
@@ -162,10 +174,8 @@ function rateLimitGuard(options) {
 }
 function clearRateLimitStore() {
   memoryMap.clear();
-  if (cleanupTimer) {
-    clearInterval(cleanupTimer);
-    cleanupTimer = null;
-  }
+  if (cleanupTimer) clearInterval(cleanupTimer);
+  cleanupTimer = null;
 }
 
 // src/errors.ts

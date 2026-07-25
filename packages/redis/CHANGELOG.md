@@ -1,5 +1,12 @@
 # @kozojs/redis
 
+## 0.5.23
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.5.23
+
 ## 0.5.22
 
 ### Patch Changes
