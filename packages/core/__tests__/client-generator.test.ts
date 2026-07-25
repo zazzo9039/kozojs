@@ -34,8 +34,36 @@ describe('generateTypedClient', () => {
       { method: 'get', path: '/users/:id', schema: {} },
     ];
     const code = generateTypedClient(routes);
+    expect(code).toContain('async usersById(');
     expect(code).toContain('params: { id: string }');
     expect(code).toContain('${params.id}');
+  });
+
+  it('generates readable camelCase names for nested and dashed routes', () => {
+    const routes: RouteInfo[] = [
+      { method: 'patch', path: '/user-profiles/:userId', schema: {} },
+    ];
+    const code = generateTypedClient(routes);
+    expect(code).toContain('async patchUserProfilesByUserId(');
+    expect(code).not.toContain('patchUser_Profiles');
+  });
+
+  it('protects generated client internals from GET route name collisions', () => {
+    const routes: RouteInfo[] = [
+      { method: 'get', path: '/request', schema: {} },
+    ];
+    const code = generateTypedClient(routes);
+    expect(code).toContain('async getRequest(');
+  });
+
+  it('fails clearly when two routes generate the same method name', () => {
+    const routes: RouteInfo[] = [
+      { method: 'get', path: '/users/:id', schema: {} },
+      { method: 'get', path: '/users-by-id', schema: {} },
+    ];
+    expect(() => generateTypedClient(routes)).toThrow(
+      'GET /users/:id and GET /users-by-id both map to "usersById"',
+    );
   });
 
   it('handles query parameters', () => {

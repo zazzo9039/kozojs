@@ -47,7 +47,7 @@ describe('generated KozoClient runtime', () => {
       },
     });
 
-    const result = await client.users_Byid({ id: '7' });
+    const result = await client.usersById({ id: '7' });
     expect(result).toEqual({ id: '7' });
     expect(calls[0].url).toBe('http://api.test/users/7');
     expect((calls[0].init.headers as Record<string, string>).Authorization).toBe('Bearer tok-123');

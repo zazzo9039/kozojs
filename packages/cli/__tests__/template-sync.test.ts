@@ -26,8 +26,10 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'fs-extra';
 import path from 'node:path';
+import os from 'node:os';
 
 import { repoRoot } from './helpers/repo-root.js';
+import { copyTemplate, kozoDependencyRange, TEMPLATE_NAMES } from '../src/utils/copy-template.js';
 
 const ROOT = repoRoot();
 const SOURCE = path.join(ROOT, 'templates');
@@ -122,5 +124,29 @@ describe('template trees stay in sync', () => {
       }
     }
     expect(stale).toEqual([]);
+  });
+});
+
+describe('published starter versions', () => {
+  it.each(TEMPLATE_NAMES)('%s resolves Kozo dependencies from the CLI version', async (template) => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'kozo-template-version-'));
+    const dest = path.join(tmp, 'project');
+
+    try {
+      await copyTemplate(template, dest, 'version-probe');
+      const manifest = await fs.readJSON(path.join(dest, 'package.json')) as {
+        dependencies?: Record<string, string>;
+      };
+      const kozoDependencies = Object.entries(manifest.dependencies ?? {})
+        .filter(([name]) => name.startsWith('@kozojs/'));
+
+      expect(kozoDependencies.length).toBeGreaterThan(0);
+      for (const [, range] of kozoDependencies) {
+        expect(range).toBe(kozoDependencyRange());
+      }
+      expect(JSON.stringify(manifest)).not.toContain('{{KOZO_VERSION}}');
+    } finally {
+      await fs.remove(tmp);
+    }
   });
 });

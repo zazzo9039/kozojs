@@ -3,14 +3,39 @@ import { Hono } from "hono/quick";
 import { serve } from "@hono/node-server";
 
 // src/client-generator.ts
-function generateMethodName(method, path2) {
-  const cleanPath = path2.replace(/^\/+|\/+$/g, "");
-  const withParams = cleanPath.replace(/:(\w+)/g, "By$1");
-  const safeName = withParams.replace(/[\/\-\.]/g, "_").replace(/[^\w]/g, "");
-  if (method.toLowerCase() !== "get") {
-    return method.toLowerCase() + safeName.charAt(0).toUpperCase() + safeName.slice(1);
+var RESERVED_CLIENT_MEMBERS = /* @__PURE__ */ new Set([
+  "baseUrl",
+  "constructor",
+  "defaultHeaders",
+  "fetchImpl",
+  "getToken",
+  "onError",
+  "onRequest",
+  "onUnauthorized",
+  "request",
+  "validateRequests"
+]);
+function identifierWords(value) {
+  return value.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).filter(Boolean);
+}
+function toPascalCase(value) {
+  return identifierWords(value).map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join("");
+}
+function generateMethodName(method, routePath) {
+  const pathName = routePath.split("/").filter(Boolean).map((segment) => {
+    if (segment.startsWith(":")) {
+      return `By${toPascalCase(segment.slice(1)) || "Param"}`;
+    }
+    return toPascalCase(segment) || "Wildcard";
+  }).join("");
+  const baseName = pathName ? pathName.charAt(0).toLowerCase() + pathName.slice(1) : "index";
+  const safeBaseName = /^\d/.test(baseName) ? `route${baseName}` : baseName;
+  const httpMethod = method.toLowerCase();
+  let methodName = httpMethod === "get" ? safeBaseName : httpMethod + capitalize(safeBaseName);
+  if (RESERVED_CLIENT_MEMBERS.has(methodName)) {
+    methodName = `get${capitalize(methodName)}`;
   }
-  return safeName || "index";
+  return methodName;
 }
 function extractPathParams(path2) {
   const matches = path2.match(/:(\w+)/g);
@@ -38,8 +63,16 @@ function generateTypedClient(routes, options = {}) {
 
 `;
   const schemaVars = /* @__PURE__ */ new Map();
+  const methodNames = /* @__PURE__ */ new Map();
   for (const route of routes) {
     const methodName = generateMethodName(route.method, route.path);
+    const conflictingRoute = methodNames.get(methodName);
+    if (conflictingRoute) {
+      throw new Error(
+        `[Kozo] Cannot generate client: ${conflictingRoute.method.toUpperCase()} ${conflictingRoute.path} and ${route.method.toUpperCase()} ${route.path} both map to "${methodName}". Rename one route so each generated client method is unique.`
+      );
+    }
+    methodNames.set(methodName, route);
     const pathParams = extractPathParams(route.path);
     let paramsType = "void";
     let bodyType = "void";

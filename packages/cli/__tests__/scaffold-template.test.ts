@@ -2,10 +2,12 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'fs-extra';
 import path from 'node:path';
 import os from 'node:os';
+import ts from 'typescript';
 import { KNOWN_WEAK_SECRETS, MIN_SECRET_BYTES } from '@kozojs/core';
 
 import { getDatabaseSchema } from '../src/utils/scaffold/template-complete.js';
 import { scaffoldProject, type ScaffoldOptions } from '../src/utils/scaffold/index.js';
+import { kozoDependencyRange } from '../src/utils/copy-template.js';
 
 describe('scaffold templates', () => {
   it('generates sqlite schema by default', () => {
@@ -104,6 +106,71 @@ async function scaffold(overrides: Partial<ScaffoldOptions>): Promise<Array<[str
     await fs.remove(tmp).catch(() => {});
   }
 }
+
+function createKozoConfigKeys(source: string): string[] {
+  const sourceFile = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true);
+  const keys: string[] = [];
+
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'createKozo' &&
+      node.arguments[0] &&
+      ts.isObjectLiteralExpression(node.arguments[0])
+    ) {
+      for (const property of node.arguments[0].properties) {
+        if (property.name) keys.push(property.name.getText(sourceFile));
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return keys;
+}
+
+const VALIDITY_CASES: Array<[string, Partial<ScaffoldOptions>, string]> = [
+  ['starter', { template: 'starter', database: 'sqlite' }, 'src/index.ts'],
+  ['complete', { template: 'complete', database: 'none', auth: true }, 'src/index.ts'],
+  ['api-only', { template: 'api-only', database: 'none', auth: false }, 'src/index.ts'],
+  ['fullstack', { template: 'complete', frontend: 'react', database: 'none', auth: true }, 'apps/api/src/index.ts'],
+];
+
+describe('scaffolded projects use the current Kozo APIs', () => {
+  const TIMEOUT = 30_000;
+
+  it.each(VALIDITY_CASES)('%s', async (_name, overrides, entryPath) => {
+    const files = await scaffold(overrides);
+    const entry = files.find(([rel]) => rel === entryPath);
+    expect(entry, `${entryPath} should be generated`).toBeDefined();
+
+    const configKeys = createKozoConfigKeys(entry![1]);
+    expect(configKeys).not.toContain('port');
+    expect(configKeys).not.toContain('openapi');
+    expect(entry![1]).toMatch(/(?:nativeListen|listen)\((?:PORT|3000|\{\s*port:\s*PORT)/);
+
+    if (overrides.template !== 'api-only') {
+      expect(entry![1]).toContain('app.mountDocs({');
+    }
+    if (overrides.template === 'starter') {
+      expect(entry![1]).toContain('await app.loadRoutes();');
+    }
+
+    const manifestPath = entryPath.startsWith('apps/') ? 'apps/api/package.json' : 'package.json';
+    const manifestFile = files.find(([rel]) => rel === manifestPath);
+    expect(manifestFile, `${manifestPath} should be generated`).toBeDefined();
+    const manifest = JSON.parse(manifestFile![1]) as {
+      dependencies?: Record<string, string>;
+    };
+    const kozoDependencies = Object.entries(manifest.dependencies ?? {})
+      .filter(([name]) => name.startsWith('@kozojs/'));
+    expect(kozoDependencies.length).toBeGreaterThan(0);
+    for (const [, range] of kozoDependencies) {
+      expect(range).toBe(kozoDependencyRange());
+    }
+  }, TIMEOUT);
+});
 
 describe('scaffolded projects contain no hardcoded secret', () => {
   // Scaffolding writes a lot of small files; give the slower matrix room.

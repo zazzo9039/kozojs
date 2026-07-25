@@ -32,7 +32,7 @@ const UsersQuerySchema = z.object({
 });
 
 // Create API
-const app = createKozo({ port: 3000 });
+const app = createKozo();
 
 // Define routes
 app.get('/users', {
@@ -113,26 +113,20 @@ console.log('✅ Type-safe client generated at ./client/api.ts');
  * //    ^? User
  * 
  * const newUser = await api.postUsers({
- *   body: {
- *     email: 'test@example.com',
- *     name: 'John Doe'
- *   }
+ *   email: 'test@example.com',
+ *   name: 'John Doe'
  * });
  * //    ^? User
  * 
  * // ❌ Type error: invalid email
  * await api.postUsers({
- *   body: {
- *     email: 'not-an-email',  // Caught by TypeScript!
- *     name: 'John'
- *   }
+ *   email: 'not-an-email',  // Caught by TypeScript!
+ *   name: 'John'
  * });
  * 
  * // ✅ Runtime validation (if enabled)
  * try {
- *   await api.postUsers({
- *     body: { email: 'bad', name: 'X' }
- *   });
+ *   await api.postUsers({ email: 'bad', name: 'X' });
  * } catch (err) {
  *   // Zod validation error before request
  * }

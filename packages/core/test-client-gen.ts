@@ -12,7 +12,7 @@ import { mkdirSync } from 'fs';
 console.log('🧪 Testing Client SDK Generation\n');
 
 // Create a sample API
-const app = createKozo({ port: 3000 });
+const app = createKozo();
 
 // Define schemas
 const UserSchema = z.object({

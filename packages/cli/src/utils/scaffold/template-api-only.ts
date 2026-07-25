@@ -53,7 +53,7 @@ export async function scaffoldApiOnlyTemplate(
   const indexTs = `import { createKozo } from '@kozojs/core';
 import { z } from 'zod';
 
-const app = createKozo({ port: 3000 });
+const app = createKozo();
 
 // Health check
 app.get('/health', {}, () => ({
@@ -70,7 +70,7 @@ app.get('/hello/:name', {
 }));
 
 console.log('🔥 Kozo running on http://localhost:3000');
-await app.nativeListen();
+await app.nativeListen(3000);
 `;
   await fs.writeFile(path.join(projectDir, 'src', 'index.ts'), indexTs);
 

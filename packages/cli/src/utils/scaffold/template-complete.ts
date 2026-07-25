@@ -234,7 +234,7 @@ export async function scaffoldCompleteTemplate(
     },
     dependencies: {
       '@kozojs/core': kozoCoreDep,
-      ...(auth && { '@kozojs/auth': kozoCoreDep === 'workspace:*' ? 'workspace:*' : '^0.5.21' }),
+      ...(auth && { '@kozojs/auth': kozoCoreDep }),
       '@hono/node-server': '^1.19.10',
       ...(runtime === 'node' && { 'uWebSockets.js': 'github:uNetworking/uWebSockets.js#6609a88ffa9a16ac5158046761356ce03250a0df' }),
       hono: '^4.12.5',
@@ -355,16 +355,12 @@ const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 100;
 const RATE_LIMIT_WINDOW = Number(process.env.RATE_LIMIT_WINDOW) || 60_000;
 
 // ─── App ───────────────────────────────────────────────────────────────
-const app = createKozo({
-  port: PORT,
-  openapi: {
-    info: {
-      title: '${projectName} API',
-      version: '1.0.0',
-      description: 'API documentation for ${projectName}',
-    },
-    servers: [{ url: \`http://localhost:\${PORT}\`, description: 'Development server' }],
-  },
+const app = createKozo();
+app.mountDocs({
+  title: '${projectName} API',
+  version: '1.0.0',
+  description: 'API documentation for ${projectName}',
+  servers: [{ url: \`http://localhost:\${PORT}\`, description: 'Development server' }],
 });
 
 // ─── Security (transport-agnostic guards — native speed under uWS) ────

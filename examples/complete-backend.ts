@@ -128,16 +128,12 @@ const posts: Post[] = [
 // INIZIALIZZAZIONE KOZO APP
 // ============================================
 
-const app = createKozo({
-  port: 3000,
-  openapi: {
-    info: {
-      title: 'Kozo Mock API',
-      version: '1.0.0',
-      description: 'Complete example showcasing all Kozo Framework features',
-    },
-    servers: [{ url: 'http://localhost:3000' }],
-  },
+const app = createKozo();
+app.mountDocs({
+  title: 'Kozo Mock API',
+  version: '1.0.0',
+  description: 'Complete example showcasing Kozo Framework features',
+  servers: [{ url: 'http://localhost:3000' }],
 });
 
 // ============================================
@@ -349,8 +345,8 @@ console.log('📍 Port: 3000');
 console.log('📊 Performance: 14,453 req/sec (benchmark heavy load)');
 console.log('🔒 Validation: Ajv compiled (5x faster than Zod runtime)');
 console.log('⚡ Serialization: fast-json-stringify (2x faster than JSON.stringify)');
-console.log('📝 OpenAPI Docs: http://localhost:3000/swagger');
-console.log('🔗 API JSON: http://localhost:3000/doc');
+console.log('📝 OpenAPI Docs: http://localhost:3000/docs');
+console.log('🔗 API JSON: http://localhost:3000/docs.json');
 console.log('❤️  Health Check: http://localhost:3000/health');
 console.log('');
 console.log('📋 Available endpoints:');

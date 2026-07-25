@@ -136,7 +136,7 @@ export default defineConfig({
     },
     dependencies: {
       '@kozojs/core': kozoCoreDep,
-      ...(auth && { '@kozojs/auth': kozoCoreDep === 'workspace:*' ? 'workspace:*' : '^0.5.21' }),
+      ...(auth && { '@kozojs/auth': kozoCoreDep }),
       hono: '^4.12.5',
       zod: '^4.0.0',
       dotenv: '^16.4.0',
@@ -188,7 +188,7 @@ export default defineConfig({
   root: join(__dirname, '../../web'),
   entryServer: 'src/entry-server.tsx',
 });`
-    : runtime === 'node' ? 'await app.nativeListen();' : 'await app.listen();';
+    : runtime === 'node' ? 'await app.nativeListen(PORT);' : 'await app.listen(PORT);';
 
   await fs.outputFile(path.join(apiDir, 'src', 'index.ts'), `import 'dotenv/config';
 import { createKozo${auth ? ', requireSecret' : ''} } from '@kozojs/core';
@@ -197,16 +197,12 @@ import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
-const app = createKozo({
-  port: PORT,
-  openapi: {
-    info: {
-      title: '${projectName} API',
-      version: '1.0.0',
-      description: 'API documentation for ${projectName}',
-    },
-    servers: [{ url: \`http://localhost:\${PORT}\`, description: 'Development server' }],
-  },
+const app = createKozo();
+app.mountDocs({
+  title: '${projectName} API',
+  version: '1.0.0',
+  description: 'API documentation for ${projectName}',
+  servers: [{ url: \`http://localhost:\${PORT}\`, description: 'Development server' }],
 });
 ${authMiddleware}await app.loadRoutes(join(__dirname, 'routes'));
 

@@ -33,27 +33,67 @@ export interface RouteInfo {
   };
 }
 
+const RESERVED_CLIENT_MEMBERS = new Set([
+  'baseUrl',
+  'constructor',
+  'defaultHeaders',
+  'fetchImpl',
+  'getToken',
+  'onError',
+  'onRequest',
+  'onUnauthorized',
+  'request',
+  'validateRequests',
+]);
+
+function identifierWords(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean);
+}
+
+function toPascalCase(value: string): string {
+  return identifierWords(value)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('');
+}
+
 /**
- * Generate a safe method name from a route path
+ * Generate a readable JavaScript method name from an HTTP method and route.
+ *
+ * Examples:
+ *   GET   /users/:id                 -> usersById
+ *   PATCH /user-profiles/:userId    -> patchUserProfilesByUserId
  */
-function generateMethodName(method: string, path: string): string {
-  // Remove leading/trailing slashes
-  const cleanPath = path.replace(/^\/+|\/+$/g, '');
-  
-  // Replace path params with their names
-  const withParams = cleanPath.replace(/:(\w+)/g, 'By$1');
-  
-  // Replace slashes and special chars with underscores
-  const safeName = withParams
-    .replace(/[\/\-\.]/g, '_')
-    .replace(/[^\w]/g, '');
-  
-  // Prepend method name if not GET
-  if (method.toLowerCase() !== 'get') {
-    return method.toLowerCase() + safeName.charAt(0).toUpperCase() + safeName.slice(1);
+function generateMethodName(method: string, routePath: string): string {
+  const pathName = routePath
+    .split('/')
+    .filter(Boolean)
+    .map(segment => {
+      if (segment.startsWith(':')) {
+        return `By${toPascalCase(segment.slice(1)) || 'Param'}`;
+      }
+      return toPascalCase(segment) || 'Wildcard';
+    })
+    .join('');
+
+  const baseName = pathName
+    ? pathName.charAt(0).toLowerCase() + pathName.slice(1)
+    : 'index';
+  const safeBaseName = /^\d/.test(baseName) ? `route${baseName}` : baseName;
+  const httpMethod = method.toLowerCase();
+  let methodName = httpMethod === 'get'
+    ? safeBaseName
+    : httpMethod + capitalize(safeBaseName);
+
+  // A GET route can otherwise overwrite fields or the shared request method.
+  if (RESERVED_CLIENT_MEMBERS.has(methodName)) {
+    methodName = `get${capitalize(methodName)}`;
   }
-  
-  return safeName || 'index';
+
+  return methodName;
 }
 
 /**
@@ -95,10 +135,21 @@ export function generateTypedClient(
 
   // Track schema variable names for type inference
   const schemaVars = new Map<string, string>();
+  const methodNames = new Map<string, RouteInfo>();
 
   // Process each route
   for (const route of routes) {
     const methodName = generateMethodName(route.method, route.path);
+    const conflictingRoute = methodNames.get(methodName);
+    if (conflictingRoute) {
+      throw new Error(
+        `[Kozo] Cannot generate client: ` +
+        `${conflictingRoute.method.toUpperCase()} ${conflictingRoute.path} and ` +
+        `${route.method.toUpperCase()} ${route.path} both map to "${methodName}". ` +
+        'Rename one route so each generated client method is unique.',
+      );
+    }
+    methodNames.set(methodName, route);
     const pathParams = extractPathParams(route.path);
     
     // Generate type definitions using z.infer

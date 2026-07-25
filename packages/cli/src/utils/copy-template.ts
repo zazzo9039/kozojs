@@ -1,6 +1,5 @@
 import fs from 'fs-extra';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 export const TEMPLATE_NAMES = ['minimal', 'file-routing', 'fullstack-ssr'] as const;
 export type TemplateName = (typeof TEMPLATE_NAMES)[number];
@@ -12,7 +11,9 @@ export function isTemplateName(value: string): value is TemplateName {
 /** Directory containing this module (CJS lib/ or ESM src/). */
 function moduleDir(): string {
   if (typeof __dirname !== 'undefined') return __dirname;
-  return path.dirname(fileURLToPath(import.meta.url));
+  // Source-mode fallback for ESM test/dev runners. Published CLI builds are CJS
+  // and always use __dirname above.
+  return process.cwd();
 }
 
 /** Locate repo-root or package-bundled `templates/`. */
@@ -46,6 +47,36 @@ export function resolveTemplatesRoot(): string {
     'Could not find Kozo templates directory.\n' +
     'Run from the kozo monorepo or install a CLI version that bundles templates/.',
   );
+}
+
+/**
+ * Read the version of the running CLI package.
+ *
+ * In the monorepo, templates live at `<root>/templates`; in the npm package,
+ * they live beside `package.json`. Supporting both layouts keeps the version
+ * source centralized in `packages/cli/package.json`.
+ */
+export function resolveCliPackageVersion(): string {
+  const templatesRoot = resolveTemplatesRoot();
+  const packageRoot = path.dirname(templatesRoot);
+  const candidates = [
+    path.join(packageRoot, 'package.json'),
+    path.join(packageRoot, 'packages', 'cli', 'package.json'),
+  ];
+
+  for (const manifestPath of candidates) {
+    if (!fs.existsSync(manifestPath)) continue;
+    const manifest = fs.readJSONSync(manifestPath) as { name?: string; version?: string };
+    if (manifest.name === '@kozojs/cli' && manifest.version) {
+      return manifest.version;
+    }
+  }
+
+  throw new Error('Could not resolve the @kozojs/cli package version.');
+}
+
+export function kozoDependencyRange(): string {
+  return `^${resolveCliPackageVersion()}`;
 }
 
 async function replaceInTree(dir: string, search: string, replace: string): Promise<void> {

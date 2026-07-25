@@ -4,6 +4,7 @@ import type { ScaffoldOptions } from './types.js';
 import { scaffoldCompleteTemplate, getDatabaseSchema, getDatabaseIndex, getSQLiteSeed, createExampleRoutes } from './template-complete.js';
 import { scaffoldApiOnlyTemplate, createDockerCompose, createDockerfile, createGitHubActions } from './template-api-only.js';
 import { scaffoldFullstackProject } from './fullstack-api.js';
+import { kozoDependencyRange } from '../copy-template.js';
 
 export type { ScaffoldOptions } from './types.js';
 
@@ -14,7 +15,7 @@ export async function scaffoldProject(options: ScaffoldOptions): Promise<void> {
   // Determine @kozo/core version based on source
   const kozoCoreDep = packageSource === 'local'
     ? 'workspace:*'
-    : '^0.5.21';
+    : kozoDependencyRange();
 
   // Handle fullstack with frontend FIRST (has priority over template type)
   if (frontend !== 'none') {
@@ -129,28 +130,27 @@ dist/
   await fs.writeFile(path.join(projectDir, '.gitignore'), gitignore);
 
   // Create src/index.ts (entry point)
-  const indexTs = `import { createKozo } from '@kozojs/core';
+  const indexTs = `import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createKozo } from '@kozojs/core';
 import { services } from './services/index.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PORT = Number(process.env.PORT) || 3000;
 const app = createKozo({
   services,
-  port: Number(process.env.PORT) || 3000,
-  openapi: {
-    info: {
-      title: '${projectName} API',
-      version: '1.0.0',
-      description: 'API documentation for ${projectName}'
-    },
-    servers: [
-      {
-        url: 'http://localhost:3000',
-        description: 'Development server'
-      }
-    ]
-  }
+  routesDir: path.join(__dirname, 'routes'),
 });
 
-await app.nativeListen();
+app.mountDocs({
+  title: '${projectName} API',
+  version: '1.0.0',
+  description: 'API documentation for ${projectName}',
+  servers: [{ url: \`http://localhost:\${PORT}\`, description: 'Development server' }],
+});
+
+await app.loadRoutes();
+await app.nativeListen(PORT);
 `;
   await fs.writeFile(path.join(projectDir, 'src', 'index.ts'), indexTs);
 
@@ -219,14 +219,14 @@ curl -X POST http://localhost:3000/users \\
 curl http://localhost:3000
 
 # Open Swagger UI
-open http://localhost:3000/swagger
+open http://localhost:3000/docs
 \`\`\`
 
 ## API Documentation
 
 Once the server is running, visit:
-- **Swagger UI**: http://localhost:3000/swagger
-- **OpenAPI JSON**: http://localhost:3000/doc
+- **Swagger UI**: http://localhost:3000/docs
+- **OpenAPI JSON**: http://localhost:3000/docs.json
 
 ## Project Structure
 
