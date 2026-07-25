@@ -285,8 +285,15 @@ jobs:
 
       - name: Publish in dependency order (skip versions already on npm)
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            export NODE_AUTH_TOKEN="$NPM_TOKEN"
+            echo "npm authentication: repository token"
+          else
+            echo "npm authentication: trusted publishing (OIDC)"
+          fi
+
           for pkg in core db auth queue redis testing cli; do
             t="$(ls "$GITHUB_WORKSPACE"/tarballs/kozojs-"$pkg"-*.tgz)"
             tar -xOzf "$t" package/package.json > /tmp/manifest.json
