@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-25
+
+### Changed
+
+- Generated client methods now use readable camelCase route names:
+  `GET /users/:id` generates `usersById()` instead of `users_Byid()`.
+- Client generation rejects ambiguous route-name collisions and protects
+  internal client members instead of emitting invalid TypeScript.
+- CLI starters and the interactive scaffold now use `app.mountDocs()`, pass
+  ports to `listen()` or `nativeListen()`, and load filesystem routes before
+  starting.
+- Starter dependencies and every `@kozojs/*` package are aligned to `0.6.0`.
+
+### Documentation
+
+- Reworked the framework and package READMEs around runnable onboarding,
+  contract-based client generation, transport choices, and verified APIs.
+
+### CI
+
+- npm releases now authenticate through trusted publishing (OIDC) and include
+  registry provenance without storing a long-lived publish token.
+
 ## [0.5.23] — 2026-07-25
 
 ### Security

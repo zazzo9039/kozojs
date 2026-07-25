@@ -1,5 +1,13 @@
 # file-routing
 
+## 0.0.8
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.6.0
+  - @kozojs/auth@0.6.0
+
 ## 0.0.7
 
 ### Patch Changes

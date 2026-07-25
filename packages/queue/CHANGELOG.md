@@ -1,5 +1,12 @@
 # @kozojs/queue
 
+## 0.6.0
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.6.0
+
 ## 0.5.23
 
 ### Patch Changes

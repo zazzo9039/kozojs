@@ -1,5 +1,18 @@
 # @kozojs/cli
 
+## 0.6.0
+
+### Minor Changes
+
+- Generate readable camelCase client method names, reject ambiguous route-name
+  collisions, and update every CLI scaffold to the current Kozo configuration,
+  OpenAPI, route-loading, and listener APIs.
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.6.0
+
 ## 0.5.23
 
 ### Patch Changes
