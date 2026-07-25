@@ -1,0 +1,58 @@
+name: Deprecate npm versions
+
+# Marks a version range as deprecated on npm. The message is shown at install
+# time and on the package page — it is the only channel that reaches people who
+# already depend on a vulnerable version, and the only one available at all
+# while this repository is private (a published GitHub Security Advisory, which
+# would feed npm audit and Dependabot, requires a public source repo).
+#
+# Run: gh workflow run deprecate.yml -f range='<0.5.22' -f message='...'
+# Undo: re-run with an empty message — npm un-deprecates on an empty string.
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Comma-separated package short names (core, auth, cli, db, queue, redis, testing)'
+        type: string
+        default: 'core,auth,cli'
+      range:
+        description: 'Semver range to deprecate, e.g. "<0.5.22"'
+        type: string
+        required: true
+      message:
+        description: 'Deprecation message (empty string un-deprecates)'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deprecate:
+    name: npm deprecate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Apply deprecation
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RANGE: ${{ inputs.range }}
+          MESSAGE: ${{ inputs.message }}
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          set -e
+          echo "range:   $RANGE"
+          echo "message: $MESSAGE"
+          IFS=',' read -ra PKGS <<< "$PACKAGES"
+          for raw in "${PKGS[@]}"; do
+            pkg="$(echo "$raw" | tr -d '[:space:]')"
+            [ -z "$pkg" ] && continue
+            echo "--- @kozojs/$pkg@$RANGE"
+            npm deprecate "@kozojs/$pkg@$RANGE" "$MESSAGE"
+          done
+          echo "done"

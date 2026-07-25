@@ -265,7 +265,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/setup-node@v6
         with:
@@ -291,5 +290,6 @@ jobs:
               continue
             fi
             echo "publish - $name@$version"
-            npm publish "$t" --access public --provenance
+            # Provenance requires a public GitHub repo; ours is private → E422.
+            npm publish "$t" --access public --provenance=false
           done
