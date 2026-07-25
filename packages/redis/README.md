@@ -40,17 +40,19 @@ await redis.close();
 ### As Kozo Plugin
 
 ```ts
-import Kozo from '@kozojs/core';
-import { redisPlugin } from '@kozojs/redis';
+import { createKozo } from '@kozojs/core';
+import { redisPlugin, type KozoRedis } from '@kozojs/redis';
 
-const app = new Kozo();
+const app = createKozo();
 
-let redis;
+let redis: KozoRedis | undefined;
 app.use(redisPlugin({
   connection: 'redis://localhost:6379',
   onReady: (r) => { redis = r; },
 }));
 ```
+
+For typed service injection, create the client first and pass it to `createKozo({ services: { redis } })`. Use `redisPlugin()` when the `onReady` callback fits your initialization flow and you want shutdown cleanup registered automatically.
 
 ## API
 

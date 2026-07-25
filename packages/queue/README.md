@@ -24,17 +24,19 @@ import { createKozo } from '@kozojs/core';
 type EmailJob = { to: string; subject: string; body: string };
 
 // Redis adapter
-const emailQueue = await createQueue<EmailJob>('emails', {
+const emailQueue = createQueue<EmailJob>('emails', {
   adapter: 'redis',
   connection: process.env.REDIS_URL ?? 'redis://localhost:6379',
 });
 
 // — or — AMQP adapter
-const taskQueue = await createQueue<TaskJob>('tasks', {
+const taskQueue = createQueue<TaskJob>('tasks', {
   adapter: 'amqp',
   connection: process.env.AMQP_URL ?? 'amqp://localhost',
 });
 ```
+
+`createQueue()` is synchronous; backend connections are opened by the adapter as needed. Run processors in a dedicated worker process when jobs should not share the API process lifecycle.
 
 ### Enqueue jobs
 

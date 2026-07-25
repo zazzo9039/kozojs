@@ -1,17 +1,15 @@
 # @kozojs/core
 
-**Build your backend from a single contract.**
+**Build a TypeScript backend from one route contract.**
 
 Define a route once with a Zod schema — runtime validation, an OpenAPI 3.1 spec, and a fully-typed TypeScript client all come from that one definition. With no extra wiring you get:
 
 - **Runtime validation** — RFC 7807 errors on bad input, zero boilerplate
 - **OpenAPI 3.1** — generated from the same schema
-- **A typed client SDK** — `app.generateClient()` → `api.postUsers({ body })`, typed end-to-end
+- **A route-derived client SDK** — `app.generateClient()` → `api.postUsers(body)`
 - **Native-speed routing** — an optional uWebSockets.js transport registers routes straight into a C++ radix trie
 
-Runs on Node, Bun, and edge runtimes.
-
-**4 runtime deps** · **155 kB** · **MIT licensed**
+Kozo requires Node.js 20.19 or newer. `app.listen()` is the default Node.js transport; `app.nativeListen()` and `app.listenSsr()` add optional native and Vite integrations. `app.fetch` exposes the underlying Fetch API handler for compatible adapters.
 
 ```
 npm install @kozojs/core zod
@@ -46,6 +44,7 @@ await app.listen(3000);
 - [Route Groups](#route-groups)
 - [Schema Validation](#schema-validation)
 - [Services (Dependency Injection)](#services-dependency-injection)
+- [Guards](#guards-security--single-source-of-truth)
 - [Middleware](#middleware)
 - [Error Handling (RFC 7807)](#error-handling-rfc-7807)
 - [Graceful Shutdown](#graceful-shutdown)
@@ -407,10 +406,10 @@ import { KozoClient } from './client/api';
 
 const api = new KozoClient({ baseUrl: 'https://api.example.com' });
 
-const users = await api.getUsers({ query: { page: 1 } });
+const users = await api.users({ page: 1 });
 //    ^? User[]
 
-const user = await api.postUsers({ body: { name: 'Jane', email: 'jane@example.com' } });
+const user = await api.postUsers({ name: 'Jane', email: 'jane@example.com' });
 //    ^? { id: string, name: string }
 ```
 
@@ -427,28 +426,32 @@ Options:
 
 ## OpenAPI Generation
 
-Generate an OpenAPI 3.1.0 spec from registered routes:
+Mount Swagger UI and an OpenAPI 3.1 document from registered routes:
 
 ```typescript
-import { createOpenAPIGenerator, generateSwaggerHtml } from '@kozojs/core';
-
-const generator = createOpenAPIGenerator({
-  info: { title: 'My API', version: '1.0.0' },
+app.mountDocs({
+  title: 'My API',
+  version: '1.0.0',
   servers: [{ url: 'https://api.example.com' }],
 });
-
-// Get the spec as JSON
-const spec = generator.generate(app.getRoutes());
-
-// Serve Swagger UI
-app.get('/docs', () => new Response(generateSwaggerHtml(spec), {
-  headers: { 'Content-Type': 'text/html' },
-}));
-
-app.get('/openapi.json', () => spec);
 ```
 
-Schemas are converted via Zod v4 native `z.toJSONSchema()`. Supports: path params, query params, request body (POST/PUT/PATCH), response schemas, tags, auth (Bearer), and summaries.
+- Swagger UI: `/docs`
+- OpenAPI JSON: `/docs.json`
+
+Outside production the routes are enabled by default. In production, opt in explicitly:
+
+```typescript
+app.mountDocs({
+  title: 'My API',
+  version: '1.0.0',
+  enabled: process.env.ENABLE_API_DOCS === 'true',
+});
+```
+
+For custom spec pipelines, use `createOpenAPIGenerator()` directly. `generateSwaggerHtml(specUrl, title?)` accepts the URL of an OpenAPI document, not the document object.
+
+Schemas are converted via Zod v4 native `z.toJSONSchema()`. Supported route metadata includes path params, query params, request bodies, response schemas, tags, Bearer auth, and summaries.
 
 ---
 
@@ -644,16 +647,13 @@ import {
 ## Runtime Compatibility
 
 ```typescript
-// Node.js
+// Standard Node.js HTTP
 await app.listen(3000);
 
-// Node.js + uWebSockets.js
+// Node.js + optional uWebSockets.js dependency
 await app.nativeListen(3000);
 
-// Bun
-await app.listen(3000);
-
-// Cloudflare Workers / Deno
+// Fetch API integration; confirm compatibility in your target adapter
 export default { fetch: app.fetch };
 ```
 
@@ -691,6 +691,7 @@ Create a Kozo application.
 | `.loadRoutes(dir?)` | Load routes from file system |
 | `.shutdown(options?)` | Graceful shutdown |
 | `.generateClient(options?)` | Generate typed client SDK |
+| `.mountDocs(options?)` | Mount Swagger UI and an OpenAPI 3.1 document |
 | `.getRoutes()` | Inspect registered routes |
 | `.getShutdownManager()` | Access shutdown manager |
 | `.getApp()` | Access underlying Hono instance |

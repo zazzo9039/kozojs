@@ -28,7 +28,7 @@ expect(res.json()).toEqual({ pong: true });
 
 ### `createTestClient(app)`
 
-Wrap an existing Kozo app. Routes are invoked in-memory via `app.fetch()` — no port is opened.
+Wrap an existing Kozo app. Routes are invoked in-memory via `app.fetch()` — no port is opened. This exercises the Fetch/Hono pipeline, not the native uWebSockets.js transport.
 
 ```typescript
 const client = createTestClient(app);
@@ -40,6 +40,24 @@ await client.put('/users/1', { name: 'Bob' });
 await client.patch('/users/1', { name: 'Charlie' });
 await client.delete('/users/1');
 ```
+
+### `createNativeTestClient(app)`
+
+Boot the real uWebSockets.js transport on an ephemeral port when native behavior matters:
+
+```typescript
+import { createNativeTestClient } from '@kozojs/testing';
+
+const client = await createNativeTestClient(app);
+try {
+  const res = await client.get('/ping');
+  expect(res.status).toBe(200);
+} finally {
+  await client.close();
+}
+```
+
+This requires the optional `uWebSockets.js` dependency. Always call `close()` in `finally`, `afterEach`, or `afterAll`.
 
 ### `createTestApp(config?)`
 

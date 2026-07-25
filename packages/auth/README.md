@@ -8,9 +8,11 @@ Authentication for [Kozo](https://github.com/zazzo9039/kozojs) that stays on the
 npm install @kozojs/auth @kozojs/core
 ```
 
+Use matching `0.5.x` versions of `@kozojs/auth` and `@kozojs/core`. JWT secrets must contain at least 32 bytes and must not use a known placeholder; `requireSecret()` validates this at startup.
+
 ## Quick start (recommended — guards)
 
-**`registerAuthGuard`** is the single source of truth for authentication: the
+**`registerAuthGuard`** is the recommended file-routing setup for authentication: the
 same check runs on `listen()` (Hono) AND on `nativeListen()` (uWebSockets.js)
 at native speed — no Hono bridge, no middleware bypass.
 

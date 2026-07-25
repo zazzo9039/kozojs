@@ -13,6 +13,9 @@ npx @kozojs/cli my-app --template minimal
 npx @kozojs/cli my-app --template file-routing
 npx @kozojs/cli my-app --template fullstack-ssr
 
+cd my-app
+pnpm dev
+
 # Or install globally
 npm install -g @kozojs/cli
 kozo my-app
@@ -52,14 +55,16 @@ kozo gen:client                  # typed API client from registered routes
 
 Any unrecognized flag is forwarded to `tsup`.
 
-## Interactive Setup
+## Interactive Setup (legacy scaffolds)
 
 When you run `npx @kozojs/cli` **without** `--template`, the wizard asks:
+
+For new projects, prefer one of the bundled `--template` starters above. The interactive path remains available for the older configurable scaffold generator.
 
 1. **Project name** — lowercase letters, digits, hyphens
 2. **Target runtime** — `node` (default) / `cloudflare` / `bun`
 3. **Template**
-   - `Complete Server` — full production-ready app (Auth, CRUD, Stats)
+   - `Complete Server` — feature-rich example app (Auth, CRUD, Stats)
    - `Starter` — minimal setup with database
    - `API Only` — minimal, no database
 4. **Database** — `postgresql` / `mysql` / `sqlite` / `none` (skipped for API-Only)

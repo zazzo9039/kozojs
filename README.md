@@ -1,58 +1,55 @@
-# 🔥 Kozo Framework
+# 🔥 Kozo
 
-**The Structure for the Edge** — TypeScript backend framework with high-performance HTTP routing (uWebSockets.js), compiled serialization on typed responses where the schema allows it, and transparent `JSON.stringify` fallback otherwise.
+**A TypeScript backend framework where routes, validation, OpenAPI, and a generated client share one contract.**
 
 [![CI](https://github.com/zazzo9039/kozojs/actions/workflows/ci.yml/badge.svg)](https://github.com/zazzo9039/kozojs/actions/workflows/ci.yml)
 [![npm version](https://badge.fury.io/js/@kozojs%2Fcore.svg)](https://www.npmjs.com/package/@kozojs/core)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Docs](https://img.shields.io/badge/docs-kozo--docs.vercel.app-orange)](https://kozo-docs.vercel.app)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Documentation](https://img.shields.io/badge/docs-kozo--docs.vercel.app-orange)](https://kozo-docs.vercel.app)
 
-## ✨ Features
+[Documentation](https://kozo-docs.vercel.app) · [Packages](#packages) · [Examples](./examples) · [Benchmarks](./benchmarks/README.md)
 
-- ⚡ **Native C++ routing** — uWebSockets.js per-route matching, zero JS dispatch in the hot path
-- 🚀 **High throughput** — matches bare uWS (0.1% gap), ~33% over Fastify, ~3× over NestJS — see [benchmarks/RESULTS.md](./benchmarks/RESULTS.md)
-- ⚡ **Compiled response serialization** — `fast-json-stringify` compiled at route registration when the Zod response schema is JSON-serializable; falls back to `JSON.stringify` for `z.any()`, transforms, dates, etc.
-- 📋 **Response contract enforcement** — routes with a `response` schema **omit undeclared fields** from the JSON output (not a bug — declare every field you return, or drop `response` from the schema)
-- 📁 **File-system routing** — zero config (`routes/users/[id].ts` → `GET /users/:id`)
-- ✅ **Zod-native validation** — schemas compiled once at startup, no Ajv, no `eval`
-- 📝 **Auto OpenAPI 3.1** — generated from your Zod schemas
-- 🔌 **Typed client SDK** — `app.generateClient()` emits a fully typed TS client
-- 🧪 **In-process test client** — no HTTP server needed in tests
-- 🛡️ **RFC 7807 errors** — every error is a `application/problem+json` response
-- 🔌 **Plug-and-play modules** — auth (JWT), db (Drizzle), queue (BullMQ/AMQP), redis (cache/pub-sub/rate-limit)
-- 🌐 **Three transports, one API** — `listen()` (Node), `nativeListen()` (uWS), `listenSsr()` (Vite SSR + API)
-- 🔐 **Transport-agnostic guards** — `app.guard()` runs auth/roles/rate-limits on the uWS fast path, same semantics on every transport
+Kozo gives a backend one consistent structure without hiding the underlying platform. Define a route with Zod once and use the same definition for request validation, response serialization, OpenAPI 3.1, and a route-derived TypeScript client.
 
-## 📦 Packages
+Start with the standard Node.js server, opt into the uWebSockets.js transport when throughput or native WebSockets matter, or run an API and Vite SSR application on one port.
 
-| Package | npm | Description |
-|---|---|---|
-| [`@kozojs/core`](./packages/core) | [![npm](https://img.shields.io/npm/v/@kozojs/core.svg)](https://www.npmjs.com/package/@kozojs/core) | Framework core (router, validation, OpenAPI, SSR, WS, client gen) |
-| [`@kozojs/cli`](./packages/cli) | [![npm](https://img.shields.io/npm/v/@kozojs/cli.svg)](https://www.npmjs.com/package/@kozojs/cli) | Project scaffolding (`create-kozo` / `kozo`) |
-| [`@kozojs/auth`](./packages/auth) | [![npm](https://img.shields.io/npm/v/@kozojs/auth.svg)](https://www.npmjs.com/package/@kozojs/auth) | JWT authentication guards (via `jose`) — `jwtGuard`, `roleGuard`, `registerAuthGuard` |
-| [`@kozojs/db`](./packages/db) | [![npm](https://img.shields.io/npm/v/@kozojs/db.svg)](https://www.npmjs.com/package/@kozojs/db) | Drizzle ORM integration (PostgreSQL / MySQL / SQLite) |
-| [`@kozojs/queue`](./packages/queue) | [![npm](https://img.shields.io/npm/v/@kozojs/queue.svg)](https://www.npmjs.com/package/@kozojs/queue) | Multi-backend job queue (BullMQ / AMQP) |
-| [`@kozojs/redis`](./packages/redis) | [![npm](https://img.shields.io/npm/v/@kozojs/redis.svg)](https://www.npmjs.com/package/@kozojs/redis) | Redis cache, pub/sub, distributed rate-limit store |
-| [`@kozojs/testing`](./packages/testing) | [![npm](https://img.shields.io/npm/v/@kozojs/testing.svg)](https://www.npmjs.com/package/@kozojs/testing) | In-process test client (`createTestClient`, `inject`) |
+> **Pre-1.0:** Kozo is under active development. Minor releases can contain breaking changes. Pin exact package versions for production deployments and read the [changelog](./CHANGELOG.md) before upgrading.
 
-> **Stability note:** Kozo is pre-1.0. The public API is consolidating but minor breakages may happen between minor versions. Pin exact versions if that matters to you.
+## Why Kozo?
 
-## 🚀 Quick Start
+- **One route contract** — Zod schemas describe request data and public responses.
+- **Useful output from the same definition** — runtime validation, OpenAPI, and a generated TypeScript client stay aligned with registered routes.
+- **A clear default path** — `app.listen()` runs on standard Node.js HTTP with no native dependency.
+- **Native performance when you need it** — `app.nativeListen()` registers routes directly with uWebSockets.js.
+- **Structure without ceremony** — use programmatic routes or file-system routing with typed services.
+- **Transport-aware security** — guards run with the same semantics on the Node and native transports.
+- **Focused packages** — add authentication, databases, queues, Redis, and testing without pulling them into the core.
+
+## Quick start
+
+Requirements: Node.js 20.19 or newer.
+
+Create and start a minimal project:
 
 ```bash
-# Scaffold a new project
-npx @kozojs/cli my-app
-cd my-app
-pnpm install
+npx @kozojs/cli my-api --template minimal
+cd my-api
 pnpm dev
 ```
 
-Or wire it up by hand:
+Try the generated API:
+
+```bash
+curl http://localhost:3000/health
+curl http://localhost:3000/hello/Kozo
+```
+
+The starter includes a development script, TypeScript configuration, Zod, and the optional native transport. See the [installation guide](https://kozo-docs.vercel.app/docs/getting-started/installation) for npm and manual setup.
+
+### Build an API by hand
 
 ```bash
 npm install @kozojs/core zod
-# Optional, for native transport (published on GitHub, not npm):
-npm install uNetworking/uWebSockets.js#v20.66.0
 ```
 
 ```typescript
@@ -62,113 +59,163 @@ const app = createKozo();
 
 app.get('/users/:id', {
   params: z.object({ id: z.string().uuid() }),
-  response: z.object({ id: z.string(), name: z.string() }),
-}, (ctx) => ({
-  id: ctx.params.id,
+  response: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+  }),
+}, ({ params }) => ({
+  id: params.id,
   name: 'Jane Doe',
 }));
 
-await app.listen(3000);
-// or, for max throughput:
-// await app.nativeListen(3000);
-```
-
-## 💻 Two ways to register routes
-
-### 1. Programmatic (works with all transports)
-
-```typescript
-import { createKozo, z } from '@kozojs/core';
-
-const app = createKozo<{ db: Database }>({
-  services: { db },
+app.mountDocs({
+  title: 'My API',
+  version: '1.0.0',
 });
 
+await app.listen(3000);
+```
+
+During development, Swagger UI is available at `http://localhost:3000/docs` and the OpenAPI document at `/docs.json`. Documentation routes are disabled by default when `NODE_ENV=production`; enable them explicitly if that is appropriate for your deployment.
+
+## One definition, four jobs
+
+```typescript
 app.post('/users', {
   body: z.object({
     name: z.string().min(2),
     email: z.string().email(),
   }),
-}, async ({ body, services: { db } }) => {
-  return db.users.create(body);
+  response: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    email: z.string().email(),
+  }),
+}, async ({ body, services }) => {
+  return services.users.create(body);
 });
-
-await app.listen(3000);
 ```
 
-### 2. File-system routing
+That route definition provides:
+
+1. Runtime validation for the request body.
+2. A public response contract; undeclared object fields are omitted when a compilable response schema is used.
+3. An OpenAPI 3.1 operation.
+4. A generated client method such as `api.postUsers(body)`.
+
+Generate a client from the routes registered in your app:
+
+```typescript
+import { writeFile } from 'node:fs/promises';
+
+await writeFile(
+  './src/generated/api.ts',
+  app.generateClient({ baseUrl: 'https://api.example.com' }),
+);
+```
+
+The generated client is route-derived. The in-process client from `@kozojs/testing` is a separate, string-path testing API.
+
+## Programmatic or file-system routing
+
+Programmatic routes keep everything in one module:
+
+```typescript
+app.get('/health', () => ({ ok: true }));
+app.group('/api', (api) => {
+  api.get('/users', ({ services }) => services.users.list());
+});
+```
+
+File-system routing maps files to HTTP methods and paths:
+
+```text
+src/routes/
+├── health/get.ts              → GET /health
+├── users/get.ts               → GET /users
+├── users/post.ts              → POST /users
+└── users/[id]/get.ts          → GET /users/:id
+```
 
 ```typescript
 // src/index.ts
-import { createKozo } from '@kozojs/core';
-
 const app = createKozo({
   routesDir: './src/routes',
-  services: { db },
+  services: { users },
 });
+
 await app.loadRoutes();
 await app.listen(3000);
 ```
 
-```typescript
-// src/routes/users/[id].ts → GET /users/:id
-import { z } from 'zod';
+See [Routing](https://kozo-docs.vercel.app/docs/core/routing), [Context and services](https://kozo-docs.vercel.app/docs/core/context), and the runnable [file-routing example](./examples/file-routing).
 
-export const schema = {
-  params: z.object({ id: z.string().uuid() }),
-};
+## Choose a server mode
 
-export default ({ params, services: { db } }) => db.users.findById(params.id);
-```
+The application API stays the same; the deployment method changes.
 
-Per-directory `_middleware.ts` is automatically picked up:
+| Mode | Start method | Best fit | Extra dependency |
+|---|---|---|---|
+| Node.js HTTP | `app.listen()` | Default development and production path | None |
+| uWebSockets.js | `app.nativeListen()` | High throughput and native WebSockets | `uWebSockets.js` from GitHub |
+| Vite SSR + API | `app.listenSsr()` | Full-stack applications on one port | `vite` |
+| Fetch handler | `app.fetch` | Integrations that accept a Fetch API handler | Runtime-specific adapter |
 
-```
-routes/
-├── _middleware.ts          → applies to all routes
-└── admin/
-    ├── _middleware.ts      → applies to /admin/* only
-    └── users.ts
-```
-
-## 📚 Documentation
-
-- [Getting Started](./docs/getting-started.md) — create a project, register routes, add auth, shutdown
-- [Developer Guide](./docs/developer-guide.md) — full API reference for every package
-- [Architecture Deep Dive](./docs/architecture.md) — compiler internals, request lifecycle, performance design
-- [Auth Guards](./docs/auth-middleware.md) — JWT guard configuration (`app.guard`)
-- [Graceful Shutdown](./docs/graceful-shutdown.md) — shutdown lifecycle and database cleanup
-- [Benchmarks](./benchmarks/RESULTS.md) — full numbers, methodology, statistical validation
-- [Online docs site](https://kozo-docs.vercel.app)
-
-## 🛠️ Development (Monorepo)
+Install the optional native transport:
 
 ```bash
-pnpm install         # install all workspace deps
-pnpm build           # build all packages
-pnpm test            # run all test suites
-pnpm dev             # turbo dev mode (watches everything)
-
-cd benchmarks
-pnpm bench           # full benchmark suite (startup + latency + throughput)
+pnpm add uNetworking/uWebSockets.js#v20.66.0
 ```
 
-Layout:
+Guards created with `app.guard()` run on both Node and native transports. Hono middleware registered with `app.middleware()` remains correct under `nativeListen()`, but covered routes use the Hono bridge instead of the zero-shim native path.
 
+## Packages
+
+| Package | Purpose |
+|---|---|
+| [`@kozojs/core`](./packages/core/README.md) | Routes, Zod validation, OpenAPI, client generation, transports, SSR, and WebSockets |
+| [`@kozojs/cli`](./packages/cli/README.md) | Project templates, development commands, route discovery, and code generation |
+| [`@kozojs/auth`](./packages/auth/README.md) | JWT verification and role-based guards |
+| [`@kozojs/db`](./packages/db/README.md) | Drizzle integration for PostgreSQL, SQLite, and MySQL connections |
+| [`@kozojs/queue`](./packages/queue/README.md) | Unified BullMQ and AMQP job queue adapters |
+| [`@kozojs/redis`](./packages/redis/README.md) | Cache, pub/sub, and distributed rate-limit storage |
+| [`@kozojs/testing`](./packages/testing/README.md) | In-process tests and real native-transport test clients |
+
+Install only the packages your application needs. Each package README documents its peer dependencies, supported backends, and lifecycle behavior.
+
+## Documentation
+
+Start here:
+
+- [Installation](https://kozo-docs.vercel.app/docs/getting-started/installation)
+- [Five-minute quick start](https://kozo-docs.vercel.app/docs/getting-started/quick-start)
+- [Project structure](https://kozo-docs.vercel.app/docs/getting-started/project-structure)
+- [Routing](https://kozo-docs.vercel.app/docs/core/routing)
+- [Validation and response contracts](https://kozo-docs.vercel.app/docs/core/validation)
+- [OpenAPI](https://kozo-docs.vercel.app/docs/core/openapi)
+- [Authentication guards](https://kozo-docs.vercel.app/docs/packages/auth)
+- [Testing](https://kozo-docs.vercel.app/docs/packages/testing)
+- [Common pitfalls](https://kozo-docs.vercel.app/docs/guides/common-pitfalls)
+
+The repository also contains versioned Markdown guides in [`docs/`](./docs/README.md), runnable examples in [`examples/`](./examples), and detailed benchmark methodology in [`benchmarks/`](./benchmarks/README.md).
+
+## Performance
+
+Kozo's native transport is designed to keep routing and schema work out of the request hot path. In the repository's benchmark snapshot, the native Kozo fixture tracks the included bare-uWS fixture and exceeds the included Fastify and NestJS fixtures.
+
+Those numbers are synthetic, hardware-dependent measurements—not an application capacity promise. Review the [results](./benchmarks/RESULTS.md), [methodology](./benchmarks/METHODOLOGY.md), and fixtures before drawing conclusions, and benchmark your own workload.
+
+## Development
+
+```bash
+pnpm install
+pnpm build
+pnpm typecheck
+pnpm test
 ```
-kozo/
-├── packages/
-│   ├── core/        # @kozojs/core
-│   ├── cli/         # @kozojs/cli
-│   ├── auth/        # @kozojs/auth
-│   ├── db/          # @kozojs/db
-│   ├── queue/       # @kozojs/queue
-│   ├── redis/       # @kozojs/redis
-│   └── testing/     # @kozojs/testing
-├── benchmarks/      # autocannon + latency + startup benchmarks
-└── docs/            # markdown documentation
-```
 
-## 📄 License
+Contributions are welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md), report vulnerabilities through [SECURITY.md](./SECURITY.md), and use the [issue tracker](https://github.com/zazzo9039/kozojs/issues) for reproducible bugs and proposals.
 
-MIT © Kozo Team
+## License
+
+[MIT](./LICENSE) © Kozo Team

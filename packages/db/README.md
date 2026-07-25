@@ -8,6 +8,10 @@ Supports **PostgreSQL** and **SQLite** for production use (including query helpe
 
 ```bash
 npm install @kozojs/db drizzle-orm
+# Add the driver for the selected provider:
+npm install postgres          # PostgreSQL
+npm install mysql2            # MySQL
+npm install better-sqlite3    # SQLite
 ```
 
 ## Quick Start
@@ -68,7 +72,7 @@ When `MYSQL_TEST_URL` is set, `__tests__/mysql-integration.test.ts` runs `SELECT
 import { createTestDatabase } from '@kozojs/db';
 
 // In-memory SQLite — no setup needed
-const db = createTestDatabase(schema);
+const db = await createTestDatabase(schema);
 ```
 
 ## Re-exports
