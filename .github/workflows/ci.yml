@@ -2,7 +2,8 @@ name: CI
 
 # Single workflow per push/PR: tests + integration + npm publish gate (pack/publint/smoke).
 # Publish to npm: gh workflow run ci.yml -f publish=true
-# Each package trusts this workflow through npm trusted publishing (OIDC).
+# npm trusted publishing (OIDC) is preferred; NPM_TOKEN remains available as a
+# fallback until every package trusts this workflow.
 
 on:
   push:
@@ -283,6 +284,8 @@ jobs:
           path: tarballs
 
       - name: Publish in dependency order (skip versions already on npm)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for pkg in core db auth queue redis testing cli; do
             t="$(ls "$GITHUB_WORKSPACE"/tarballs/kozojs-"$pkg"-*.tgz)"
