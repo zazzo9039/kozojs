@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/cli",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Scaffold a Kozo backend — file-system routes, services and auth, structured from day one.",
   "type": "commonjs",
   "bin": {

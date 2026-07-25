@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://github.com/zazzo9039/kozojs">
+    <img src="https://raw.githubusercontent.com/zazzo9039/kozojs/main/assets/brand/kozo-banner.jpg" alt="Kozo — TypeScript backend framework: Routes · Validation · OpenAPI · Generated Client" width="960">
+  </a>
+</p>
+
 # @kozojs/auth
 
 Authentication for [Kozo](https://github.com/zazzo9039/kozojs) that stays on the native uWebSockets fast path — JWT guards, roles, no Hono bridge. Built on [`jose`](https://github.com/panva/jose).
@@ -8,7 +14,7 @@ Authentication for [Kozo](https://github.com/zazzo9039/kozojs) that stays on the
 npm install @kozojs/auth @kozojs/core
 ```
 
-Use matching `0.5.x` versions of `@kozojs/auth` and `@kozojs/core`. JWT secrets must contain at least 32 bytes and must not use a known placeholder; `requireSecret()` validates this at startup.
+Use matching `0.6.x` versions of `@kozojs/auth` and `@kozojs/core`. JWT secrets must contain at least 32 bytes and must not use a known placeholder; `requireSecret()` validates this at startup.
 
 ## Quick start (recommended — guards)
 

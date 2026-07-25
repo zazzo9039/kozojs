@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://github.com/zazzo9039/kozojs">
+    <img src="https://raw.githubusercontent.com/zazzo9039/kozojs/main/assets/brand/kozo-banner.jpg" alt="Kozo — TypeScript backend framework: Routes · Validation · OpenAPI · Generated Client" width="960">
+  </a>
+</p>
+
 # @kozojs/cli
 
 🔥 **Scaffold a [Kozo](https://github.com/zazzo9039/kozojs) backend** — file-system routes, services and auth, structured from day one.

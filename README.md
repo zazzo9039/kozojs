@@ -1,4 +1,8 @@
-# 🔥 Kozo
+<p align="center">
+  <img src="./assets/brand/kozo-banner.jpg" alt="Kozo — TypeScript backend framework: Routes · Validation · OpenAPI · Generated Client" width="960">
+</p>
+
+# Kozo
 
 **A TypeScript backend framework where routes, validation, OpenAPI, and a generated client share one contract.**
 

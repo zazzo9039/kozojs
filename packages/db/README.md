@@ -1,8 +1,14 @@
+<p align="center">
+  <a href="https://github.com/zazzo9039/kozojs">
+    <img src="https://raw.githubusercontent.com/zazzo9039/kozojs/main/assets/brand/kozo-banner.jpg" alt="Kozo — TypeScript backend framework: Routes · Validation · OpenAPI · Generated Client" width="960">
+  </a>
+</p>
+
 # @kozojs/db
 
 Drizzle ORM integration for [Kozo Framework](https://github.com/zazzo9039/kozojs).  
 Supports **PostgreSQL** and **SQLite** for production use (including query helpers).  
-**MySQL** is connection-only in 0.5.x — use raw Drizzle, not the built-in CRUD helpers.
+**MySQL** is connection-only in 0.6.x — use raw Drizzle, not the built-in CRUD helpers.
 
 ## Install
 

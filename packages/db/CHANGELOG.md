@@ -1,5 +1,13 @@
 # @kozojs/db
 
+## 0.6.1
+
+### Patch Changes
+
+- Refresh package documentation with the Kozo visual identity.
+- Updated dependencies
+  - @kozojs/core@0.6.1
+
 ## 0.6.0
 
 ### Patch Changes

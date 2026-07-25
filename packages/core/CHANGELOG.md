@@ -1,5 +1,11 @@
 # @kozojs/core
 
+## 0.6.1
+
+### Patch Changes
+
+- Refresh package documentation with the Kozo visual identity.
+
 ## 0.6.0
 
 ### Minor Changes

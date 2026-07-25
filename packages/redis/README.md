@@ -1,3 +1,9 @@
+<p align="center">
+  <a href="https://github.com/zazzo9039/kozojs">
+    <img src="https://raw.githubusercontent.com/zazzo9039/kozojs/main/assets/brand/kozo-banner.jpg" alt="Kozo — TypeScript backend framework: Routes · Validation · OpenAPI · Generated Client" width="960">
+  </a>
+</p>
+
 # @kozojs/redis
 
 Redis integration for Kozo — cache, pub/sub, and distributed rate-limit store.
