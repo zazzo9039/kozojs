@@ -33,7 +33,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the maintainers via [GitHub security advisories](https://github.com/zazzo9039/kozo/security/advisories/new) or the contact on the [maintainer profile](https://github.com/zazzo9039). All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the maintainers via [GitHub security advisories](https://github.com/zazzo9039/kozojs/security/advisories/new) or the contact on the [maintainer profile](https://github.com/zazzo9039). All complaints will be reviewed and investigated promptly and fairly.
 
 ## Attribution
 

@@ -1,6 +1,6 @@
 # @kozojs/db
 
-Drizzle ORM integration for [Kozo Framework](https://github.com/zazzo9039/kozo).  
+Drizzle ORM integration for [Kozo Framework](https://github.com/zazzo9039/kozojs).  
 Supports **PostgreSQL** and **SQLite** for production use (including query helpers).  
 **MySQL** is connection-only in 0.5.x — use raw Drizzle, not the built-in CRUD helpers.
 

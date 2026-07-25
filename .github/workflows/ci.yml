@@ -267,6 +267,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write # OIDC provenance
     steps:
       - uses: actions/setup-node@v6
         with:
@@ -292,6 +293,6 @@ jobs:
               continue
             fi
             echo "publish - $name@$version"
-            # Provenance requires a public GitHub repo; ours is private → E422.
-            npm publish "$t" --access public --provenance=false
+            
+            npm publish "$t" --access public --provenance
           done

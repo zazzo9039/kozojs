@@ -8,7 +8,7 @@ Thanks for your interest in Kozo. This is a monorepo (`pnpm` workspaces) publish
 - **pnpm** 9.x (see `packageManager` in root `package.json`)
 
 ```bash
-git clone https://github.com/zazzo9039/kozo.git
+git clone https://github.com/zazzo9039/kozojs.git
 cd kozo
 pnpm install
 pnpm build

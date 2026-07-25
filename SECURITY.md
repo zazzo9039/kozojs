@@ -13,7 +13,7 @@ Security fixes are released for the latest **`0.5.x`** line on npm. Older minors
 
 **Please do not open a public GitHub issue for security problems.**
 
-1. Open a **[private security advisory](https://github.com/zazzo9039/kozo/security/advisories/new)** on this repository, **or**
+1. Open a **[private security advisory](https://github.com/zazzo9039/kozojs/security/advisories/new)** on this repository, **or**
 2. Email the maintainers via the contact on the [GitHub profile](https://github.com/zazzo9039) with:
    - Affected package(s) and version(s)
    - Steps to reproduce

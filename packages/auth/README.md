@@ -1,6 +1,6 @@
 # @kozojs/auth
 
-Authentication for [Kozo](https://github.com/zazzo9039/kozo) that stays on the native uWebSockets fast path — JWT guards, roles, no Hono bridge. Built on [`jose`](https://github.com/panva/jose).
+Authentication for [Kozo](https://github.com/zazzo9039/kozojs) that stays on the native uWebSockets fast path — JWT guards, roles, no Hono bridge. Built on [`jose`](https://github.com/panva/jose).
 
 ## Install
 
@@ -136,7 +136,7 @@ export default canActivate(isAuthenticated, hasRole('admin'));
 
 ## See also
 
-- [@kozojs/core guards](https://github.com/zazzo9039/kozo/tree/main/packages/core#guards-security--single-source-of-truth) — `app.guard()`, `rateLimitGuard`, transport-agnostic security
+- [@kozojs/core guards](https://github.com/zazzo9039/kozojs/tree/main/packages/core#guards-security--single-source-of-truth) — `app.guard()`, `rateLimitGuard`, transport-agnostic security
 - [`@kozojs/core` README](../core/README.md) — full framework reference
 
 ## License

@@ -10,10 +10,10 @@
   "author": "Kozo Team",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zazzo9039/kozo.git"
+    "url": "https://github.com/zazzo9039/kozojs.git"
   },
-  "homepage": "https://github.com/zazzo9039/kozo#readme",
-  "bugs": "https://github.com/zazzo9039/kozo/issues",
+  "homepage": "https://github.com/zazzo9039/kozojs#readme",
+  "bugs": "https://github.com/zazzo9039/kozojs/issues",
   "files": [
     "lib",
     "README.md"

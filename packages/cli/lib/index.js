@@ -4985,10 +4985,10 @@ var package_default = {
   license: "MIT",
   repository: {
     type: "git",
-    url: "https://github.com/zazzo9039/kozo.git"
+    url: "https://github.com/zazzo9039/kozojs.git"
   },
-  homepage: "https://github.com/zazzo9039/kozo#readme",
-  bugs: "https://github.com/zazzo9039/kozo/issues",
+  homepage: "https://github.com/zazzo9039/kozojs#readme",
+  bugs: "https://github.com/zazzo9039/kozojs/issues",
   engines: {
     node: ">=20.19.0"
   },

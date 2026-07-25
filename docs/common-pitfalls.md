@@ -195,7 +195,7 @@ not the npm registry, so `pnpm add uWebSockets.js` alone will fail.
 
 **Cause:** Old CLI version without bundled templates, or running outside the monorepo without published package.
 
-**Fix:** Upgrade `@kozojs/cli` or see the [public Kozo repo](https://github.com/zazzo9039/kozo) and use:
+**Fix:** Upgrade `@kozojs/cli` or see the [public Kozo repo](https://github.com/zazzo9039/kozojs) and use:
 
 ```bash
 node packages/cli/lib/index.js my-app --template file-routing

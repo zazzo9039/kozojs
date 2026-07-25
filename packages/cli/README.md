@@ -1,6 +1,6 @@
 # @kozojs/cli
 
-🔥 **Scaffold a [Kozo](https://github.com/zazzo9039/kozo) backend** — file-system routes, services and auth, structured from day one.
+🔥 **Scaffold a [Kozo](https://github.com/zazzo9039/kozojs) backend** — file-system routes, services and auth, structured from day one.
 
 ## Quick Start
 
