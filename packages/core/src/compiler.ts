@@ -165,6 +165,7 @@ function buildCtx(c: Context, extra?: Record<string, unknown>): Record<string, u
   ctx.body = undefined;
   ctx.query = undefined;
   ctx.params = undefined;
+  ctx.headers = undefined;
   ctx.services = undefined;
   ctx.user = (c as any).get?.('user') ?? null;
   ctx.req = new HonoReqAdapter(c);
@@ -178,6 +179,7 @@ function buildCtx(c: Context, extra?: Record<string, unknown>): Record<string, u
     if (extra.body !== undefined) ctx.body = extra.body;
     if (extra.query !== undefined) ctx.query = extra.query;
     if (extra.params !== undefined) ctx.params = extra.params;
+    if (extra.headers !== undefined) ctx.headers = extra.headers;
     if (extra.services !== undefined) ctx.services = extra.services;
   }
   return ctx;
@@ -217,6 +219,7 @@ function buildUwsHandlerContext(
   params: Record<string, string>,
   body: unknown,
   query: Record<string, string> | undefined,
+  headers: Record<string, string> | undefined,
   services: Services,
   ser: (data: any) => string,
   method: string,
@@ -240,6 +243,7 @@ function buildUwsHandlerContext(
     body,
     params,
     query,
+    headers,
     services,
     user: user ?? null,
     header(name: string, value: string) {
@@ -295,7 +299,13 @@ function compileScopedRouteHandler(
   scope: AnyScopeConfig,
   errorHook?: KozoErrorHook,
 ): CompiledHandler {
-  const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
+  const {
+    validateBody: vb,
+    validateQuery: vq,
+    validateParams: vp,
+    validateHeaders: vh,
+    serialize,
+  } = compiled;
   const ser = serialize ?? toJsonBody;
 
   if (vb) {
@@ -309,9 +319,11 @@ function compileScopedRouteHandler(
         if (vq) { query = c.req.query(); const r = vq(query); if (!r.valid) return validationErrorResponse('query', r.errors, path); }
         let params: Record<string, string> | undefined;
         if (vp) { params = c.req.param() as Record<string, string>; const r = vp(params); if (!r.valid) return validationErrorResponse('params', r.errors, path); }
+        let headers: Record<string, string> | undefined;
+        if (vh) { headers = Object.fromEntries(c.req.raw.headers.entries()); const r = vh(headers); if (!r.valid) return validationErrorResponse('headers', r.errors, path); }
         return await runHonoScoped(scope, req, async (services, signalError) => {
           try {
-            const result = await handler(buildCtx(c, { body, query, params, services }));
+            const result = await handler(buildCtx(c, { body, query, params, headers, services }));
             return honoResultToResponse(c, result, ser);
           } catch (err) {
             signalError(err as Error);
@@ -332,9 +344,11 @@ function compileScopedRouteHandler(
       if (vq) { query = c.req.query(); const r = vq(query); if (!r.valid) return validationErrorResponse('query', r.errors, path); }
       let params: Record<string, string> | undefined;
       if (vp) { params = c.req.param() as Record<string, string>; const r = vp(params); if (!r.valid) return validationErrorResponse('params', r.errors, path); }
+      let headers: Record<string, string> | undefined;
+      if (vh) { headers = Object.fromEntries(c.req.raw.headers.entries()); const r = vh(headers); if (!r.valid) return validationErrorResponse('headers', r.errors, path); }
       return await runHonoScoped(scope, req, async (services, signalError) => {
         try {
-          const extra = { query, params, services };
+          const extra = { query, params, headers, services };
           const result = handler.length === 0 ? (handler as any)() : handler(buildCtx(c, extra));
           if (result != null && typeof (result as any).then === 'function') {
             const r = await result;
@@ -356,6 +370,7 @@ export type CompiledRoute = {
   validateBody?: ZValidator;
   validateQuery?: ZValidator;
   validateParams?: ZValidator;
+  validateHeaders?: ZValidator;
   serialize?: (data: any) => string;
 };
 
@@ -439,7 +454,12 @@ export class SchemaCompiler {
       compiled.validateParams = makeZValidator(schema.params);
     }
 
-    // 4. Serializer — fast-json-stringify from Zod response schema. A schema
+    // 4. Headers
+    if (schema.headers && isZodSchema(schema.headers)) {
+      compiled.validateHeaders = makeZValidator(schema.headers);
+    }
+
+    // 5. Serializer — fast-json-stringify from Zod response schema. A schema
     //    that cannot be compiled falls back to JSON.stringify; that fallback is
     //    reported (warn in dev, throw in prod) so it is never silent — see F-11.
     if (schema.response) {
@@ -477,7 +497,13 @@ export function compileRouteHandler(
     return compileScopedRouteHandler(handler, compiled, scope, errorHook);
   }
 
-  const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
+  const {
+    validateBody: vb,
+    validateQuery: vq,
+    validateParams: vp,
+    validateHeaders: vh,
+    serialize,
+  } = compiled;
   const svc = services != null && Object.keys(services).length > 0 ? services : undefined;
   const ser = serialize ?? toJsonBody;
   const noArgs = handler.length === 0;
@@ -493,7 +519,9 @@ export function compileRouteHandler(
         if (vq) { query = c.req.query(); const r = vq(query); if (!r.valid) return validationErrorResponse('query', r.errors, path); }
         let params: Record<string, string> | undefined;
         if (vp) { params = c.req.param() as Record<string, string>; const r = vp(params); if (!r.valid) return validationErrorResponse('params', r.errors, path); }
-        const result = await handler(buildCtx(c, { body, query, params, services: svc }));
+        let headers: Record<string, string> | undefined;
+        if (vh) { headers = Object.fromEntries(c.req.raw.headers.entries()); const r = vh(headers); if (!r.valid) return validationErrorResponse('headers', r.errors, path); }
+        const result = await handler(buildCtx(c, { body, query, params, headers, services: svc }));
         return honoResultToResponse(c, result, ser);
       } catch (err) {
         return await resolveHandlerError(err, path, c, errorHook);
@@ -509,7 +537,9 @@ export function compileRouteHandler(
       if (vq) { query = c.req.query(); const r = vq(query); if (!r.valid) return validationErrorResponse('query', r.errors, c.req.path); }
       let params: Record<string, string> | undefined;
       if (vp) { params = c.req.param() as Record<string, string>; const r = vp(params); if (!r.valid) return validationErrorResponse('params', r.errors, c.req.path); }
-      const extra = (query || params || svc) ? { query, params, services: svc } : undefined;
+      let headers: Record<string, string> | undefined;
+      if (vh) { headers = Object.fromEntries(c.req.raw.headers.entries()); const r = vh(headers); if (!r.valid) return validationErrorResponse('headers', r.errors, c.req.path); }
+      const extra = (query || params || headers || svc) ? { query, params, headers, services: svc } : undefined;
       const result = noArgs ? (handler as any)() : handler(buildCtx(c, extra));
       if (result instanceof Response) return result;
       if (result != null && typeof (result as any).then === 'function') {
@@ -545,7 +575,13 @@ export function compileUwsNativeHandler(
   maxBodyBytes: number = DEFAULT_MAX_BODY_BYTES,
   method: string = 'GET',
 ): UwsNativeHandler {
-  const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
+  const {
+    validateBody: vb,
+    validateQuery: vq,
+    validateParams: vp,
+    validateHeaders: vh,
+    serialize,
+  } = compiled;
   const svc = services != null && Object.keys(services).length > 0 ? services : undefined;
   const ser = serialize ?? toJsonBody;
   const noArgs = handler.length === 0;
@@ -558,6 +594,7 @@ export function compileUwsNativeHandler(
     params: Record<string, string>,
     body: unknown,
     query: Record<string, string> | undefined,
+    headers: Record<string, string> | undefined,
     runServices: Services | undefined,
     corsHeaders?: import('./uws-transport.js').CorsHeaders,
     reqHeaders?: Record<string, string>,
@@ -565,7 +602,7 @@ export function compileUwsNativeHandler(
     user?: unknown,
   ): void {
     const { ctx, responded, finalCors } = buildUwsHandlerContext(
-      uwsRes, url, rawBody, params, body, query, runServices ?? ({} as Services), ser, method, remoteAddress, corsHeaders, reqHeaders, user,
+      uwsRes, url, rawBody, params, body, query, headers, runServices ?? ({} as Services), ser, method, remoteAddress, corsHeaders, reqHeaders, user,
     );
     const result = noArgs ? (handler as any)() : handler(ctx);
     if (result != null && typeof (result as any).then === 'function') {
@@ -608,13 +645,15 @@ export function compileUwsNativeHandler(
       let query: Record<string, string> | undefined;
       if (vq) { const qIdx = url.indexOf('?'); query = qIdx === -1 ? {} : fastParseQuery(url.slice(qIdx + 1)); const r = vq(query); if (!r.valid) { uwsFastWrite400('query', r.errors, uwsRes, corsHeaders); return; } }
       if (vp) { const r = vp(params); if (!r.valid) { uwsFastWrite400('params', r.errors, uwsRes, corsHeaders); return; } }
+      let headers: Record<string, string> | undefined;
+      if (vh) { headers = { ...(reqHeaders ?? {}) }; const r = vh(headers); if (!r.valid) { uwsFastWrite400('headers', r.errors, uwsRes, corsHeaders); return; } }
 
       if (hasScope && scope) {
         void (async () => {
           let err: Error | undefined;
           const resolved = await resolveScopedServices(scope, new UwsReqAdapter(url, method, rawBody, reqHeaders ?? {}, remoteAddress));
           try {
-            runUwsHandler(uwsRes, url, rawBody, params, body, query, resolved.services, corsHeaders, reqHeaders, remoteAddress, user);
+            runUwsHandler(uwsRes, url, rawBody, params, body, query, headers, resolved.services, corsHeaders, reqHeaders, remoteAddress, user);
           } catch (e) {
             err = e as Error;
             if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
@@ -625,7 +664,7 @@ export function compileUwsNativeHandler(
         return;
       }
 
-      runUwsHandler(uwsRes, url, rawBody, params, body, query, svc, corsHeaders, reqHeaders, remoteAddress, user);
+      runUwsHandler(uwsRes, url, rawBody, params, body, query, headers, svc, corsHeaders, reqHeaders, remoteAddress, user);
     } catch (err) { if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders); }
   };
 }

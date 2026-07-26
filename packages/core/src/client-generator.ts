@@ -29,6 +29,7 @@ export interface RouteInfo {
     body?: any;
     query?: any;
     params?: any;
+    headers?: any;
     response?: any;
   };
 }
@@ -156,6 +157,7 @@ export function generateTypedClient(
     let paramsType = 'void';
     let bodyType = 'void';
     let queryType = 'void';
+    let headersType = 'void';
     let responseType = 'unknown';
     
     if (pathParams.length > 0) {
@@ -181,6 +183,16 @@ export function generateTypedClient(
         schemaExports.push(`export const ${schemaVarName} = ${src};`);
       }
     }
+
+    if (route.zodSchemas?.headers || route.schema.headers) {
+      const schemaVarName = `${capitalize(methodName)}HeadersSchema`;
+      schemaVars.set(`${methodName}_headers`, schemaVarName);
+      if (includeValidation) {
+        headersType = `z.infer<typeof ${schemaVarName}>`;
+        const src = zodToString(route.zodSchemas?.headers ?? route.schema.headers);
+        schemaExports.push(`export const ${schemaVarName} = ${src};`);
+      }
+    }
     
     if (route.zodSchemas?.response || route.schema.response) {
       const schemaVarName = `${capitalize(methodName)}ResponseSchema`;
@@ -202,6 +214,9 @@ export function generateTypedClient(
     if (queryType !== 'void' && !queryType.includes('z.infer')) {
       typeDefinitions.push(`export type ${capitalize(methodName)}Query = ${queryType};`);
     }
+    if (headersType !== 'void' && !headersType.includes('z.infer')) {
+      typeDefinitions.push(`export type ${capitalize(methodName)}Headers = ${headersType};`);
+    }
     if (!responseType.includes('z.infer')) {
       typeDefinitions.push(`export type ${capitalize(methodName)}Response = ${responseType};`);
     }
@@ -211,6 +226,7 @@ export function generateTypedClient(
     if (paramsType !== 'void') args.push(`params: ${paramsType}`);
     if (bodyType !== 'void') args.push(`body: ${bodyType}`);
     if (queryType !== 'void') args.push(`query?: ${queryType}`);
+    if (headersType !== 'void') args.push(`headers: ${headersType}`);
     args.push('init?: KozoRequestInit');
 
     const argsStr = args.join(', ');
@@ -225,6 +241,15 @@ export function generateTypedClient(
       if (schemaVar) {
         methodBody += `    if (this.validateRequests && ${schemaVar}) {\n`;
         methodBody += `      ${schemaVar}.parse(body);\n`;
+        methodBody += `    }\n`;
+      }
+    }
+
+    if (includeValidation && headersType !== 'void') {
+      const schemaVar = schemaVars.get(`${methodName}_headers`);
+      if (schemaVar) {
+        methodBody += `    if (this.validateRequests && ${schemaVar}) {\n`;
+        methodBody += `      ${schemaVar}.parse(headers);\n`;
         methodBody += `    }\n`;
       }
     }
@@ -254,7 +279,12 @@ export function generateTypedClient(
     // Delegate to the shared transport (auth, hooks, RFC 7807 errors)
     const requestArgs = [`method: '${route.method.toUpperCase()}'`];
     if (bodyType !== 'void') requestArgs.push('body');
-    requestArgs.push('signal: init?.signal', 'headers: init?.headers');
+    requestArgs.push(
+      'signal: init?.signal',
+      headersType !== 'void'
+        ? 'headers: { ...headers, ...init?.headers }'
+        : 'headers: init?.headers',
+    );
     methodBody += `    return this.request(url, { ${requestArgs.join(', ')} });\n`;
     methodBody += `  }\n`;
 

@@ -2,8 +2,8 @@ import * as hono from 'hono';
 import { MiddlewareHandler, Context } from 'hono';
 import { Hono } from 'hono/quick';
 import { Server, IncomingMessage, ServerResponse } from 'node:http';
-import { R as RouteSchema, S as Services, K as KozoConfig, a as KozoHandler, b as RouteMeta, c as KozoEnv, d as KozoGuard, H as HttpMethod$1, e as KozoRequest, N as NativeKozoContext, f as RouteDefinition, M as MiddlewareDefinition, g as RouteModule, h as ResolvedRouteModule } from './index-DCQtR9X2.js';
-export { C as ClientAddressSource, B as CorsOptions, X as FileSystemRoutingOptions, w as GuardDeny, x as GuardEntry, v as GuardOutcome, G as GuardRequest, u as GuardResult, p as Infer, o as InferResponse, I as InferSchema, j as KozoContext, l as KozoServices, k as KozoUser, L as LoggerOptions, Z as ManifestHttpMethod, Y as ManifestRoute, n as NativeKozoHandler, O as RateLimitGuardOptions, J as RateLimitOptions, P as RateLimitStore, Q as RateLimitStoreRecord, m as RouteContext, i as RouteDefinitionOptions, _ as RoutesManifest, T as TrustProxy, a0 as WebhookVerifyOptions, V as applyFileSystemRouting, F as clearRateLimitStore, t as compileGuardPattern, A as cors, W as createFileSystemRouting, r as createRouteFactory, q as defineRoute, U as errorHandler, s as guardToHonoMiddleware, z as logger, D as rateLimit, E as rateLimitGuard, y as resolveClientIp, $ as verifyWebhookSignature } from './index-DCQtR9X2.js';
+import { R as RouteSchema, H as HttpMethod$1, S as Services, K as KozoHandler, a as RouteMeta, b as KozoConfig, c as KozoEnv, d as KozoGuard, e as KozoRequest, N as NativeKozoContext, f as RouteDefinition, M as MiddlewareDefinition, g as RouteModule, h as ResolvedRouteModule } from './index-BciKqigK.js';
+export { C as ClientAddressSource, B as CorsOptions, X as FileSystemRoutingOptions, w as GuardDeny, x as GuardEntry, v as GuardOutcome, G as GuardRequest, u as GuardResult, p as Infer, o as InferResponse, I as InferSchema, j as KozoContext, l as KozoServices, k as KozoUser, L as LoggerOptions, Z as ManifestHttpMethod, Y as ManifestRoute, n as NativeKozoHandler, O as RateLimitGuardOptions, J as RateLimitOptions, P as RateLimitStore, Q as RateLimitStoreRecord, m as RouteContext, i as RouteDefinitionOptions, _ as RoutesManifest, T as TrustProxy, a0 as WebhookVerifyOptions, V as applyFileSystemRouting, F as clearRateLimitStore, t as compileGuardPattern, A as cors, W as createFileSystemRouting, r as createRouteFactory, q as defineRoute, U as errorHandler, s as guardToHonoMiddleware, z as logger, D as rateLimit, E as rateLimitGuard, y as resolveClientIp, $ as verifyWebhookSignature } from './index-BciKqigK.js';
 import { Writable } from 'node:stream';
 import { z } from 'zod';
 export { z } from 'zod';
@@ -33,6 +33,7 @@ interface RouteInfo {
         body?: any;
         query?: any;
         params?: any;
+        headers?: any;
         response?: any;
     };
 }
@@ -313,6 +314,51 @@ declare function createSsrServer(config: SsrConfig, honoHandler: (req: IncomingM
     port: number;
 }>;
 
+/**
+ * Compile-time description of one registered HTTP route.
+ *
+ * The handler is intentionally not part of this type: consumers only need the
+ * method, literal path, and schemas to derive clients and test helpers.
+ */
+interface ContractRoute<TMethod extends HttpMethod$1 = HttpMethod$1, TPath extends string = string, TSchema extends RouteSchema = RouteSchema> {
+    readonly method: TMethod;
+    readonly path: TPath;
+    readonly schema: TSchema;
+}
+type AnyContractRoute = ContractRoute<HttpMethod$1, string, RouteSchema>;
+type TrimLeadingSlash<TPath extends string> = TPath extends `/${infer TRest}` ? TrimLeadingSlash<TRest> : TPath;
+type TrimTrailingSlash<TPath extends string> = TPath extends `${infer TRest}/` ? TrimTrailingSlash<TRest> : TPath;
+type TrimSlashes<TPath extends string> = TrimTrailingSlash<TrimLeadingSlash<TPath>>;
+/**
+ * Join a route prefix and child path with exactly one leading separator.
+ */
+type JoinRoutePaths<TPrefix extends string, TPath extends string, TPrefixPart extends string = TrimSlashes<TPrefix>, TPathPart extends string = TrimSlashes<TPath>> = TPrefixPart extends '' ? TPathPart extends '' ? '/' : `/${TPathPart}` : TPathPart extends '' ? `/${TPrefixPart}` : `/${TPrefixPart}/${TPathPart}`;
+type PrefixContractRoutes<TPrefix extends string, TRoutes extends AnyContractRoute> = TRoutes extends ContractRoute<infer TMethod, infer TPath, infer TSchema> ? ContractRoute<TMethod, JoinRoutePaths<TPrefix, TPath>, TSchema> : never;
+/**
+ * Fluent, statically typed collection of Kozo routes.
+ *
+ * Capture the returned value (normally by chaining calls) so TypeScript can
+ * retain the accumulated route union.
+ */
+declare class RouteContract<TServices extends Services = Services, TRoutes extends AnyContractRoute = never> {
+    private readonly registrations;
+    get<const TPath extends string>(path: TPath, handler: KozoHandler<{}, TServices>): RouteContract<TServices, TRoutes | ContractRoute<'get', TPath, {}>>;
+    get<const TPath extends string, const TSchema extends RouteSchema>(path: TPath, schema: TSchema, handler: KozoHandler<TSchema, TServices>, meta?: RouteMeta): RouteContract<TServices, TRoutes | ContractRoute<'get', TPath, TSchema>>;
+    post<const TPath extends string>(path: TPath, handler: KozoHandler<{}, TServices>): RouteContract<TServices, TRoutes | ContractRoute<'post', TPath, {}>>;
+    post<const TPath extends string, const TSchema extends RouteSchema>(path: TPath, schema: TSchema, handler: KozoHandler<TSchema, TServices>, meta?: RouteMeta): RouteContract<TServices, TRoutes | ContractRoute<'post', TPath, TSchema>>;
+    put<const TPath extends string>(path: TPath, handler: KozoHandler<{}, TServices>): RouteContract<TServices, TRoutes | ContractRoute<'put', TPath, {}>>;
+    put<const TPath extends string, const TSchema extends RouteSchema>(path: TPath, schema: TSchema, handler: KozoHandler<TSchema, TServices>, meta?: RouteMeta): RouteContract<TServices, TRoutes | ContractRoute<'put', TPath, TSchema>>;
+    patch<const TPath extends string>(path: TPath, handler: KozoHandler<{}, TServices>): RouteContract<TServices, TRoutes | ContractRoute<'patch', TPath, {}>>;
+    patch<const TPath extends string, const TSchema extends RouteSchema>(path: TPath, schema: TSchema, handler: KozoHandler<TSchema, TServices>, meta?: RouteMeta): RouteContract<TServices, TRoutes | ContractRoute<'patch', TPath, TSchema>>;
+    delete<const TPath extends string>(path: TPath, handler: KozoHandler<{}, TServices>): RouteContract<TServices, TRoutes | ContractRoute<'delete', TPath, {}>>;
+    delete<const TPath extends string, const TSchema extends RouteSchema>(path: TPath, schema: TSchema, handler: KozoHandler<TSchema, TServices>, meta?: RouteMeta): RouteContract<TServices, TRoutes | ContractRoute<'delete', TPath, TSchema>>;
+    private add;
+}
+/** Create an empty route contract. Capture route additions through chaining. */
+declare function createRouter<TServices extends Services = Services>(): RouteContract<TServices>;
+/** Descriptive alias for {@link createRouter}. */
+declare const defineRoutes: typeof createRouter;
+
 interface Plugin {
     name: string;
     version?: string;
@@ -348,10 +394,10 @@ interface MountDocsOptions {
  * A route sub-router that prepends a fixed prefix to every registered path.
  * Created via `app.group('/prefix', (r) => { r.get('/...', handler) })`.
  */
-declare class KozoGroup<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>> {
+declare class KozoGroup<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>, TRoutes extends AnyContractRoute = never> {
     private readonly prefix;
     private readonly parent;
-    constructor(prefix: string, parent: Kozo<TServices, TScoped>);
+    constructor(prefix: string, parent: Kozo<TServices, TScoped, TRoutes>);
     get(path: string, handler: KozoHandler<{}, TServices>): this;
     get<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
     post(path: string, handler: KozoHandler<{}, TServices>): this;
@@ -362,6 +408,8 @@ declare class KozoGroup<TServices extends Services = Services, TScoped extends R
     patch<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
     delete(path: string, handler: KozoHandler<{}, TServices>): this;
     delete<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
+    /** Create a nested runtime group while preserving normalized paths. */
+    group(prefix: string, fn: (router: KozoGroup<TServices, TScoped, TRoutes>) => void): this;
 }
 /**
  * Kozo - High-performance TypeScript framework with Zod schemas
@@ -370,7 +418,7 @@ declare class KozoGroup<TServices extends Services = Services, TScoped extends R
  *   Pass it once at construction: `createKozo<{ db: Database }>({ services: { db } })`
  *   and all handler contexts will have `ctx.services.db` fully typed.
  */
-declare class Kozo<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>> {
+declare class Kozo<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>, TRoutes extends AnyContractRoute = never> {
     private app;
     private services;
     private _scope?;
@@ -410,16 +458,16 @@ declare class Kozo<TServices extends Services = Services, TScoped extends Record
     loadRoutes(routesDir?: string): Promise<this>;
     generateClient(baseUrl?: string): string;
     generateClient(options?: ClientGeneratorOptions): string;
-    get(path: string, handler: KozoHandler<{}, TServices>): this;
-    get<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
-    post(path: string, handler: KozoHandler<{}, TServices>): this;
-    post<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
-    put(path: string, handler: KozoHandler<{}, TServices>): this;
-    put<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
-    patch(path: string, handler: KozoHandler<{}, TServices>): this;
-    patch<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
-    delete(path: string, handler: KozoHandler<{}, TServices>): this;
-    delete<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
+    get<const TPath extends string>(path: TPath, handler: KozoHandler<{}, TServices>): Kozo<TServices, TScoped, TRoutes | ContractRoute<'get', TPath, {}>>;
+    get<const TPath extends string, const TSchema extends RouteSchema>(path: TPath, schema: TSchema, handler: KozoHandler<TSchema, TServices>, meta?: RouteMeta): Kozo<TServices, TScoped, TRoutes | ContractRoute<'get', TPath, TSchema>>;
+    post<const TPath extends string>(path: TPath, handler: KozoHandler<{}, TServices>): Kozo<TServices, TScoped, TRoutes | ContractRoute<'post', TPath, {}>>;
+    post<const TPath extends string, const TSchema extends RouteSchema>(path: TPath, schema: TSchema, handler: KozoHandler<TSchema, TServices>, meta?: RouteMeta): Kozo<TServices, TScoped, TRoutes | ContractRoute<'post', TPath, TSchema>>;
+    put<const TPath extends string>(path: TPath, handler: KozoHandler<{}, TServices>): Kozo<TServices, TScoped, TRoutes | ContractRoute<'put', TPath, {}>>;
+    put<const TPath extends string, const TSchema extends RouteSchema>(path: TPath, schema: TSchema, handler: KozoHandler<TSchema, TServices>, meta?: RouteMeta): Kozo<TServices, TScoped, TRoutes | ContractRoute<'put', TPath, TSchema>>;
+    patch<const TPath extends string>(path: TPath, handler: KozoHandler<{}, TServices>): Kozo<TServices, TScoped, TRoutes | ContractRoute<'patch', TPath, {}>>;
+    patch<const TPath extends string, const TSchema extends RouteSchema>(path: TPath, schema: TSchema, handler: KozoHandler<TSchema, TServices>, meta?: RouteMeta): Kozo<TServices, TScoped, TRoutes | ContractRoute<'patch', TPath, TSchema>>;
+    delete<const TPath extends string>(path: TPath, handler: KozoHandler<{}, TServices>): Kozo<TServices, TScoped, TRoutes | ContractRoute<'delete', TPath, {}>>;
+    delete<const TPath extends string, const TSchema extends RouteSchema>(path: TPath, schema: TSchema, handler: KozoHandler<TSchema, TServices>, meta?: RouteMeta): Kozo<TServices, TScoped, TRoutes | ContractRoute<'delete', TPath, TSchema>>;
     /**
      * Group routes under a common path prefix.
      *
@@ -430,7 +478,14 @@ declare class Kozo<TServices extends Services = Services, TScoped extends Record
      *   r.post('/',   { body: CreateUserSchema }, (ctx) => createUser(ctx.body));
      * });
      */
-    group(prefix: string, fn: (router: KozoGroup<TServices>) => void): this;
+    group(prefix: string, fn: (router: KozoGroup<TServices, TScoped, TRoutes>) => void): this;
+    /**
+     * Register a statically typed route contract below a path prefix.
+     *
+     * The returned value carries the mounted route union for contract-aware
+     * tooling. Capture it through chaining or assignment.
+     */
+    mount<const TPrefix extends string, TContractRoutes extends AnyContractRoute>(prefix: TPrefix, contract: RouteContract<TServices, TContractRoutes>): Kozo<TServices, TScoped, TRoutes | PrefixContractRoutes<TPrefix, TContractRoutes>>;
     /**
      * Register a WebSocket endpoint (requires `nativeListen()` with uWebSockets.js).
      *
@@ -585,7 +640,7 @@ declare class Kozo<TServices extends Services = Services, TScoped extends Record
     mountDocs(options?: MountDocsOptions): this;
     get fetch(): (request: Request, Env?: unknown, executionCtx?: hono.ExecutionContext) => Response | Promise<Response>;
 }
-declare function createKozo<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>>(config?: KozoConfig<TServices, TScoped>): Kozo<TServices, TScoped>;
+declare function createKozo<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>>(config?: KozoConfig<TServices, TScoped>): Kozo<TServices, TScoped, never>;
 
 /** Tells the Kozo CLI which type to inject into `KozoServices` (auto-generated `.kozo/types.d.ts`). */
 interface KozoAppTypesRef {
@@ -664,6 +719,7 @@ type CompiledRoute = {
     validateBody?: ZValidator;
     validateQuery?: ZValidator;
     validateParams?: ZValidator;
+    validateHeaders?: ZValidator;
     serialize?: (data: any) => string;
 };
 /** Options controlling diagnostics for {@link SchemaCompiler.compile}. */
@@ -1285,4 +1341,4 @@ interface AssertStrongSecretOptions {
  */
 declare function assertStrongSecret(value: string | Uint8Array, options: AssertStrongSecretOptions): void;
 
-export { type AssertStrongSecretOptions, BadRequestError, type ClientGeneratorOptions, type CompiledRoute, ConflictError, type DefineKozoAppOptions, ERROR_RESPONSES, ForbiddenError, GENERATE_SECRET_COMMAND, GoneError, type InflightTracker, KNOWN_WEAK_SECRETS, KOZO_CONFIG_CANDIDATES, KOZO_TYPES_CANDIDATES, KOZO_TYPES_OUTPUT, Kozo, type KozoAppDefinition, type KozoAppHooks, type KozoAppTypesRef, KozoConfig, KozoEnv, KozoError, KozoGroup, KozoGuard, KozoHandler, KozoRequest, type KozoWebSocket, MIN_SECRET_BYTES, MiddlewareDefinition, type MountDocsOptions, NativeKozoContext, NotFoundError, type OpenAPIConfig, OpenAPIGenerator, type OpenAPIInfo, type OpenAPISpec, type PaginatedResult, type Plugin, type ProblemDetails, type RequireSecretOptions, ResolvedRouteModule, type RouteInfo, RouteMeta, RouteModule, RouteSchema, SchemaCompiler, Services, ShutdownManager, type ShutdownOptions, type ShutdownState, type SsrConfig, type SsrRenderFn, type SsrRenderResult, UnauthorizedError, type ValidationError, ValidationFailedError, type WebSocketHandler, type WsUpgradeRequest, assertStrongSecret, buildKozoApp, buildNativeContext, compileRouteHandler, createInflightTracker, createKozo, createOpenAPIGenerator, createShutdownManager, createSsrServer, defineEnv, defineKozoApp, deletedSchema, fastCL, fastWrite400, fastWrite404, fastWrite500, fastWriteError, fastWriteHtml, fastWriteJson, fastWriteJsonStatus, fastWriteText, fileToPath, forbiddenResponse, formatZodErrors, generateSwaggerHtml, generateTypedClient, idParams, internalErrorResponse, isKnownWeakSecret, isMiddlewareFile, isRouteFile, notFoundResponse, paginate, paginationSchema, renderKozoTypesDts, requireSecret, resolveRouteModule, scanMiddleware, scanRoutes, searchSchema, secretByteLength, sortSchema, successSchema, timestamps, trackRequest, unauthorizedResponse, uuid, uuidParams, validationErrorResponse };
+export { type AnyContractRoute, type AssertStrongSecretOptions, BadRequestError, type ClientGeneratorOptions, type CompiledRoute, ConflictError, type ContractRoute, type DefineKozoAppOptions, ERROR_RESPONSES, ForbiddenError, GENERATE_SECRET_COMMAND, GoneError, type InflightTracker, type JoinRoutePaths, KNOWN_WEAK_SECRETS, KOZO_CONFIG_CANDIDATES, KOZO_TYPES_CANDIDATES, KOZO_TYPES_OUTPUT, Kozo, type KozoAppDefinition, type KozoAppHooks, type KozoAppTypesRef, KozoConfig, KozoEnv, KozoError, KozoGroup, KozoGuard, KozoHandler, KozoRequest, type KozoWebSocket, MIN_SECRET_BYTES, MiddlewareDefinition, type MountDocsOptions, NativeKozoContext, NotFoundError, type OpenAPIConfig, OpenAPIGenerator, type OpenAPIInfo, type OpenAPISpec, type PaginatedResult, type Plugin, type PrefixContractRoutes, type ProblemDetails, type RequireSecretOptions, ResolvedRouteModule, RouteContract, type RouteInfo, RouteMeta, RouteModule, RouteSchema, SchemaCompiler, Services, ShutdownManager, type ShutdownOptions, type ShutdownState, type SsrConfig, type SsrRenderFn, type SsrRenderResult, UnauthorizedError, type ValidationError, ValidationFailedError, type WebSocketHandler, type WsUpgradeRequest, assertStrongSecret, buildKozoApp, buildNativeContext, compileRouteHandler, createInflightTracker, createKozo, createOpenAPIGenerator, createRouter, createShutdownManager, createSsrServer, defineEnv, defineKozoApp, defineRoutes, deletedSchema, fastCL, fastWrite400, fastWrite404, fastWrite500, fastWriteError, fastWriteHtml, fastWriteJson, fastWriteJsonStatus, fastWriteText, fileToPath, forbiddenResponse, formatZodErrors, generateSwaggerHtml, generateTypedClient, idParams, internalErrorResponse, isKnownWeakSecret, isMiddlewareFile, isRouteFile, notFoundResponse, paginate, paginationSchema, renderKozoTypesDts, requireSecret, resolveRouteModule, scanMiddleware, scanRoutes, searchSchema, secretByteLength, sortSchema, successSchema, timestamps, trackRequest, unauthorizedResponse, uuid, uuidParams, validationErrorResponse };

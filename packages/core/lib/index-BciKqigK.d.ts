@@ -8,6 +8,7 @@ type RouteSchema = {
     body?: SchemaType;
     query?: SchemaType;
     params?: SchemaType;
+    headers?: SchemaType;
     response?: SchemaType | Record<number, SchemaType>;
 };
 type InferSchema<T> = T extends z.ZodType<any> ? z.infer<T> : unknown;
@@ -105,6 +106,8 @@ type KozoContext<S extends RouteSchema = {}, TServices extends Services = Servic
     query: InferSchema<S['query']>;
     /** Parsed + validated path params — typed from `schema.params` */
     params: InferSchema<S['params']>;
+    /** Parsed + validated request headers — typed from `schema.headers` */
+    headers: InferSchema<S['headers']>;
     /** Injected services — typed from `createKozo<TServices>()` */
     services: TServices;
     /** Authenticated user set by JWT middleware — extend `KozoUser` for custom fields */
@@ -658,4 +661,4 @@ interface WebhookVerifyOptions {
  */
 declare function verifyWebhookSignature(options: WebhookVerifyOptions): (c: Context, next: Next) => Promise<Response | void>;
 
-export { verifyWebhookSignature as $, cors as A, type CorsOptions as B, type ClientAddressSource as C, rateLimit as D, rateLimitGuard as E, clearRateLimitStore as F, type GuardRequest as G, type HttpMethod as H, type InferSchema as I, type RateLimitOptions as J, type KozoConfig as K, type LoggerOptions as L, type MiddlewareDefinition as M, type NativeKozoContext as N, type RateLimitGuardOptions as O, type RateLimitStore as P, type RateLimitStoreRecord as Q, type RouteSchema as R, type Services as S, type TrustProxy as T, errorHandler as U, applyFileSystemRouting as V, createFileSystemRouting as W, type FileSystemRoutingOptions as X, type ManifestRoute as Y, type ManifestHttpMethod as Z, type RoutesManifest as _, type KozoHandler as a, type WebhookVerifyOptions as a0, type RouteMeta as b, type KozoEnv as c, type KozoGuard as d, type KozoRequest as e, type RouteDefinition as f, type RouteModule as g, type ResolvedRouteModule as h, type RouteDefinitionOptions as i, type KozoContext as j, type KozoUser as k, type KozoServices as l, type RouteContext as m, type NativeKozoHandler as n, type InferResponse as o, type Infer as p, defineRoute as q, createRouteFactory as r, guardToHonoMiddleware as s, compileGuardPattern as t, type GuardResult as u, type GuardOutcome as v, type GuardDeny as w, type GuardEntry as x, resolveClientIp as y, logger as z };
+export { verifyWebhookSignature as $, cors as A, type CorsOptions as B, type ClientAddressSource as C, rateLimit as D, rateLimitGuard as E, clearRateLimitStore as F, type GuardRequest as G, type HttpMethod as H, type InferSchema as I, type RateLimitOptions as J, type KozoHandler as K, type LoggerOptions as L, type MiddlewareDefinition as M, type NativeKozoContext as N, type RateLimitGuardOptions as O, type RateLimitStore as P, type RateLimitStoreRecord as Q, type RouteSchema as R, type Services as S, type TrustProxy as T, errorHandler as U, applyFileSystemRouting as V, createFileSystemRouting as W, type FileSystemRoutingOptions as X, type ManifestRoute as Y, type ManifestHttpMethod as Z, type RoutesManifest as _, type RouteMeta as a, type WebhookVerifyOptions as a0, type KozoConfig as b, type KozoEnv as c, type KozoGuard as d, type KozoRequest as e, type RouteDefinition as f, type RouteModule as g, type ResolvedRouteModule as h, type RouteDefinitionOptions as i, type KozoContext as j, type KozoUser as k, type KozoServices as l, type RouteContext as m, type NativeKozoHandler as n, type InferResponse as o, type Infer as p, defineRoute as q, createRouteFactory as r, guardToHonoMiddleware as s, compileGuardPattern as t, type GuardResult as u, type GuardOutcome as v, type GuardDeny as w, type GuardEntry as x, resolveClientIp as y, logger as z };

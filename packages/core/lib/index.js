@@ -77,6 +77,7 @@ function generateTypedClient(routes, options = {}) {
     let paramsType = "void";
     let bodyType = "void";
     let queryType = "void";
+    let headersType = "void";
     let responseType = "unknown";
     if (pathParams.length > 0) {
       paramsType = `{ ${pathParams.map((p) => `${p}: string`).join("; ")} }`;
@@ -99,6 +100,15 @@ function generateTypedClient(routes, options = {}) {
         schemaExports.push(`export const ${schemaVarName} = ${src};`);
       }
     }
+    if (route.zodSchemas?.headers || route.schema.headers) {
+      const schemaVarName = `${capitalize(methodName)}HeadersSchema`;
+      schemaVars.set(`${methodName}_headers`, schemaVarName);
+      if (includeValidation) {
+        headersType = `z.infer<typeof ${schemaVarName}>`;
+        const src = zodToString(route.zodSchemas?.headers ?? route.schema.headers);
+        schemaExports.push(`export const ${schemaVarName} = ${src};`);
+      }
+    }
     if (route.zodSchemas?.response || route.schema.response) {
       const schemaVarName = `${capitalize(methodName)}ResponseSchema`;
       schemaVars.set(`${methodName}_response`, schemaVarName);
@@ -116,6 +126,9 @@ function generateTypedClient(routes, options = {}) {
     if (queryType !== "void" && !queryType.includes("z.infer")) {
       typeDefinitions.push(`export type ${capitalize(methodName)}Query = ${queryType};`);
     }
+    if (headersType !== "void" && !headersType.includes("z.infer")) {
+      typeDefinitions.push(`export type ${capitalize(methodName)}Headers = ${headersType};`);
+    }
     if (!responseType.includes("z.infer")) {
       typeDefinitions.push(`export type ${capitalize(methodName)}Response = ${responseType};`);
     }
@@ -123,6 +136,7 @@ function generateTypedClient(routes, options = {}) {
     if (paramsType !== "void") args.push(`params: ${paramsType}`);
     if (bodyType !== "void") args.push(`body: ${bodyType}`);
     if (queryType !== "void") args.push(`query?: ${queryType}`);
+    if (headersType !== "void") args.push(`headers: ${headersType}`);
     args.push("init?: KozoRequestInit");
     const argsStr = args.join(", ");
     const returnType = `Promise<${responseType}>`;
@@ -134,6 +148,17 @@ function generateTypedClient(routes, options = {}) {
         methodBody += `    if (this.validateRequests && ${schemaVar}) {
 `;
         methodBody += `      ${schemaVar}.parse(body);
+`;
+        methodBody += `    }
+`;
+      }
+    }
+    if (includeValidation && headersType !== "void") {
+      const schemaVar = schemaVars.get(`${methodName}_headers`);
+      if (schemaVar) {
+        methodBody += `    if (this.validateRequests && ${schemaVar}) {
+`;
+        methodBody += `      ${schemaVar}.parse(headers);
 `;
         methodBody += `    }
 `;
@@ -166,7 +191,10 @@ function generateTypedClient(routes, options = {}) {
     }
     const requestArgs = [`method: '${route.method.toUpperCase()}'`];
     if (bodyType !== "void") requestArgs.push("body");
-    requestArgs.push("signal: init?.signal", "headers: init?.headers");
+    requestArgs.push(
+      "signal: init?.signal",
+      headersType !== "void" ? "headers: { ...headers, ...init?.headers }" : "headers: init?.headers"
+    );
     methodBody += `    return this.request(url, { ${requestArgs.join(", ")} });
 `;
     methodBody += `  }
@@ -1743,6 +1771,7 @@ function buildCtx(c, extra) {
   ctx.body = void 0;
   ctx.query = void 0;
   ctx.params = void 0;
+  ctx.headers = void 0;
   ctx.services = void 0;
   ctx.user = c.get?.("user") ?? null;
   ctx.req = new HonoReqAdapter(c);
@@ -1755,6 +1784,7 @@ function buildCtx(c, extra) {
     if (extra.body !== void 0) ctx.body = extra.body;
     if (extra.query !== void 0) ctx.query = extra.query;
     if (extra.params !== void 0) ctx.params = extra.params;
+    if (extra.headers !== void 0) ctx.headers = extra.headers;
     if (extra.services !== void 0) ctx.services = extra.services;
   }
   return ctx;
@@ -1776,7 +1806,7 @@ async function runHonoScoped(scope, req, run) {
     await resolved.finish(err);
   }
 }
-function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, services, ser, method, remoteAddress, corsHeaders, reqHeaders, user) {
+function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, headers, services, ser, method, remoteAddress, corsHeaders, reqHeaders, user) {
   let done = false;
   let userHeaders;
   const finalCors = () => {
@@ -1788,6 +1818,7 @@ function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, servi
     body,
     params,
     query,
+    headers,
     services,
     user: user ?? null,
     header(name, value) {
@@ -1837,7 +1868,13 @@ function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, servi
   return { ctx, responded: () => done, finalCors };
 }
 function compileScopedRouteHandler(handler, compiled, scope, errorHook) {
-  const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
+  const {
+    validateBody: vb,
+    validateQuery: vq,
+    validateParams: vp,
+    validateHeaders: vh,
+    serialize
+  } = compiled;
   const ser = serialize ?? toJsonBody;
   if (vb) {
     return async function hono_scoped_body(c) {
@@ -1861,9 +1898,15 @@ function compileScopedRouteHandler(handler, compiled, scope, errorHook) {
           const r = vp(params);
           if (!r.valid) return validationErrorResponse("params", r.errors, path2);
         }
+        let headers;
+        if (vh) {
+          headers = Object.fromEntries(c.req.raw.headers.entries());
+          const r = vh(headers);
+          if (!r.valid) return validationErrorResponse("headers", r.errors, path2);
+        }
         return await runHonoScoped(scope, req, async (services, signalError) => {
           try {
-            const result = await handler(buildCtx(c, { body, query, params, services }));
+            const result = await handler(buildCtx(c, { body, query, params, headers, services }));
             return honoResultToResponse(c, result, ser);
           } catch (err) {
             signalError(err);
@@ -1891,9 +1934,15 @@ function compileScopedRouteHandler(handler, compiled, scope, errorHook) {
         const r = vp(params);
         if (!r.valid) return validationErrorResponse("params", r.errors, path2);
       }
+      let headers;
+      if (vh) {
+        headers = Object.fromEntries(c.req.raw.headers.entries());
+        const r = vh(headers);
+        if (!r.valid) return validationErrorResponse("headers", r.errors, path2);
+      }
       return await runHonoScoped(scope, req, async (services, signalError) => {
         try {
-          const extra = { query, params, services };
+          const extra = { query, params, headers, services };
           const result = handler.length === 0 ? handler() : handler(buildCtx(c, extra));
           if (result != null && typeof result.then === "function") {
             const r = await result;
@@ -1941,6 +1990,9 @@ var SchemaCompiler = class {
     if (schema.params && isZodSchema2(schema.params)) {
       compiled.validateParams = makeZValidator(schema.params);
     }
+    if (schema.headers && isZodSchema2(schema.headers)) {
+      compiled.validateHeaders = makeZValidator(schema.headers);
+    }
     if (schema.response) {
       const meta = compileResponseSerializerWithMeta(schema.response);
       if (meta) {
@@ -1957,7 +2009,13 @@ function compileRouteHandler(handler, schema, services, compiled, scope, errorHo
   if (scope?.factory) {
     return compileScopedRouteHandler(handler, compiled, scope, errorHook);
   }
-  const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
+  const {
+    validateBody: vb,
+    validateQuery: vq,
+    validateParams: vp,
+    validateHeaders: vh,
+    serialize
+  } = compiled;
   const svc = services != null && Object.keys(services).length > 0 ? services : void 0;
   const ser = serialize ?? toJsonBody;
   const noArgs = handler.length === 0;
@@ -1982,7 +2040,13 @@ function compileRouteHandler(handler, schema, services, compiled, scope, errorHo
           const r = vp(params);
           if (!r.valid) return validationErrorResponse("params", r.errors, path2);
         }
-        const result = await handler(buildCtx(c, { body, query, params, services: svc }));
+        let headers;
+        if (vh) {
+          headers = Object.fromEntries(c.req.raw.headers.entries());
+          const r = vh(headers);
+          if (!r.valid) return validationErrorResponse("headers", r.errors, path2);
+        }
+        const result = await handler(buildCtx(c, { body, query, params, headers, services: svc }));
         return honoResultToResponse(c, result, ser);
       } catch (err) {
         return await resolveHandlerError(err, path2, c, errorHook);
@@ -2003,7 +2067,13 @@ function compileRouteHandler(handler, schema, services, compiled, scope, errorHo
         const r = vp(params);
         if (!r.valid) return validationErrorResponse("params", r.errors, c.req.path);
       }
-      const extra = query || params || svc ? { query, params, services: svc } : void 0;
+      let headers;
+      if (vh) {
+        headers = Object.fromEntries(c.req.raw.headers.entries());
+        const r = vh(headers);
+        if (!r.valid) return validationErrorResponse("headers", r.errors, c.req.path);
+      }
+      const extra = query || params || headers || svc ? { query, params, headers, services: svc } : void 0;
       const result = noArgs ? handler() : handler(buildCtx(c, extra));
       if (result instanceof Response) return result;
       if (result != null && typeof result.then === "function") {
@@ -2020,12 +2090,18 @@ function compileRouteHandler(handler, schema, services, compiled, scope, errorHo
 }
 var DEFAULT_MAX_BODY_BYTES2 = 1 * 1024 * 1024;
 function compileUwsNativeHandler(handler, schema, services, compiled, scope, maxBodyBytes = DEFAULT_MAX_BODY_BYTES2, method = "GET") {
-  const { validateBody: vb, validateQuery: vq, validateParams: vp, serialize } = compiled;
+  const {
+    validateBody: vb,
+    validateQuery: vq,
+    validateParams: vp,
+    validateHeaders: vh,
+    serialize
+  } = compiled;
   const svc = services != null && Object.keys(services).length > 0 ? services : void 0;
   const ser = serialize ?? toJsonBody;
   const noArgs = handler.length === 0;
   const hasScope = scope?.factory != null;
-  function runUwsHandler(uwsRes, url, rawBody, params, body, query, runServices, corsHeaders, reqHeaders, remoteAddress = "", user) {
+  function runUwsHandler(uwsRes, url, rawBody, params, body, query, headers, runServices, corsHeaders, reqHeaders, remoteAddress = "", user) {
     const { ctx, responded, finalCors } = buildUwsHandlerContext(
       uwsRes,
       url,
@@ -2033,6 +2109,7 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope, max
       params,
       body,
       query,
+      headers,
       runServices ?? {},
       ser,
       method,
@@ -2101,12 +2178,21 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope, max
           return;
         }
       }
+      let headers;
+      if (vh) {
+        headers = { ...reqHeaders ?? {} };
+        const r = vh(headers);
+        if (!r.valid) {
+          uwsFastWrite400("headers", r.errors, uwsRes, corsHeaders);
+          return;
+        }
+      }
       if (hasScope && scope) {
         void (async () => {
           let err;
           const resolved = await resolveScopedServices(scope, new UwsReqAdapter(url, method, rawBody, reqHeaders ?? {}, remoteAddress));
           try {
-            runUwsHandler(uwsRes, url, rawBody, params, body, query, resolved.services, corsHeaders, reqHeaders, remoteAddress, user);
+            runUwsHandler(uwsRes, url, rawBody, params, body, query, headers, resolved.services, corsHeaders, reqHeaders, remoteAddress, user);
           } catch (e) {
             err = e;
             if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
@@ -2116,7 +2202,7 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope, max
         })();
         return;
       }
-      runUwsHandler(uwsRes, url, rawBody, params, body, query, svc, corsHeaders, reqHeaders, remoteAddress, user);
+      runUwsHandler(uwsRes, url, rawBody, params, body, query, headers, svc, corsHeaders, reqHeaders, remoteAddress, user);
     } catch (err) {
       if (canWriteUws(uwsRes)) uwsFastWriteError(err, uwsRes, corsHeaders);
     }
@@ -3246,6 +3332,19 @@ var OpenAPIGenerator = class {
         }
       }
     }
+    if (schema?.headers) {
+      const headerSchema = zodToJsonSchema(schema.headers);
+      if (headerSchema.properties) {
+        for (const [name, propSchema] of Object.entries(headerSchema.properties)) {
+          operation.parameters.push({
+            name,
+            in: "header",
+            required: headerSchema.required?.includes(name) || false,
+            schema: propSchema
+          });
+        }
+      }
+    }
     if (schema?.params) {
       const paramsSchema = zodToJsonSchema(schema.params);
       if (paramsSchema.properties) {
@@ -3371,40 +3470,102 @@ function createOpenAPIGenerator(config) {
   return new OpenAPIGenerator(config);
 }
 
+// src/contract.ts
+function joinRoutePaths(prefix, path2) {
+  const prefixPart = prefix.replace(/^\/+|\/+$/g, "");
+  const pathPart = path2.replace(/^\/+|\/+$/g, "");
+  if (!prefixPart) return pathPart ? `/${pathPart}` : "/";
+  return pathPart ? `/${prefixPart}/${pathPart}` : `/${prefixPart}`;
+}
+var RouteContract = class {
+  registrations = [];
+  get(path2, schemaOrHandler, handler, meta) {
+    return this.add("get", path2, schemaOrHandler, handler, meta);
+  }
+  post(path2, schemaOrHandler, handler, meta) {
+    return this.add("post", path2, schemaOrHandler, handler, meta);
+  }
+  put(path2, schemaOrHandler, handler, meta) {
+    return this.add("put", path2, schemaOrHandler, handler, meta);
+  }
+  patch(path2, schemaOrHandler, handler, meta) {
+    return this.add("patch", path2, schemaOrHandler, handler, meta);
+  }
+  delete(path2, schemaOrHandler, handler, meta) {
+    return this.add("delete", path2, schemaOrHandler, handler, meta);
+  }
+  add(method, path2, schemaOrHandler, handler, meta) {
+    if (typeof schemaOrHandler === "function") {
+      this.registrations.push({
+        method,
+        path: path2,
+        schema: {},
+        handler: schemaOrHandler
+      });
+    } else {
+      this.registrations.push({
+        method,
+        path: path2,
+        schema: schemaOrHandler,
+        handler,
+        meta
+      });
+    }
+    return this;
+  }
+};
+function createRouter() {
+  return new RouteContract();
+}
+var defineRoutes = createRouter;
+function getContractRouteRegistrations(contract) {
+  return contract.registrations;
+}
+
 // src/app.ts
 function docsRouteTag(path2) {
   const segments = path2.split("/").filter(Boolean);
   const seg = (segments[0]?.toLowerCase() === "api" ? segments[1] : segments[0]) ?? "general";
   return seg.charAt(0).toUpperCase() + seg.slice(1);
 }
-var KozoGroup = class {
+var KozoGroup = class _KozoGroup {
   constructor(prefix, parent) {
     this.prefix = prefix;
     this.parent = parent;
   }
   get(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") this.parent.get(this.prefix + path2, schemaOrHandler);
-    else this.parent.get(this.prefix + path2, schemaOrHandler, handler, meta);
+    const fullPath = joinRoutePaths(this.prefix, path2);
+    if (typeof schemaOrHandler === "function") this.parent.get(fullPath, schemaOrHandler);
+    else this.parent.get(fullPath, schemaOrHandler, handler, meta);
     return this;
   }
   post(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") this.parent.post(this.prefix + path2, schemaOrHandler);
-    else this.parent.post(this.prefix + path2, schemaOrHandler, handler, meta);
+    const fullPath = joinRoutePaths(this.prefix, path2);
+    if (typeof schemaOrHandler === "function") this.parent.post(fullPath, schemaOrHandler);
+    else this.parent.post(fullPath, schemaOrHandler, handler, meta);
     return this;
   }
   put(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") this.parent.put(this.prefix + path2, schemaOrHandler);
-    else this.parent.put(this.prefix + path2, schemaOrHandler, handler, meta);
+    const fullPath = joinRoutePaths(this.prefix, path2);
+    if (typeof schemaOrHandler === "function") this.parent.put(fullPath, schemaOrHandler);
+    else this.parent.put(fullPath, schemaOrHandler, handler, meta);
     return this;
   }
   patch(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") this.parent.patch(this.prefix + path2, schemaOrHandler);
-    else this.parent.patch(this.prefix + path2, schemaOrHandler, handler, meta);
+    const fullPath = joinRoutePaths(this.prefix, path2);
+    if (typeof schemaOrHandler === "function") this.parent.patch(fullPath, schemaOrHandler);
+    else this.parent.patch(fullPath, schemaOrHandler, handler, meta);
     return this;
   }
   delete(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") this.parent.delete(this.prefix + path2, schemaOrHandler);
-    else this.parent.delete(this.prefix + path2, schemaOrHandler, handler, meta);
+    const fullPath = joinRoutePaths(this.prefix, path2);
+    if (typeof schemaOrHandler === "function") this.parent.delete(fullPath, schemaOrHandler);
+    else this.parent.delete(fullPath, schemaOrHandler, handler, meta);
+    return this;
+  }
+  /** Create a nested runtime group while preserving normalized paths. */
+  group(prefix, fn) {
+    fn(new _KozoGroup(joinRoutePaths(this.prefix, prefix), this.parent));
     return this;
   }
 };
@@ -3571,23 +3732,33 @@ var Kozo = class _Kozo {
     return generateTypedClient(routeInfos, options);
   }
   get(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") return this.register("get", path2, {}, schemaOrHandler);
+    if (typeof schemaOrHandler === "function") {
+      return this.register("get", path2, {}, schemaOrHandler);
+    }
     return this.register("get", path2, schemaOrHandler, handler, meta);
   }
   post(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") return this.register("post", path2, {}, schemaOrHandler);
+    if (typeof schemaOrHandler === "function") {
+      return this.register("post", path2, {}, schemaOrHandler);
+    }
     return this.register("post", path2, schemaOrHandler, handler, meta);
   }
   put(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") return this.register("put", path2, {}, schemaOrHandler);
+    if (typeof schemaOrHandler === "function") {
+      return this.register("put", path2, {}, schemaOrHandler);
+    }
     return this.register("put", path2, schemaOrHandler, handler, meta);
   }
   patch(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") return this.register("patch", path2, {}, schemaOrHandler);
+    if (typeof schemaOrHandler === "function") {
+      return this.register("patch", path2, {}, schemaOrHandler);
+    }
     return this.register("patch", path2, schemaOrHandler, handler, meta);
   }
   delete(path2, schemaOrHandler, handler, meta) {
-    if (typeof schemaOrHandler === "function") return this.register("delete", path2, {}, schemaOrHandler);
+    if (typeof schemaOrHandler === "function") {
+      return this.register("delete", path2, {}, schemaOrHandler);
+    }
     return this.register("delete", path2, schemaOrHandler, handler, meta);
   }
   /**
@@ -3601,7 +3772,27 @@ var Kozo = class _Kozo {
    * });
    */
   group(prefix, fn) {
-    fn(new KozoGroup(prefix, this));
+    fn(new KozoGroup(joinRoutePaths("", prefix), this));
+    return this;
+  }
+  /**
+   * Register a statically typed route contract below a path prefix.
+   *
+   * The returned value carries the mounted route union for contract-aware
+   * tooling. Capture it through chaining or assignment.
+   */
+  mount(prefix, contract) {
+    for (const route of getContractRouteRegistrations(
+      contract
+    )) {
+      this.register(
+        route.method,
+        joinRoutePaths(prefix, route.path),
+        route.schema,
+        route.handler,
+        route.meta
+      );
+    }
     return this;
   }
   /**
@@ -4407,6 +4598,7 @@ export {
   MIN_SECRET_BYTES,
   NotFoundError,
   OpenAPIGenerator,
+  RouteContract,
   SchemaCompiler,
   ShutdownManager,
   UnauthorizedError,
@@ -4424,11 +4616,13 @@ export {
   createKozo,
   createOpenAPIGenerator,
   createRouteFactory,
+  createRouter,
   createShutdownManager,
   createSsrServer,
   defineEnv,
   defineKozoApp,
   defineRoute,
+  defineRoutes,
   deletedSchema,
   errorHandler,
   fastCL,

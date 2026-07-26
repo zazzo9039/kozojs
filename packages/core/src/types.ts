@@ -8,6 +8,7 @@ export type RouteSchema = {
   body?: SchemaType;
   query?: SchemaType;
   params?: SchemaType;
+  headers?: SchemaType;
   response?: SchemaType | Record<number, SchemaType>;
 };
 
@@ -121,6 +122,8 @@ export type KozoContext<S extends RouteSchema = {}, TServices extends Services =
   query: InferSchema<S['query']>;
   /** Parsed + validated path params — typed from `schema.params` */
   params: InferSchema<S['params']>;
+  /** Parsed + validated request headers — typed from `schema.headers` */
+  headers: InferSchema<S['headers']>;
   /** Injected services — typed from `createKozo<TServices>()` */
   services: TServices;
   /** Authenticated user set by JWT middleware — extend `KozoUser` for custom fields */

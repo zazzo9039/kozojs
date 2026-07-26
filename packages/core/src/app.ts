@@ -17,6 +17,14 @@ import { guardToHonoMiddleware, compileGuards, wrapNativeWithGuards, type KozoGu
 import { createSsrServer, type SsrConfig } from './ssr.js';
 import type { WebSocketHandler, WsRouteEntry } from './ws.js';
 import { createOpenAPIGenerator, generateSwaggerHtml, type OpenAPISpec } from './openapi.js';
+import {
+  getContractRouteRegistrations,
+  joinRoutePaths,
+  type AnyContractRoute,
+  type ContractRoute,
+  type PrefixContractRoutes,
+  type RouteContract,
+} from './contract.js';
 
 // Plugin Architecture
 export interface Plugin {
@@ -66,46 +74,61 @@ function docsRouteTag(path: string): string {
 export class KozoGroup<
   TServices extends Services = Services,
   TScoped extends Record<string, unknown> = Record<string, never>,
+  TRoutes extends AnyContractRoute = never,
 > {
-  constructor(private readonly prefix: string, private readonly parent: Kozo<TServices, TScoped>) {}
+  constructor(
+    private readonly prefix: string,
+    private readonly parent: Kozo<TServices, TScoped, TRoutes>,
+  ) {}
 
   get(path: string, handler: KozoHandler<{}, TServices>): this;
   get<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
   get<S extends RouteSchema>(path: string, schemaOrHandler: S | KozoHandler<{}, TServices>, handler?: KozoHandler<S, TServices>, meta?: RouteMeta): this {
-    if (typeof schemaOrHandler === 'function') this.parent.get(this.prefix + path, schemaOrHandler as any);
-    else this.parent.get(this.prefix + path, schemaOrHandler, handler!, meta);
+    const fullPath = joinRoutePaths(this.prefix, path);
+    if (typeof schemaOrHandler === 'function') this.parent.get(fullPath, schemaOrHandler as any);
+    else this.parent.get(fullPath, schemaOrHandler, handler!, meta);
     return this;
   }
 
   post(path: string, handler: KozoHandler<{}, TServices>): this;
   post<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
   post<S extends RouteSchema>(path: string, schemaOrHandler: S | KozoHandler<{}, TServices>, handler?: KozoHandler<S, TServices>, meta?: RouteMeta): this {
-    if (typeof schemaOrHandler === 'function') this.parent.post(this.prefix + path, schemaOrHandler as any);
-    else this.parent.post(this.prefix + path, schemaOrHandler, handler!, meta);
+    const fullPath = joinRoutePaths(this.prefix, path);
+    if (typeof schemaOrHandler === 'function') this.parent.post(fullPath, schemaOrHandler as any);
+    else this.parent.post(fullPath, schemaOrHandler, handler!, meta);
     return this;
   }
 
   put(path: string, handler: KozoHandler<{}, TServices>): this;
   put<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
   put<S extends RouteSchema>(path: string, schemaOrHandler: S | KozoHandler<{}, TServices>, handler?: KozoHandler<S, TServices>, meta?: RouteMeta): this {
-    if (typeof schemaOrHandler === 'function') this.parent.put(this.prefix + path, schemaOrHandler as any);
-    else this.parent.put(this.prefix + path, schemaOrHandler, handler!, meta);
+    const fullPath = joinRoutePaths(this.prefix, path);
+    if (typeof schemaOrHandler === 'function') this.parent.put(fullPath, schemaOrHandler as any);
+    else this.parent.put(fullPath, schemaOrHandler, handler!, meta);
     return this;
   }
 
   patch(path: string, handler: KozoHandler<{}, TServices>): this;
   patch<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
   patch<S extends RouteSchema>(path: string, schemaOrHandler: S | KozoHandler<{}, TServices>, handler?: KozoHandler<S, TServices>, meta?: RouteMeta): this {
-    if (typeof schemaOrHandler === 'function') this.parent.patch(this.prefix + path, schemaOrHandler as any);
-    else this.parent.patch(this.prefix + path, schemaOrHandler, handler!, meta);
+    const fullPath = joinRoutePaths(this.prefix, path);
+    if (typeof schemaOrHandler === 'function') this.parent.patch(fullPath, schemaOrHandler as any);
+    else this.parent.patch(fullPath, schemaOrHandler, handler!, meta);
     return this;
   }
 
   delete(path: string, handler: KozoHandler<{}, TServices>): this;
   delete<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
   delete<S extends RouteSchema>(path: string, schemaOrHandler: S | KozoHandler<{}, TServices>, handler?: KozoHandler<S, TServices>, meta?: RouteMeta): this {
-    if (typeof schemaOrHandler === 'function') this.parent.delete(this.prefix + path, schemaOrHandler as any);
-    else this.parent.delete(this.prefix + path, schemaOrHandler, handler!, meta);
+    const fullPath = joinRoutePaths(this.prefix, path);
+    if (typeof schemaOrHandler === 'function') this.parent.delete(fullPath, schemaOrHandler as any);
+    else this.parent.delete(fullPath, schemaOrHandler, handler!, meta);
+    return this;
+  }
+
+  /** Create a nested runtime group while preserving normalized paths. */
+  group(prefix: string, fn: (router: KozoGroup<TServices, TScoped, TRoutes>) => void): this {
+    fn(new KozoGroup(joinRoutePaths(this.prefix, prefix), this.parent));
     return this;
   }
 }
@@ -117,7 +140,11 @@ export class KozoGroup<
  *   Pass it once at construction: `createKozo<{ db: Database }>({ services: { db } })`
  *   and all handler contexts will have `ctx.services.db` fully typed.
  */
-export class Kozo<TServices extends Services = Services, TScoped extends Record<string, unknown> = Record<string, never>> {
+export class Kozo<
+  TServices extends Services = Services,
+  TScoped extends Record<string, unknown> = Record<string, never>,
+  TRoutes extends AnyContractRoute = never,
+> {
   private app: Hono<KozoEnv>;
   private services: TServices;
   private _scope?: AnyScopeConfig;
@@ -313,38 +340,113 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
     return generateTypedClient(routeInfos, options);
   }
 
-  get(path: string, handler: KozoHandler<{}, TServices>): this;
-  get<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
-  get<S extends RouteSchema>(path: string, schemaOrHandler: S | KozoHandler<{}, TServices>, handler?: KozoHandler<S, TServices>, meta?: RouteMeta): this {
-    if (typeof schemaOrHandler === 'function') return this.register('get', path, {}, schemaOrHandler as KozoHandler<any, any>);
+  get<const TPath extends string>(
+    path: TPath,
+    handler: KozoHandler<{}, TServices>,
+  ): Kozo<TServices, TScoped, TRoutes | ContractRoute<'get', TPath, {}>>;
+  get<const TPath extends string, const TSchema extends RouteSchema>(
+    path: TPath,
+    schema: TSchema,
+    handler: KozoHandler<TSchema, TServices>,
+    meta?: RouteMeta,
+  ): Kozo<TServices, TScoped, TRoutes | ContractRoute<'get', TPath, TSchema>>;
+  get<TSchema extends RouteSchema>(
+    path: string,
+    schemaOrHandler: TSchema | KozoHandler<{}, TServices>,
+    handler?: KozoHandler<TSchema, TServices>,
+    meta?: RouteMeta,
+  ): Kozo<TServices, TScoped, any> {
+    if (typeof schemaOrHandler === 'function') {
+      return this.register('get', path, {}, schemaOrHandler as KozoHandler<any, any>);
+    }
     return this.register('get', path, schemaOrHandler, handler!, meta);
   }
 
-  post(path: string, handler: KozoHandler<{}, TServices>): this;
-  post<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
-  post<S extends RouteSchema>(path: string, schemaOrHandler: S | KozoHandler<{}, TServices>, handler?: KozoHandler<S, TServices>, meta?: RouteMeta): this {
-    if (typeof schemaOrHandler === 'function') return this.register('post', path, {}, schemaOrHandler as KozoHandler<any, any>);
+  post<const TPath extends string>(
+    path: TPath,
+    handler: KozoHandler<{}, TServices>,
+  ): Kozo<TServices, TScoped, TRoutes | ContractRoute<'post', TPath, {}>>;
+  post<const TPath extends string, const TSchema extends RouteSchema>(
+    path: TPath,
+    schema: TSchema,
+    handler: KozoHandler<TSchema, TServices>,
+    meta?: RouteMeta,
+  ): Kozo<TServices, TScoped, TRoutes | ContractRoute<'post', TPath, TSchema>>;
+  post<TSchema extends RouteSchema>(
+    path: string,
+    schemaOrHandler: TSchema | KozoHandler<{}, TServices>,
+    handler?: KozoHandler<TSchema, TServices>,
+    meta?: RouteMeta,
+  ): Kozo<TServices, TScoped, any> {
+    if (typeof schemaOrHandler === 'function') {
+      return this.register('post', path, {}, schemaOrHandler as KozoHandler<any, any>);
+    }
     return this.register('post', path, schemaOrHandler, handler!, meta);
   }
 
-  put(path: string, handler: KozoHandler<{}, TServices>): this;
-  put<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
-  put<S extends RouteSchema>(path: string, schemaOrHandler: S | KozoHandler<{}, TServices>, handler?: KozoHandler<S, TServices>, meta?: RouteMeta): this {
-    if (typeof schemaOrHandler === 'function') return this.register('put', path, {}, schemaOrHandler as KozoHandler<any, any>);
+  put<const TPath extends string>(
+    path: TPath,
+    handler: KozoHandler<{}, TServices>,
+  ): Kozo<TServices, TScoped, TRoutes | ContractRoute<'put', TPath, {}>>;
+  put<const TPath extends string, const TSchema extends RouteSchema>(
+    path: TPath,
+    schema: TSchema,
+    handler: KozoHandler<TSchema, TServices>,
+    meta?: RouteMeta,
+  ): Kozo<TServices, TScoped, TRoutes | ContractRoute<'put', TPath, TSchema>>;
+  put<TSchema extends RouteSchema>(
+    path: string,
+    schemaOrHandler: TSchema | KozoHandler<{}, TServices>,
+    handler?: KozoHandler<TSchema, TServices>,
+    meta?: RouteMeta,
+  ): Kozo<TServices, TScoped, any> {
+    if (typeof schemaOrHandler === 'function') {
+      return this.register('put', path, {}, schemaOrHandler as KozoHandler<any, any>);
+    }
     return this.register('put', path, schemaOrHandler, handler!, meta);
   }
 
-  patch(path: string, handler: KozoHandler<{}, TServices>): this;
-  patch<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
-  patch<S extends RouteSchema>(path: string, schemaOrHandler: S | KozoHandler<{}, TServices>, handler?: KozoHandler<S, TServices>, meta?: RouteMeta): this {
-    if (typeof schemaOrHandler === 'function') return this.register('patch', path, {}, schemaOrHandler as KozoHandler<any, any>);
+  patch<const TPath extends string>(
+    path: TPath,
+    handler: KozoHandler<{}, TServices>,
+  ): Kozo<TServices, TScoped, TRoutes | ContractRoute<'patch', TPath, {}>>;
+  patch<const TPath extends string, const TSchema extends RouteSchema>(
+    path: TPath,
+    schema: TSchema,
+    handler: KozoHandler<TSchema, TServices>,
+    meta?: RouteMeta,
+  ): Kozo<TServices, TScoped, TRoutes | ContractRoute<'patch', TPath, TSchema>>;
+  patch<TSchema extends RouteSchema>(
+    path: string,
+    schemaOrHandler: TSchema | KozoHandler<{}, TServices>,
+    handler?: KozoHandler<TSchema, TServices>,
+    meta?: RouteMeta,
+  ): Kozo<TServices, TScoped, any> {
+    if (typeof schemaOrHandler === 'function') {
+      return this.register('patch', path, {}, schemaOrHandler as KozoHandler<any, any>);
+    }
     return this.register('patch', path, schemaOrHandler, handler!, meta);
   }
 
-  delete(path: string, handler: KozoHandler<{}, TServices>): this;
-  delete<S extends RouteSchema>(path: string, schema: S, handler: KozoHandler<S, TServices>, meta?: RouteMeta): this;
-  delete<S extends RouteSchema>(path: string, schemaOrHandler: S | KozoHandler<{}, TServices>, handler?: KozoHandler<S, TServices>, meta?: RouteMeta): this {
-    if (typeof schemaOrHandler === 'function') return this.register('delete', path, {}, schemaOrHandler as KozoHandler<any, any>);
+  delete<const TPath extends string>(
+    path: TPath,
+    handler: KozoHandler<{}, TServices>,
+  ): Kozo<TServices, TScoped, TRoutes | ContractRoute<'delete', TPath, {}>>;
+  delete<const TPath extends string, const TSchema extends RouteSchema>(
+    path: TPath,
+    schema: TSchema,
+    handler: KozoHandler<TSchema, TServices>,
+    meta?: RouteMeta,
+  ): Kozo<TServices, TScoped, TRoutes | ContractRoute<'delete', TPath, TSchema>>;
+  delete<TSchema extends RouteSchema>(
+    path: string,
+    schemaOrHandler: TSchema | KozoHandler<{}, TServices>,
+    handler?: KozoHandler<TSchema, TServices>,
+    meta?: RouteMeta,
+  ): Kozo<TServices, TScoped, any> {
+    if (typeof schemaOrHandler === 'function') {
+      return this.register('delete', path, {}, schemaOrHandler as KozoHandler<any, any>);
+    }
     return this.register('delete', path, schemaOrHandler, handler!, meta);
   }
 
@@ -358,8 +460,36 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
    *   r.post('/',   { body: CreateUserSchema }, (ctx) => createUser(ctx.body));
    * });
    */
-  group(prefix: string, fn: (router: KozoGroup<TServices>) => void): this {
-    fn(new KozoGroup(prefix, this));
+  group(prefix: string, fn: (router: KozoGroup<TServices, TScoped, TRoutes>) => void): this {
+    fn(new KozoGroup(joinRoutePaths('', prefix), this));
+    return this;
+  }
+
+  /**
+   * Register a statically typed route contract below a path prefix.
+   *
+   * The returned value carries the mounted route union for contract-aware
+   * tooling. Capture it through chaining or assignment.
+   */
+  mount<const TPrefix extends string, TContractRoutes extends AnyContractRoute>(
+    prefix: TPrefix,
+    contract: RouteContract<TServices, TContractRoutes>,
+  ): Kozo<
+    TServices,
+    TScoped,
+    TRoutes | PrefixContractRoutes<TPrefix, TContractRoutes>
+  > {
+    for (const route of getContractRouteRegistrations(
+      contract as RouteContract<TServices, AnyContractRoute>,
+    )) {
+      this.register(
+        route.method,
+        joinRoutePaths(prefix, route.path),
+        route.schema,
+        route.handler,
+        route.meta,
+      );
+    }
     return this;
   }
 
@@ -861,6 +991,6 @@ export class Kozo<TServices extends Services = Services, TScoped extends Record<
 export function createKozo<
   TServices extends Services = Services,
   TScoped extends Record<string, unknown> = Record<string, never>,
->(config?: KozoConfig<TServices, TScoped>): Kozo<TServices, TScoped> {
-  return new Kozo<TServices, TScoped>(config);
+>(config?: KozoConfig<TServices, TScoped>): Kozo<TServices, TScoped, never> {
+  return new Kozo<TServices, TScoped, never>(config);
 }

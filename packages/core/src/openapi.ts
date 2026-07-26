@@ -229,6 +229,21 @@ export class OpenAPIGenerator {
       }
     }
 
+    // Add validated request headers from schema
+    if (schema?.headers) {
+      const headerSchema = zodToJsonSchema(schema.headers as z.ZodType) as SchemaObject;
+      if (headerSchema.properties) {
+        for (const [name, propSchema] of Object.entries(headerSchema.properties)) {
+          operation.parameters!.push({
+            name,
+            in: 'header',
+            required: headerSchema.required?.includes(name) || false,
+            schema: propSchema as SchemaObject,
+          });
+        }
+      }
+    }
+
     // Add params schema override
     if (schema?.params) {
       const paramsSchema = zodToJsonSchema(schema.params as z.ZodType) as SchemaObject;

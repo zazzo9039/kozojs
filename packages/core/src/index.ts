@@ -6,6 +6,13 @@
 export { Kozo, createKozo } from './app.js';
 export type { Plugin, MountDocsOptions } from './app.js';
 export { KozoGroup } from './app.js';
+export { createRouter, defineRoutes, RouteContract } from './contract.js';
+export type {
+  AnyContractRoute,
+  ContractRoute,
+  JoinRoutePaths,
+  PrefixContractRoutes,
+} from './contract.js';
 export {
   defineKozoApp,
   buildKozoApp,
