@@ -34,7 +34,7 @@ export type Infer<T extends z.ZodType<any>> = z.infer<T>;
 export type InferResponse<T> = T extends SchemaType
   ? InferSchema<T>
   : T extends Record<number, SchemaType>
-    ? InferSchema<T[200]>
+    ? InferSchema<T[keyof T]>
     : unknown;
 
 // ============================================

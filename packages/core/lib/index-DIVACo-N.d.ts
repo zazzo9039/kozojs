@@ -23,7 +23,7 @@ type InferInput<T> = T extends z.ZodType<any> ? z.input<T> : unknown;
  */
 type Infer<T extends z.ZodType<any>> = z.infer<T>;
 /** Infer the response data type from a schema's response field */
-type InferResponse<T> = T extends SchemaType ? InferSchema<T> : T extends Record<number, SchemaType> ? InferSchema<T[200]> : unknown;
+type InferResponse<T> = T extends SchemaType ? InferSchema<T> : T extends Record<number, SchemaType> ? InferSchema<T[keyof T]> : unknown;
 /**
  * Typed request object available as `ctx.req`.
  * Provides header access and raw request reference without `any`.

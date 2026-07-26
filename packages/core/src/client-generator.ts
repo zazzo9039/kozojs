@@ -200,8 +200,20 @@ export function generateTypedClient(
       if (includeValidation) {
         responseType = `z.infer<typeof ${schemaVarName}>`;
         const raw = route.zodSchemas?.response ?? route.schema.response;
-        // response may be a status-code map like { 200: z.object(...) }
-        const zodSchema = raw && typeof raw === 'object' && !raw._def ? (raw as any)[200] ?? raw : raw;
+        // Generated methods throw on non-2xx responses. Prefer status 200,
+        // otherwise use the first declared successful response such as 201.
+        const responseMap = raw
+          && typeof raw === 'object'
+          && !raw._def
+          && !raw._zod
+          ? raw as Record<string, unknown>
+          : undefined;
+        const successSchema = responseMap
+          ? Object.entries(responseMap)
+            .sort(([left], [right]) => Number(left) - Number(right))
+            .find(([status]) => Number(status) >= 200 && Number(status) < 300)?.[1]
+          : undefined;
+        const zodSchema = responseMap?.[200] ?? successSchema ?? raw;
         const src = zodToString(zodSchema);
         schemaExports.push(`export const ${schemaVarName} = ${src};`);
       }
@@ -258,7 +270,10 @@ export function generateTypedClient(
     let urlExpression = `\`\${this.baseUrl}${route.path}\``;
     if (pathParams.length > 0) {
       // Replace :param with ${params.param}
-      const pathWithParams = route.path.replace(/:(\w+)/g, '${params.$1}');
+      const pathWithParams = route.path.replace(
+        /:(\w+)/g,
+        '${encodeURIComponent(String(params.$1))}',
+      );
       urlExpression = `\`\${this.baseUrl}${pathWithParams}\``;
     }
 
@@ -269,7 +284,13 @@ export function generateTypedClient(
       methodBody += `    if (query) {\n`;
       methodBody += `      const qs = new URLSearchParams();\n`;
       methodBody += `      for (const [k, v] of Object.entries(query)) {\n`;
-      methodBody += `        if (v !== undefined && v !== null) qs.set(k, String(v));\n`;
+      methodBody += `        if (Array.isArray(v)) {\n`;
+      methodBody += `          for (const item of v) {\n`;
+      methodBody += `            if (item !== undefined && item !== null) qs.append(k, String(item));\n`;
+      methodBody += `          }\n`;
+      methodBody += `        } else if (v !== undefined && v !== null) {\n`;
+      methodBody += `          qs.append(k, String(v));\n`;
+      methodBody += `        }\n`;
       methodBody += `      }\n`;
       methodBody += `      const queryString = qs.toString();\n`;
       methodBody += `      if (queryString) url += \`?\${queryString}\`;\n`;
@@ -462,8 +483,9 @@ function zodToString(schema: any): string {
       return `z.literal(${JSON.stringify(val)})`;
     }
     case 'enum': {
-      // v4: def.entries (array of strings), v3: def.values
-      const vals = def4?.entries ?? def3?.values;
+      // v4: def.entries is a key/value object; v3: def.values is an array.
+      const entries = def4?.entries ?? def3?.values;
+      const vals = Array.isArray(entries) ? entries : Object.values(entries ?? {});
       return `z.enum(${JSON.stringify(vals)})`;
     }
     case 'nativeenum':

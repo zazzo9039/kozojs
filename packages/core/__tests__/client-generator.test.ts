@@ -36,7 +36,7 @@ describe('generateTypedClient', () => {
     const code = generateTypedClient(routes);
     expect(code).toContain('async usersById(');
     expect(code).toContain('params: { id: string }');
-    expect(code).toContain('${params.id}');
+    expect(code).toContain('${encodeURIComponent(String(params.id))}');
   });
 
   it('generates readable camelCase names for nested and dashed routes', () => {
@@ -67,13 +67,17 @@ describe('generateTypedClient', () => {
   });
 
   it('handles query parameters', () => {
-    const querySchema = z.object({ page: z.number() });
+    const querySchema = z.object({
+      page: z.number(),
+      tag: z.array(z.string()).optional(),
+    });
     const routes: RouteInfo[] = [
       { method: 'get', path: '/users', schema: { query: querySchema }, zodSchemas: { query: querySchema } },
     ];
     const code = generateTypedClient(routes);
     expect(code).toContain('query?:');
     expect(code).toContain('URLSearchParams');
+    expect(code).toContain('qs.append(k, String(item))');
   });
 
   it('handles response schema', () => {
@@ -83,6 +87,23 @@ describe('generateTypedClient', () => {
     ];
     const code = generateTypedClient(routes);
     expect(code).toContain('ResponseSchema');
+  });
+
+  it('selects the first successful response when 200 is not declared', () => {
+    const createdSchema = z.object({ id: z.string() });
+    const routes: RouteInfo[] = [
+      {
+        method: 'post',
+        path: '/users',
+        schema: { response: { 201: createdSchema } },
+      },
+    ];
+
+    const code = generateTypedClient(routes);
+    expect(code).toContain(
+      'export const PostUsersResponseSchema = z.object({ id: z.string() });',
+    );
+    expect(code).not.toContain('export const PostUsersResponseSchema = z.any()');
   });
 
   it('uses custom baseUrl', () => {
@@ -153,6 +174,7 @@ describe('generateTypedClient', () => {
     expect(code).toContain('PostItemsBodySchema');
     expect(code).toContain('z.array(z.string())');
     expect(code).toContain('z.enum(');
+    expect(code).toContain('z.enum(["active","inactive"])');
     expect(code).toContain('z.number()');
     expect(code).toContain('class KozoClient');
   });

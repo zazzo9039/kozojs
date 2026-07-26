@@ -115,7 +115,9 @@ function generateTypedClient(routes, options = {}) {
       if (includeValidation) {
         responseType = `z.infer<typeof ${schemaVarName}>`;
         const raw = route.zodSchemas?.response ?? route.schema.response;
-        const zodSchema = raw && typeof raw === "object" && !raw._def ? raw[200] ?? raw : raw;
+        const responseMap = raw && typeof raw === "object" && !raw._def && !raw._zod ? raw : void 0;
+        const successSchema2 = responseMap ? Object.entries(responseMap).sort(([left], [right]) => Number(left) - Number(right)).find(([status]) => Number(status) >= 200 && Number(status) < 300)?.[1] : void 0;
+        const zodSchema = responseMap?.[200] ?? successSchema2 ?? raw;
         const src = zodToString(zodSchema);
         schemaExports.push(`export const ${schemaVarName} = ${src};`);
       }
@@ -166,7 +168,10 @@ function generateTypedClient(routes, options = {}) {
     }
     let urlExpression = `\`\${this.baseUrl}${route.path}\``;
     if (pathParams.length > 0) {
-      const pathWithParams = route.path.replace(/:(\w+)/g, "${params.$1}");
+      const pathWithParams = route.path.replace(
+        /:(\w+)/g,
+        "${encodeURIComponent(String(params.$1))}"
+      );
       urlExpression = `\`\${this.baseUrl}${pathWithParams}\``;
     }
     methodBody += `    let url = ${urlExpression};
@@ -178,7 +183,19 @@ function generateTypedClient(routes, options = {}) {
 `;
       methodBody += `      for (const [k, v] of Object.entries(query)) {
 `;
-      methodBody += `        if (v !== undefined && v !== null) qs.set(k, String(v));
+      methodBody += `        if (Array.isArray(v)) {
+`;
+      methodBody += `          for (const item of v) {
+`;
+      methodBody += `            if (item !== undefined && item !== null) qs.append(k, String(item));
+`;
+      methodBody += `          }
+`;
+      methodBody += `        } else if (v !== undefined && v !== null) {
+`;
+      methodBody += `          qs.append(k, String(v));
+`;
+      methodBody += `        }
 `;
       methodBody += `      }
 `;
@@ -465,7 +482,8 @@ function zodToString(schema) {
       return `z.literal(${JSON.stringify(val)})`;
     }
     case "enum": {
-      const vals = def4?.entries ?? def3?.values;
+      const entries = def4?.entries ?? def3?.values;
+      const vals = Array.isArray(entries) ? entries : Object.values(entries ?? {});
       return `z.enum(${JSON.stringify(vals)})`;
     }
     case "nativeenum":
