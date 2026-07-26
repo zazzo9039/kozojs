@@ -1788,7 +1788,7 @@ var HONO_HEADERS_DIRTY = /* @__PURE__ */ Symbol("kozoHonoHeadersDirty");
 var CTX_PROTO = {
   json(data, status) {
     const statusCode = status ?? 200;
-    const serialize = this._serializeByStatus?.[statusCode] ?? this._serialize;
+    const serialize = this._serializeByStatus ? this._serializeByStatus[statusCode] ?? toJsonBody : this._serialize;
     if (!serialize) return this._c.json(data, status);
     const body = serialize(data);
     if (typeof this._c.body === "function") {
@@ -1879,7 +1879,9 @@ function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, heade
     },
     json(data, status) {
       done = true;
-      const body2 = (serializeByStatus?.[status ?? 200] ?? ser)(data);
+      const statusCode = status ?? 200;
+      const serialize = serializeByStatus ? serializeByStatus[statusCode] ?? toJsonBody : ser;
+      const body2 = serialize(data);
       const ch = finalCors();
       if (status !== void 0 && status !== 200) uwsFastWriteJsonStatus(uwsRes, body2, status, ch);
       else uwsFastWriteJson(uwsRes, body2, ch);
@@ -2737,6 +2739,9 @@ async function scanMiddlewareFiles(dir, base = "") {
   }
   return results;
 }
+function routeModuleUrl(fullPath) {
+  return pathToFileURL(fullPath).href.replace(/%5B/gi, "[").replace(/%5D/gi, "]");
+}
 function isRouteDefinitionOptions(value) {
   return value !== null && typeof value === "object" && "handler" in value && typeof value.handler === "function";
 }
@@ -2771,7 +2776,7 @@ async function scanRoutes(options) {
       const parsed = fileToPath(file);
       if (!parsed) return null;
       const fullPath = join(routesDir, file);
-      const fileUrl = pathToFileURL(fullPath).href;
+      const fileUrl = routeModuleUrl(fullPath);
       const module = await import(fileUrl);
       if (!resolveRouteModule(module)) {
         return { type: "no-export", file };
@@ -2840,7 +2845,7 @@ async function scanMiddleware(options) {
   const definitions = [];
   for (const file of files) {
     const fullPath = join(routesDir, file);
-    const fileUrl = pathToFileURL(fullPath).href;
+    const fileUrl = routeModuleUrl(fullPath);
     try {
       const mod = await import(fileUrl);
       const handler = mod.default;
@@ -3775,15 +3780,15 @@ var Kozo = class _Kozo {
         const { path: path2, method, module } = route;
         const resolved = resolveRouteModule(module);
         const { handler, schema, meta } = resolved;
-        const compiledSchema = SchemaCompiler.compile(schema, {
+        const normalizedSchema = _Kozo.normalizeSchema(schema);
+        const compiledSchema = SchemaCompiler.compile(normalizedSchema, {
           route: `${method.toUpperCase()} ${path2}`,
           dangerouslyAllowUnenforcedResponse: this._allowUnenforcedResponse
         });
-        return { path: path2, method, handler, schema, meta, compiledSchema };
+        return { path: path2, method, handler, normalizedSchema, meta, compiledSchema };
       })
     );
-    for (const { path: path2, method, handler, schema, meta, compiledSchema } of compiled) {
-      const normalizedSchema = _Kozo.normalizeSchema(schema);
+    for (const { path: path2, method, handler, normalizedSchema, meta, compiledSchema } of compiled) {
       const optimizedHandler = compileRouteHandler(
         (ctx) => handler(ctx),
         normalizedSchema,
@@ -3799,7 +3804,7 @@ var Kozo = class _Kozo {
         paramNames.push(name);
         return name;
       });
-      this._deferredUws.push({ method: method.toUpperCase(), path: path2, paramNames, handler: (ctx) => handler(ctx), schema, compiled: compiledSchema });
+      this._deferredUws.push({ method: method.toUpperCase(), path: path2, paramNames, handler: (ctx) => handler(ctx), schema: normalizedSchema, compiled: compiledSchema });
     }
     return this;
   }

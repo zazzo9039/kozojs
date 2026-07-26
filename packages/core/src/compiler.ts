@@ -144,7 +144,9 @@ const HONO_HEADERS_DIRTY = Symbol('kozoHonoHeadersDirty');
 const CTX_PROTO = {
   json(this: any, data: unknown, status?: number) {
     const statusCode = status ?? 200;
-    const serialize = this._serializeByStatus?.[statusCode] ?? this._serialize;
+    const serialize = this._serializeByStatus
+      ? this._serializeByStatus[statusCode] ?? toJsonBody
+      : this._serialize;
     if (!serialize) return this._c.json(data, status);
     const body = serialize(data);
     if (typeof this._c.body === 'function') {
@@ -273,7 +275,11 @@ function buildUwsHandlerContext(
     },
     json(data: unknown, status?: number) {
       done = true;
-      const body = (serializeByStatus?.[status ?? 200] ?? ser)(data);
+      const statusCode = status ?? 200;
+      const serialize = serializeByStatus
+        ? serializeByStatus[statusCode] ?? toJsonBody
+        : ser;
+      const body = serialize(data);
       const ch = finalCors();
       if (status !== undefined && status !== 200) uwsFastWriteJsonStatus(uwsRes, body, status, ch);
       else uwsFastWriteJson(uwsRes, body, ch);

@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generated clients encode path parameters, repeat array query keys, support
   Zod 4 enums, and select declared non-200 success schemas.
 
+### Fixed
+
+- Undeclared error statuses no longer pass through a different status
+  serializer and fail as 500 responses.
+- File-system routes normalize response schemas before compilation and load
+  bracket-based dynamic segments correctly under Vite and Vitest.
+
 ## [0.6.0] — 2026-07-25
 
 ### Changed

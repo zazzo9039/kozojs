@@ -53,6 +53,19 @@ export interface ScanOptions {
   verbose?: boolean;
 }
 
+/**
+ * Keep file-system route markers readable in dynamic import specifiers.
+ *
+ * Node accepts brackets in file URL pathnames. Vite/Vitest, however, treats
+ * their percent-encoded form as a different Windows path and fails to load
+ * routes such as `users/[id]/get.ts`.
+ */
+function routeModuleUrl(fullPath: string): string {
+  return pathToFileURL(fullPath).href
+    .replace(/%5B/gi, '[')
+    .replace(/%5D/gi, ']');
+}
+
 function isRouteDefinitionOptions(value: unknown): value is RouteDefinitionOptions {
   return (
     value !== null &&
@@ -109,7 +122,7 @@ export async function scanRoutes(options: ScanOptions): Promise<RouteDefinition[
         if (!parsed) return null;
 
         const fullPath = join(routesDir, file);
-        const fileUrl = pathToFileURL(fullPath).href;
+        const fileUrl = routeModuleUrl(fullPath);
         const module = await import(fileUrl) as RouteModule;
 
         if (!resolveRouteModule(module)) {
@@ -214,7 +227,7 @@ export async function scanMiddleware(options: ScanOptions): Promise<MiddlewareDe
 
   for (const file of files) {
     const fullPath = join(routesDir, file);
-    const fileUrl = pathToFileURL(fullPath).href;
+    const fileUrl = routeModuleUrl(fullPath);
 
     try {
       const mod = await import(fileUrl);

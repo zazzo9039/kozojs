@@ -232,6 +232,10 @@ When you set `response` on a route, Kozo treats it as the **public API contract*
 
 - **Compiled serialization** — if the schema maps to JSON Schema (`z.object`, primitives, arrays, …), Kozo compiles a `fast-json-stringify` serializer **once at route registration**. Schemas with `.transform()`, `z.date()`, or `z.any()` use `JSON.stringify` instead (safe fallback — no silent wrong compile).
 - **Undeclared fields are dropped** — extra properties on the handler return value (e.g. DB columns not in the schema) are **omitted from the JSON response**. This is intentional contract enforcement: declare everything you return, or remove `response` from the route if you want pass-through serialization.
+- **Status maps are exact** — `ctx.json(data, 201)` uses the schema declared
+  for status 201. An undeclared status uses normal JSON serialization for
+  backward compatibility, so declare every public status when field stripping
+  must be enforced.
 
 ```typescript
 app.get('/users/:id', {

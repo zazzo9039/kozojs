@@ -292,16 +292,16 @@ export class Kozo<
         const { path, method, module } = route;
         const resolved = resolveRouteModule(module)!;
         const { handler, schema, meta } = resolved;
-        const compiledSchema = SchemaCompiler.compile(schema, {
+        const normalizedSchema = Kozo.normalizeSchema(schema);
+        const compiledSchema = SchemaCompiler.compile(normalizedSchema, {
           route: `${method.toUpperCase()} ${path}`,
           dangerouslyAllowUnenforcedResponse: this._allowUnenforcedResponse,
         });
-        return { path, method, handler, schema, meta, compiledSchema };
+        return { path, method, handler, normalizedSchema, meta, compiledSchema };
       })
     );
 
-    for (const { path, method, handler, schema, meta, compiledSchema } of compiled) {
-      const normalizedSchema = Kozo.normalizeSchema(schema);
+    for (const { path, method, handler, normalizedSchema, meta, compiledSchema } of compiled) {
       const optimizedHandler = compileRouteHandler(
         (ctx: any) => handler(ctx),
         normalizedSchema,
@@ -316,7 +316,7 @@ export class Kozo<
       // Defer uWS route compilation until nativeListen() is called
       const paramNames: string[] = [];
       path.replace(/:([^/]+)/g, (_: string, name: string) => { paramNames.push(name); return name; });
-      this._deferredUws.push({ method: method.toUpperCase(), path, paramNames, handler: (ctx: any) => handler(ctx), schema, compiled: compiledSchema });
+      this._deferredUws.push({ method: method.toUpperCase(), path, paramNames, handler: (ctx: any) => handler(ctx), schema: normalizedSchema, compiled: compiledSchema });
     }
 
     return this;

@@ -152,6 +152,10 @@ function createParityApp() {
     response: { 201: z.object({ id: z.string() }) },
   }, ({ json }) => json({ id: 'created', internal: 'strip-me' }, 201));
 
+  app.get('/undeclared-error-status', {
+    response: { 200: z.object({ ok: z.boolean() }) },
+  }, ({ json }) => json({ detail: 'Unauthorized' }, 401));
+
   app.get('/any-response', {
     response: { 200: z.any() },
   }, () => ({ ok: true, n: 42 }));
@@ -277,6 +281,15 @@ describe.skipIf(!uwsAvailable)('transport parity: listen() vs nativeListen()', (
     assertParity(hono, native, { exactBody: true });
     expect(hono.status).toBe(201);
     expect(JSON.parse(hono.body)).toEqual({ id: 'created' });
+  });
+
+  it('5c — undeclared status does not use another status serializer', async () => {
+    const { hono, native } = await runParity({
+      path: '/undeclared-error-status',
+    });
+    assertParity(hono, native, { exactBody: true });
+    expect(hono.status).toBe(401);
+    expect(JSON.parse(hono.body)).toEqual({ detail: 'Unauthorized' });
   });
 
   it('6 — json-stringify fallback (z.any response)', async () => {

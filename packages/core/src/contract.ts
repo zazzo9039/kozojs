@@ -224,4 +224,3 @@ export function getContractRouteRegistrations<TServices extends Services>(
     registrations: ContractRouteRegistration<TServices>[];
   }).registrations;
 }
-
