@@ -256,19 +256,47 @@ kozo g service email
 
 ## @kozojs/testing
 
-In-process testing without opening network ports.
+Use the route-derived client for positive contract tests. Its path tree,
+request fields, response status, and JSON body come from the static route
+contract:
 
 ```typescript
-import { createTestApp } from '@kozojs/testing';
+import { createKozo, createRouter, z } from '@kozojs/core';
+import { createContractTestClient } from '@kozojs/testing';
 
-const client = await createTestApp({ services: { db: mockDb } });
+const routes = createRouter()
+  .get('/:id', {
+    params: z.object({ id: z.string() }),
+    response: { 200: UserSchema, 404: ErrorSchema },
+  }, ({ params, services, json }) => {
+    const user = services.db.find(params.id);
+    return user ? json(user, 200) : json({ message: 'Not found' }, 404);
+  });
 
-const res = await client.get('/users');
-expect(res.status).toBe(200);
-
-const data = await res.json();
-expect(data).toHaveLength(3);
+const app = createKozo({ services: { db: mockDb } }).mount('/users', routes);
+const client = createContractTestClient(app);
+const response = await client.users.$id.get({ params: { id: 'user-1' } });
 ```
+
+Use `createTestClient(app)` for intentionally invalid requests and unknown
+paths. It accepts raw string URLs and runs in process through `app.fetch()`.
+`createNativeContractTestClient(app)` and `createNativeTestClient(app)` run the
+same two APIs against a real `nativeListen()` server; always close them:
+
+```typescript
+import { createNativeContractTestClient } from '@kozojs/testing';
+
+const client = await createNativeContractTestClient(app);
+try {
+  const response = await client.users.$id.get({ params: { id: 'user-1' } });
+} finally {
+  await client.close();
+}
+```
+
+Static types are retained through fluent return values or
+`createRouter().mount()`. Routes discovered dynamically at runtime use the raw
+client unless an explicit static contract is exported and mounted.
 
 ---
 

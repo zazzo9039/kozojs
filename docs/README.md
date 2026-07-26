@@ -27,13 +27,13 @@ Kozo is a monorepo. The public scope is `@kozojs/*`. The packages currently publ
 
 | Package | Description |
 |---|---|
-| [`@kozojs/core`](../packages/core/README.md) | Framework core: router, validation, OpenAPI, SSR, WebSocket, client gen |
+| [`@kozojs/core`](../packages/core/README.md) | Framework core: static route contracts, validation, OpenAPI, SSR, WebSocket, client gen |
 | [`@kozojs/cli`](../packages/cli/README.md) | Project scaffolding (`create-kozo` / `kozo`) |
 | [`@kozojs/auth`](../packages/auth/README.md) | JWT authentication middleware (built on `jose`) |
 | [`@kozojs/db`](../packages/db/README.md) | Drizzle ORM integration (PostgreSQL / MySQL / SQLite) |
 | [`@kozojs/queue`](../packages/queue/README.md) | Multi-backend job queue (BullMQ / AMQP) |
 | [`@kozojs/redis`](../packages/redis/README.md) | Cache, pub/sub, distributed rate-limit store |
-| [`@kozojs/testing`](../packages/testing/README.md) | In-process test client (no HTTP server needed) |
+| [`@kozojs/testing`](../packages/testing/README.md) | Type-safe contract tests, raw injection, and native transport tests |
 
 > Each package has its own README with installation, options, and examples.
 

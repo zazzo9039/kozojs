@@ -1,7 +1,7 @@
 {
   "name": "@kozojs/testing",
   "version": "0.6.1",
-  "description": "In-process test client for Kozo Framework — no HTTP server required",
+  "description": "Route-derived contract tests, raw injection, and native transport clients for Kozo Framework",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
@@ -26,6 +26,8 @@
   "keywords": [
     "kozo",
     "testing",
+    "contract-testing",
+    "type-safe",
     "test",
     "inject",
     "supertest",

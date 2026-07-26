@@ -1,7 +1,7 @@
 {
   "name": "@kozojs/core",
   "version": "0.6.1",
-  "description": "TypeScript backend framework where routes, validation, OpenAPI and a typed client share one contract — at native uWebSockets speed.",
+  "description": "TypeScript backend framework where routes, validation, OpenAPI, clients and tests share one contract — at native uWebSockets speed.",
   "type": "module",
   "engines": {
     "node": ">=20.19.0"

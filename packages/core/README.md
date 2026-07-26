@@ -8,11 +8,12 @@
 
 **Build a TypeScript backend from one route contract.**
 
-Define a route once with a Zod schema — runtime validation, an OpenAPI 3.1 spec, and a fully-typed TypeScript client all come from that one definition. With no extra wiring you get:
+Define a route once with a Zod schema — runtime validation, an OpenAPI 3.1 spec, a generated TypeScript client, and route-derived tests all come from that one definition. With no extra wiring you get:
 
 - **Runtime validation** — RFC 7807 errors on bad input, zero boilerplate
 - **OpenAPI 3.1** — generated from the same schema
 - **A route-derived client SDK** — `app.generateClient()` → `api.postUsers(body)`
+- **A static testing contract** — `createContractTestClient(app)` derives paths, inputs, statuses, and outputs
 - **Native-speed routing** — an optional uWebSockets.js transport registers routes straight into a C++ radix trie
 
 Kozo requires Node.js 20.19 or newer. `app.listen()` is the default Node.js transport; `app.nativeListen()` and `app.listenSsr()` add optional native and Vite integrations. `app.fetch` exposes the underlying Fetch API handler for compatible adapters.
@@ -47,6 +48,7 @@ await app.listen(3000);
 
 - [Server Modes](#server-modes)
 - [Route Registration](#route-registration)
+- [Static Route Contracts](#static-route-contracts)
 - [Route Groups](#route-groups)
 - [Schema Validation](#schema-validation)
 - [Services (Dependency Injection)](#services-dependency-injection)
@@ -113,7 +115,7 @@ Register routes with `.get()`, `.post()`, `.put()`, `.patch()`, `.delete()`. Eac
 // No schema — handler only
 app.get('/health', () => ({ status: 'ok' }));
 
-// With schema — body, query, params, response
+// With schema — body, query, params, headers, response
 app.post('/users', {
   body: z.object({ name: z.string(), email: z.string().email() }),
   response: z.object({ id: z.string().uuid(), name: z.string() }),
@@ -129,13 +131,48 @@ The handler context `ctx` contains:
 | `ctx.body` | Inferred from `schema.body` | Validated request body (POST/PUT/PATCH) |
 | `ctx.query` | Inferred from `schema.query` | Validated query parameters |
 | `ctx.params` | Inferred from `schema.params` | Validated path parameters |
+| `ctx.headers` | Inferred from `schema.headers` | Validated request headers |
 | `ctx.services` | `TServices` | Injected services |
 | `ctx.json(data, status?)` | `Response` | Return JSON response |
 | `ctx.text(data, status?)` | `Response` | Return text response |
 | `ctx.html(data, status?)` | `Response` | Return HTML response |
-| `ctx.req` | `HonoRequest` | Raw Hono request |
+| `ctx.req` | `KozoRequest` | Typed request helper |
 
 Handlers can return a plain object (auto-serialized as JSON) or a `Response` object for full control.
+
+---
+
+## Static Route Contracts
+
+TypeScript cannot derive compile-time types from routes discovered only at
+runtime. Use `createRouter()` and `mount()` when a consumer such as
+`@kozojs/testing` needs the complete route tree:
+
+```typescript
+import { createKozo, createRouter, z } from '@kozojs/core';
+
+const users = createRouter()
+  .get('/:id', {
+    params: z.object({ id: z.string() }),
+    response: {
+      200: z.object({ id: z.string(), name: z.string() }),
+      404: z.object({ message: z.string() }),
+    },
+  }, ({ params, json }) => {
+    return params.id !== 'missing'
+      ? json({ id: params.id, name: 'Ada' }, 200)
+      : json({ message: 'User not found' }, 404);
+  });
+
+const app = createKozo().mount('/users', users);
+```
+
+Fluent chaining directly from `createKozo()` also preserves route types. Calling
+`app.get(...)` and ignoring its returned value still registers the runtime
+route, but it cannot change the already inferred type of `app`. Dynamically
+loaded file-system and plugin routes remain accessible through runtime
+introspection and raw test clients unless the application exports an explicit
+static contract for them.
 
 ---
 
@@ -235,6 +272,9 @@ app.get('/users', (ctx) => {
 middleware under `listen()` and **compiled into the uWS fast path** under
 `nativeListen()` — identical semantics, native speed. Use guards for auth,
 roles, and rate limits.
+
+Register a guard before the routes it protects. This preserves middleware order
+on the Node/Hono transport and matches the native transport.
 
 ```typescript
 import { rateLimitGuard, requireSecret } from '@kozojs/core';

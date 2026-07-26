@@ -4,7 +4,7 @@
 
 # Kozo
 
-**A TypeScript backend framework where routes, validation, OpenAPI, and a generated client share one contract.**
+**A TypeScript backend framework where routes, validation, OpenAPI, generated clients, and tests share one contract.**
 
 [![CI](https://github.com/zazzo9039/kozojs/actions/workflows/ci.yml/badge.svg)](https://github.com/zazzo9039/kozojs/actions/workflows/ci.yml)
 [![npm version](https://badge.fury.io/js/@kozojs%2Fcore.svg)](https://www.npmjs.com/package/@kozojs/core)
@@ -13,7 +13,7 @@
 
 [Documentation](https://kozo-docs.vercel.app) · [Packages](#packages) · [Examples](./examples) · [Benchmarks](./benchmarks/README.md)
 
-Kozo gives a backend one consistent structure without hiding the underlying platform. Define a route with Zod once and use the same definition for request validation, response serialization, OpenAPI 3.1, and a route-derived TypeScript client.
+Kozo gives a backend one consistent structure without hiding the underlying platform. Define a route with Zod once and use the same definition for request validation, response serialization, OpenAPI 3.1, a generated TypeScript client, and route-aware tests.
 
 Start with the standard Node.js server, opt into the uWebSockets.js transport when throughput or native WebSockets matter, or run an API and Vite SSR application on one port.
 
@@ -22,7 +22,7 @@ Start with the standard Node.js server, opt into the uWebSockets.js transport wh
 ## Why Kozo?
 
 - **One route contract** — Zod schemas describe request data and public responses.
-- **Useful output from the same definition** — runtime validation, OpenAPI, and a generated TypeScript client stay aligned with registered routes.
+- **Useful output from the same definition** — runtime validation, OpenAPI, generated clients, and type-safe tests stay aligned with registered routes.
 - **A clear default path** — `app.listen()` runs on standard Node.js HTTP with no native dependency.
 - **Native performance when you need it** — `app.nativeListen()` registers routes directly with uWebSockets.js.
 - **Structure without ceremony** — use programmatic routes or file-system routing with typed services.
@@ -82,22 +82,28 @@ await app.listen(3000);
 
 During development, Swagger UI is available at `http://localhost:3000/docs` and the OpenAPI document at `/docs.json`. Documentation routes are disabled by default when `NODE_ENV=production`; enable them explicitly if that is appropriate for your deployment.
 
-## One definition, four jobs
+## One definition, five jobs
 
 ```typescript
-app.post('/users', {
-  body: z.object({
-    name: z.string().min(2),
-    email: z.string().email(),
-  }),
-  response: z.object({
-    id: z.string().uuid(),
-    name: z.string(),
-    email: z.string().email(),
-  }),
-}, async ({ body, services }) => {
-  return services.users.create(body);
-});
+import { createKozo, createRouter, z } from '@kozojs/core';
+
+const userRoutes = createRouter()
+  .post('/', {
+    body: z.object({
+      name: z.string().min(2),
+      email: z.string().email(),
+    }),
+    response: z.object({
+      id: z.string().uuid(),
+      name: z.string(),
+      email: z.string().email(),
+    }),
+  }, async ({ body }) => ({
+    id: crypto.randomUUID(),
+    ...body,
+  }));
+
+const app = createKozo().mount('/users', userRoutes);
 ```
 
 That route definition provides:
@@ -106,6 +112,7 @@ That route definition provides:
 2. A public response contract; undeclared object fields are omitted when a compilable response schema is used.
 3. An OpenAPI 3.1 operation.
 4. A generated client method such as `api.postUsers(body)`.
+5. A type-safe test operation such as `client.users.post({ body })`.
 
 Generate a client from the routes registered in your app:
 
@@ -118,17 +125,34 @@ await writeFile(
 );
 ```
 
-The generated client is route-derived. The in-process client from `@kozojs/testing` is a separate, string-path testing API.
+Test the same static route contract without duplicating paths or request types:
+
+```typescript
+import { createContractTestClient } from '@kozojs/testing';
+
+const client = createContractTestClient(app);
+const response = await client.users.post({
+  body: { name: 'Ada', email: 'ada@example.com' },
+});
+
+expect(response.status).toBe(200);
+```
+
+The contract type is accumulated through returned values. Chain route calls or
+mount a `createRouter()` contract. The raw `createTestClient()` remains
+available for malformed payloads, unknown paths, and dynamically discovered
+file-system routes.
 
 ## Programmatic or file-system routing
 
 Programmatic routes keep everything in one module:
 
 ```typescript
-app.get('/health', () => ({ ok: true }));
-app.group('/api', (api) => {
-  api.get('/users', ({ services }) => services.users.list());
-});
+const apiRoutes = createRouter()
+  .get('/health', () => ({ ok: true }))
+  .get('/users', () => []);
+
+const app = createKozo().mount('/api', apiRoutes);
 ```
 
 File-system routing maps files to HTTP methods and paths:
@@ -183,7 +207,7 @@ Guards created with `app.guard()` run on both Node and native transports. Hono m
 | [`@kozojs/db`](./packages/db/README.md) | Drizzle integration for PostgreSQL, SQLite, and MySQL connections |
 | [`@kozojs/queue`](./packages/queue/README.md) | Unified BullMQ and AMQP job queue adapters |
 | [`@kozojs/redis`](./packages/redis/README.md) | Cache, pub/sub, and distributed rate-limit storage |
-| [`@kozojs/testing`](./packages/testing/README.md) | In-process tests and real native-transport test clients |
+| [`@kozojs/testing`](./packages/testing/README.md) | Route-derived contract tests, raw injection, and real native-transport clients |
 
 Install only the packages your application needs. Each package README documents its peer dependencies, supported backends, and lifecycle behavior.
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Composable static route contracts with `createRouter()` and `app.mount()`.
+- Route-derived in-process and native test clients in `@kozojs/testing`.
+- Typed and validated request header schemas across both transports.
+- A complete contract testing showcase with OpenAPI and generated SDK output.
+
+### Changed
+
+- Status-specific response contracts now drive both typing and serialization.
+- Generated clients encode path parameters, repeat array query keys, support
+  Zod 4 enums, and select declared non-200 success schemas.
+
 ## [0.6.0] — 2026-07-25
 
 ### Changed
