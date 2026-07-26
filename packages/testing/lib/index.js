@@ -1,21 +1,36 @@
 // src/index.ts
 import { createKozo } from "@kozojs/core";
+function appendQuery(searchParams, query) {
+  for (const [key, value] of Object.entries(query)) {
+    if (value == null) continue;
+    const values = Array.isArray(value) ? value : [value];
+    for (const item of values) searchParams.append(key, String(item));
+  }
+}
+function isPassThroughBody(body) {
+  return body instanceof URLSearchParams || body instanceof FormData || body instanceof Blob || body instanceof ArrayBuffer || ArrayBuffer.isView(body);
+}
 function buildRequest(options) {
   const { method = "GET", url, headers = {}, body, query } = options;
-  let fullUrl = url.startsWith("http") ? url : `http://localhost${url}`;
+  const requestUrl = new URL(url, "http://localhost");
   if (query && Object.keys(query).length > 0) {
-    const qs = new URLSearchParams(query);
-    fullUrl += (fullUrl.includes("?") ? "&" : "?") + qs.toString();
+    appendQuery(requestUrl.searchParams, query);
   }
-  const finalHeaders = { ...headers };
+  const finalHeaders = new Headers(headers);
   let finalBody;
   if (body !== void 0) {
-    if (!finalHeaders["content-type"] && !finalHeaders["Content-Type"]) {
-      finalHeaders["Content-Type"] = "application/json";
+    if (typeof body === "string") {
+      finalBody = new TextEncoder().encode(body);
+    } else if (isPassThroughBody(body)) {
+      finalBody = body;
+    } else {
+      if (!finalHeaders.has("content-type")) {
+        finalHeaders.set("content-type", "application/json");
+      }
+      finalBody = JSON.stringify(body);
     }
-    finalBody = typeof body === "string" ? body : JSON.stringify(body);
   }
-  return new Request(fullUrl, { method, headers: finalHeaders, body: finalBody });
+  return new Request(requestUrl, { method, headers: finalHeaders, body: finalBody });
 }
 async function doInject(fetchFn, options) {
   const req = buildRequest(options);

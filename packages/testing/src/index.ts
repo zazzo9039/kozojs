@@ -11,8 +11,16 @@ export interface InjectOptions {
   headers?: Record<string, string>;
   body?: unknown;
   /** Shorthand: appended as query string to the URL */
-  query?: Record<string, string>;
+  query?: Record<string, TestQueryValue>;
 }
+
+export type TestQueryPrimitive = string | number | boolean;
+
+export type TestQueryValue =
+  | TestQueryPrimitive
+  | readonly TestQueryPrimitive[]
+  | null
+  | undefined;
 
 export interface TestResponse {
   status: number;
@@ -44,27 +52,49 @@ export interface TestClient<TServices extends Services = Services> {
 // Internal helpers
 // ============================================================================
 
+function appendQuery(searchParams: URLSearchParams, query: Record<string, TestQueryValue>): void {
+  for (const [key, value] of Object.entries(query)) {
+    if (value == null) continue;
+    const values = Array.isArray(value) ? value : [value];
+    for (const item of values) searchParams.append(key, String(item));
+  }
+}
+
+function isPassThroughBody(body: unknown): body is BodyInit {
+  return body instanceof URLSearchParams
+    || body instanceof FormData
+    || body instanceof Blob
+    || body instanceof ArrayBuffer
+    || ArrayBuffer.isView(body);
+}
+
 function buildRequest(options: InjectOptions): Request {
   const { method = 'GET', url, headers = {}, body, query } = options;
 
-  let fullUrl = url.startsWith('http') ? url : `http://localhost${url}`;
-
+  const requestUrl = new URL(url, 'http://localhost');
   if (query && Object.keys(query).length > 0) {
-    const qs = new URLSearchParams(query);
-    fullUrl += (fullUrl.includes('?') ? '&' : '?') + qs.toString();
+    appendQuery(requestUrl.searchParams, query);
   }
 
-  const finalHeaders: Record<string, string> = { ...headers };
+  const finalHeaders = new Headers(headers);
   let finalBody: BodyInit | undefined;
 
   if (body !== undefined) {
-    if (!finalHeaders['content-type'] && !finalHeaders['Content-Type']) {
-      finalHeaders['Content-Type'] = 'application/json';
+    if (typeof body === 'string') {
+      // Undici assigns text/plain;charset=UTF-8 to string BodyInit values.
+      // Encoding the same bytes explicitly preserves a truly raw string body.
+      finalBody = new TextEncoder().encode(body);
+    } else if (isPassThroughBody(body)) {
+      finalBody = body;
+    } else {
+      if (!finalHeaders.has('content-type')) {
+        finalHeaders.set('content-type', 'application/json');
+      }
+      finalBody = JSON.stringify(body);
     }
-    finalBody = typeof body === 'string' ? body : JSON.stringify(body);
   }
 
-  return new Request(fullUrl, { method, headers: finalHeaders, body: finalBody });
+  return new Request(requestUrl, { method, headers: finalHeaders, body: finalBody });
 }
 
 async function doInject(

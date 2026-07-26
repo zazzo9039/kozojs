@@ -94,9 +94,19 @@ const res = await client.inject({
   url: '/users',
   headers: { Authorization: 'Bearer token123' },
   body: { name: 'Alice' },
-  query: { expand: 'profile' },
+  query: { expand: 'profile', page: 2, active: false, tag: ['new', 'staff'] },
 });
 ```
+
+Query values may be strings, numbers, booleans, or arrays of those primitives.
+Arrays use repeated query keys. `null` and `undefined` values are omitted, while
+`0`, `false`, and empty strings are preserved.
+
+Plain objects, arrays, numbers, and booleans are JSON-serialized and receive an
+`application/json` content type by default. Strings stay raw and do not receive
+an automatic content type. `URLSearchParams`, `FormData`, `Blob`, `ArrayBuffer`,
+and typed arrays are passed through to the Fetch `Request` implementation.
+An explicit `content-type` header always takes precedence.
 
 ## Response Object
 

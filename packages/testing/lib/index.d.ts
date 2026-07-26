@@ -6,8 +6,10 @@ interface InjectOptions {
     headers?: Record<string, string>;
     body?: unknown;
     /** Shorthand: appended as query string to the URL */
-    query?: Record<string, string>;
+    query?: Record<string, TestQueryValue>;
 }
+type TestQueryPrimitive = string | number | boolean;
+type TestQueryValue = TestQueryPrimitive | readonly TestQueryPrimitive[] | null | undefined;
 interface TestResponse {
     status: number;
     headers: Headers;
@@ -105,4 +107,4 @@ interface NativeTestClient<TServices extends Services = Services> extends TestCl
  */
 declare function createNativeTestClient<TServices extends Services = Services>(app: Kozo<TServices>): Promise<NativeTestClient<TServices>>;
 
-export { type InjectOptions, type NativeTestClient, type TestClient, type TestResponse, createNativeTestClient, createTestApp, createTestClient };
+export { type InjectOptions, type NativeTestClient, type TestClient, type TestQueryPrimitive, type TestQueryValue, type TestResponse, createNativeTestClient, createTestApp, createTestClient };

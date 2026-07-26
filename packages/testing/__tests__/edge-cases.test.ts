@@ -34,8 +34,23 @@ function buildApp() {
 
   // Query with defaults
   app.get('/search', {
-    query: z.object({ q: z.string(), page: z.coerce.number().default(1) }),
-  }, ({ query }) => ({ q: query.q, page: query.page }));
+    query: z.object({
+      q: z.string(),
+      page: z.coerce.number().default(1),
+      active: z.enum(['true', 'false']).optional(),
+      tag: z.union([z.string(), z.array(z.string())]).optional(),
+      empty: z.string().optional(),
+    }),
+  }, ({ query }) => query);
+
+  app.get('/raw-query', {}, ({ c }) => ({
+    tags: new URL(c.req.url).searchParams.getAll('tag'),
+  }));
+
+  app.post('/raw-body', {}, async ({ c }) => ({
+    contentType: c.req.header('content-type') ?? null,
+    body: await c.req.text(),
+  }));
 
   // Simple ping
   app.get('/ping', {}, () => ({ pong: true }));
@@ -121,6 +136,94 @@ describe('edge cases — query parameters', () => {
     const json = res.json<any>();
     expect(json.q).toBe('base');
     expect(json.page).toBe(3);
+  });
+
+  it('serializes numbers, booleans, repeated arrays, and empty strings', async () => {
+    const client = createTestClient(buildApp());
+    const res = await client.get('/search', {
+      query: {
+        q: 'kozo',
+        page: 0,
+        active: false,
+        empty: '',
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.json()).toEqual({
+      q: 'kozo',
+      page: 0,
+      active: 'false',
+      empty: '',
+    });
+
+    const repeated = await client.get('/raw-query', {
+      query: { tag: ['runtime', 'types'] },
+    });
+    expect(repeated.json()).toEqual({ tags: ['runtime', 'types'] });
+  });
+
+  it('omits null and undefined query values', async () => {
+    const client = createTestClient(buildApp());
+    const res = await client.get('/search?q=kozo', {
+      query: { page: 2, active: null, tag: undefined },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.json()).toEqual({ q: 'kozo', page: 2 });
+  });
+});
+
+describe('edge cases — request bodies', () => {
+  it('keeps string bodies raw without assigning a content type', async () => {
+    const client = createTestClient(buildApp());
+    const res = await client.post('/raw-body', 'plain text');
+
+    expect(res.status).toBe(200);
+    expect(res.json()).toEqual({ contentType: null, body: 'plain text' });
+  });
+
+  it('respects an explicit content type for string bodies', async () => {
+    const client = createTestClient(buildApp());
+    const res = await client.post('/raw-body', '{"ok":true}', {
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.json()).toEqual({ contentType: 'application/json', body: '{"ok":true}' });
+  });
+
+  it('serializes JSON values and sets application/json', async () => {
+    const client = createTestClient(buildApp());
+
+    for (const body of [{ ok: true }, [1, 2], 0, false]) {
+      const res = await client.post('/raw-body', body);
+      expect(res.status).toBe(200);
+      expect(res.json()).toEqual({
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      });
+    }
+  });
+
+  it('passes URLSearchParams through to the Request implementation', async () => {
+    const client = createTestClient(buildApp());
+    const body = new URLSearchParams({ q: 'kozo', page: '2' });
+    const res = await client.post('/raw-body', body);
+    const json = res.json<any>();
+
+    expect(res.status).toBe(200);
+    expect(json.contentType).toContain('application/x-www-form-urlencoded');
+    expect(json.body).toBe('q=kozo&page=2');
+  });
+
+  it('passes binary request bodies through without forcing JSON', async () => {
+    const client = createTestClient(buildApp());
+    const bytes = new Uint8Array([75, 111, 122, 111]);
+    const res = await client.post('/raw-body', bytes);
+
+    expect(res.status).toBe(200);
+    expect(res.json()).toEqual({ contentType: null, body: 'Kozo' });
   });
 });
 
