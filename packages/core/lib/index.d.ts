@@ -2,8 +2,8 @@ import * as hono from 'hono';
 import { MiddlewareHandler, Context } from 'hono';
 import { Hono } from 'hono/quick';
 import { Server, IncomingMessage, ServerResponse } from 'node:http';
-import { R as RouteSchema, H as HttpMethod$1, S as Services, K as KozoHandler, a as RouteMeta, b as KozoConfig, c as KozoEnv, d as KozoGuard, e as KozoRequest, N as NativeKozoContext, f as RouteDefinition, M as MiddlewareDefinition, g as RouteModule, h as ResolvedRouteModule } from './index-BciKqigK.js';
-export { C as ClientAddressSource, B as CorsOptions, X as FileSystemRoutingOptions, w as GuardDeny, x as GuardEntry, v as GuardOutcome, G as GuardRequest, u as GuardResult, p as Infer, o as InferResponse, I as InferSchema, j as KozoContext, l as KozoServices, k as KozoUser, L as LoggerOptions, Z as ManifestHttpMethod, Y as ManifestRoute, n as NativeKozoHandler, O as RateLimitGuardOptions, J as RateLimitOptions, P as RateLimitStore, Q as RateLimitStoreRecord, m as RouteContext, i as RouteDefinitionOptions, _ as RoutesManifest, T as TrustProxy, a0 as WebhookVerifyOptions, V as applyFileSystemRouting, F as clearRateLimitStore, t as compileGuardPattern, A as cors, W as createFileSystemRouting, r as createRouteFactory, q as defineRoute, U as errorHandler, s as guardToHonoMiddleware, z as logger, D as rateLimit, E as rateLimitGuard, y as resolveClientIp, $ as verifyWebhookSignature } from './index-BciKqigK.js';
+import { R as RouteSchema, H as HttpMethod$1, S as Services, K as KozoHandler, a as RouteMeta, b as KozoConfig, c as KozoEnv, d as KozoGuard, e as KozoRequest, N as NativeKozoContext, f as RouteDefinition, M as MiddlewareDefinition, g as RouteModule, h as ResolvedRouteModule } from './index-BNjGbSIL.js';
+export { C as ClientAddressSource, E as CorsOptions, Z as FileSystemRoutingOptions, y as GuardDeny, z as GuardEntry, x as GuardOutcome, G as GuardRequest, w as GuardResult, q as Infer, o as InferInput, p as InferResponse, I as InferSchema, j as KozoContext, l as KozoServices, k as KozoUser, L as LoggerOptions, $ as ManifestHttpMethod, _ as ManifestRoute, n as NativeKozoHandler, Q as RateLimitGuardOptions, P as RateLimitOptions, U as RateLimitStore, V as RateLimitStoreRecord, m as RouteContext, i as RouteDefinitionOptions, a0 as RoutesManifest, r as SchemaType, T as TrustProxy, a2 as WebhookVerifyOptions, X as applyFileSystemRouting, O as clearRateLimitStore, v as compileGuardPattern, D as cors, Y as createFileSystemRouting, t as createRouteFactory, s as defineRoute, W as errorHandler, u as guardToHonoMiddleware, B as logger, F as rateLimit, J as rateLimitGuard, A as resolveClientIp, a1 as verifyWebhookSignature } from './index-BNjGbSIL.js';
 import { Writable } from 'node:stream';
 import { z } from 'zod';
 export { z } from 'zod';
@@ -721,6 +721,7 @@ type CompiledRoute = {
     validateParams?: ZValidator;
     validateHeaders?: ZValidator;
     serialize?: (data: any) => string;
+    serializeByStatus?: Readonly<Record<number, (data: any) => string>>;
 };
 /** Options controlling diagnostics for {@link SchemaCompiler.compile}. */
 interface CompileOptions {

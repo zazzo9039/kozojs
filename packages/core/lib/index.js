@@ -765,6 +765,14 @@ var BadRequestError = class extends KozoError {
 };
 
 // src/uws-transport.ts
+function decodeRouteParameter(value) {
+  if (value.indexOf("%") === -1) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 var STATUS_TEXT = {
   200: "200 OK",
   201: "201 Created",
@@ -1243,7 +1251,9 @@ function listenUwsOnPort(opts, port) {
             const rawPath = uwsReq.getUrl();
             const query = uwsReq.getQuery();
             const params = {};
-            for (let i = 0; i < names.length; i++) params[names[i]] = uwsReq.getParameter(i);
+            for (let i = 0; i < names.length; i++) {
+              params[names[i]] = decodeRouteParameter(uwsReq.getParameter(i));
+            }
             h(uwsRes, query ? `${rawPath}?${query}` : rawPath, "", params, void 0, reqHeaders, remoteAddress);
           });
         } else if (!hasParams) {
@@ -1291,7 +1301,9 @@ function listenUwsOnPort(opts, port) {
             const query = uwsReq.getQuery();
             const url = query ? `${rawPath}?${query}` : rawPath;
             const params = {};
-            for (let i = 0; i < names.length; i++) params[names[i]] = uwsReq.getParameter(i);
+            for (let i = 0; i < names.length; i++) {
+              params[names[i]] = decodeRouteParameter(uwsReq.getParameter(i));
+            }
             const maxBody = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
             let aborted = false;
             let totalBytes = 0;
@@ -1630,15 +1642,7 @@ function toJsonBody(result) {
 function isZodSchema(schema) {
   return typeof schema === "object" && schema !== null && "safeParse" in schema;
 }
-function resolveResponseZodSchema(response) {
-  if (!response) return void 0;
-  if (isZodSchema(response)) return response;
-  const record = response;
-  return record[200] ?? record["200"] ?? Object.values(record)[0];
-}
-function compileResponseSerializerWithMeta(response) {
-  const zodSchema = resolveResponseZodSchema(response);
-  if (!zodSchema) return void 0;
+function compileZodResponseSerializer(zodSchema) {
   if (zodSchema instanceof z2.ZodAny) {
     return { serialize: toJsonBody, mode: "json-stringify" };
   }
@@ -1659,6 +1663,23 @@ function compileResponseSerializerWithMeta(response) {
       unsafeFallback: { reason: err?.message ?? String(err) }
     };
   }
+}
+function compileResponseSerializerSetWithMeta(response) {
+  if (!response) return void 0;
+  if (isZodSchema(response)) {
+    return { default: compileZodResponseSerializer(response) };
+  }
+  const byStatus = {};
+  for (const [rawStatus, schema] of Object.entries(response)) {
+    if (!isZodSchema(schema)) continue;
+    byStatus[Number(rawStatus)] = compileZodResponseSerializer(schema);
+  }
+  const serializers = Object.values(byStatus);
+  if (serializers.length === 0) return void 0;
+  return {
+    default: byStatus[200] ?? serializers[0],
+    byStatus
+  };
 }
 
 // src/compiler.ts
@@ -1748,7 +1769,19 @@ var HonoReqAdapter = class {
 var HONO_HEADERS_DIRTY = /* @__PURE__ */ Symbol("kozoHonoHeadersDirty");
 var CTX_PROTO = {
   json(data, status) {
-    return this._c.json(data, status);
+    const statusCode = status ?? 200;
+    const serialize = this._serializeByStatus?.[statusCode] ?? this._serialize;
+    if (!serialize) return this._c.json(data, status);
+    const body = serialize(data);
+    if (typeof this._c.body === "function") {
+      return this._c.body(body, statusCode, {
+        "Content-Type": "application/json"
+      });
+    }
+    return new Response(body, {
+      status: statusCode,
+      headers: { "Content-Type": "application/json" }
+    });
   },
   text(data, status) {
     return this._c.text(data, status);
@@ -1764,9 +1797,11 @@ var CTX_PROTO = {
     return this._c.header(name, value);
   }
 };
-function buildCtx(c, extra) {
+function buildCtx(c, extra, serialize, serializeByStatus) {
   const ctx = Object.create(CTX_PROTO);
   ctx._c = c;
+  ctx._serialize = serialize;
+  ctx._serializeByStatus = serializeByStatus;
   ctx.c = c;
   ctx.body = void 0;
   ctx.query = void 0;
@@ -1806,7 +1841,7 @@ async function runHonoScoped(scope, req, run) {
     await resolved.finish(err);
   }
 }
-function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, headers, services, ser, method, remoteAddress, corsHeaders, reqHeaders, user) {
+function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, headers, services, ser, serializeByStatus, method, remoteAddress, corsHeaders, reqHeaders, user) {
   let done = false;
   let userHeaders;
   const finalCors = () => {
@@ -1826,7 +1861,7 @@ function buildUwsHandlerContext(uwsRes, url, rawBody, params, body, query, heade
     },
     json(data, status) {
       done = true;
-      const body2 = ser(data);
+      const body2 = (serializeByStatus?.[status ?? 200] ?? ser)(data);
       const ch = finalCors();
       if (status !== void 0 && status !== 200) uwsFastWriteJsonStatus(uwsRes, body2, status, ch);
       else uwsFastWriteJson(uwsRes, body2, ch);
@@ -1873,7 +1908,8 @@ function compileScopedRouteHandler(handler, compiled, scope, errorHook) {
     validateQuery: vq,
     validateParams: vp,
     validateHeaders: vh,
-    serialize
+    serialize,
+    serializeByStatus
   } = compiled;
   const ser = serialize ?? toJsonBody;
   if (vb) {
@@ -1906,7 +1942,12 @@ function compileScopedRouteHandler(handler, compiled, scope, errorHook) {
         }
         return await runHonoScoped(scope, req, async (services, signalError) => {
           try {
-            const result = await handler(buildCtx(c, { body, query, params, headers, services }));
+            const result = await handler(buildCtx(
+              c,
+              { body, query, params, headers, services },
+              ser,
+              serializeByStatus
+            ));
             return honoResultToResponse(c, result, ser);
           } catch (err) {
             signalError(err);
@@ -1943,7 +1984,7 @@ function compileScopedRouteHandler(handler, compiled, scope, errorHook) {
       return await runHonoScoped(scope, req, async (services, signalError) => {
         try {
           const extra = { query, params, headers, services };
-          const result = handler.length === 0 ? handler() : handler(buildCtx(c, extra));
+          const result = handler.length === 0 ? handler() : handler(buildCtx(c, extra, ser, serializeByStatus));
           if (result != null && typeof result.then === "function") {
             const r = await result;
             return honoResultToResponse(c, r, ser);
@@ -1994,11 +2035,25 @@ var SchemaCompiler = class {
       compiled.validateHeaders = makeZValidator(schema.headers);
     }
     if (schema.response) {
-      const meta = compileResponseSerializerWithMeta(schema.response);
-      if (meta) {
-        compiled.serialize = meta.serialize;
-        if (meta.unsafeFallback) {
-          reportUnsafeResponseFallback(meta.unsafeFallback.reason, opts);
+      const serializers = compileResponseSerializerSetWithMeta(schema.response);
+      if (serializers) {
+        compiled.serialize = serializers.default.serialize;
+        if (serializers.byStatus) {
+          compiled.serializeByStatus = Object.fromEntries(
+            Object.entries(serializers.byStatus).map(([status, entry]) => [
+              Number(status),
+              entry.serialize
+            ])
+          );
+        }
+        const entries = serializers.byStatus ? Object.entries(serializers.byStatus) : [["default", serializers.default]];
+        for (const [status, entry] of entries) {
+          if (entry.unsafeFallback) {
+            reportUnsafeResponseFallback(
+              `${entry.unsafeFallback.reason} (status ${status})`,
+              opts
+            );
+          }
         }
       }
     }
@@ -2014,7 +2069,8 @@ function compileRouteHandler(handler, schema, services, compiled, scope, errorHo
     validateQuery: vq,
     validateParams: vp,
     validateHeaders: vh,
-    serialize
+    serialize,
+    serializeByStatus
   } = compiled;
   const svc = services != null && Object.keys(services).length > 0 ? services : void 0;
   const ser = serialize ?? toJsonBody;
@@ -2046,7 +2102,12 @@ function compileRouteHandler(handler, schema, services, compiled, scope, errorHo
           const r = vh(headers);
           if (!r.valid) return validationErrorResponse("headers", r.errors, path2);
         }
-        const result = await handler(buildCtx(c, { body, query, params, headers, services: svc }));
+        const result = await handler(buildCtx(
+          c,
+          { body, query, params, headers, services: svc },
+          ser,
+          serializeByStatus
+        ));
         return honoResultToResponse(c, result, ser);
       } catch (err) {
         return await resolveHandlerError(err, path2, c, errorHook);
@@ -2074,7 +2135,7 @@ function compileRouteHandler(handler, schema, services, compiled, scope, errorHo
         if (!r.valid) return validationErrorResponse("headers", r.errors, c.req.path);
       }
       const extra = query || params || headers || svc ? { query, params, headers, services: svc } : void 0;
-      const result = noArgs ? handler() : handler(buildCtx(c, extra));
+      const result = noArgs ? handler() : handler(buildCtx(c, extra, ser, serializeByStatus));
       if (result instanceof Response) return result;
       if (result != null && typeof result.then === "function") {
         return result.then(
@@ -2095,7 +2156,8 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope, max
     validateQuery: vq,
     validateParams: vp,
     validateHeaders: vh,
-    serialize
+    serialize,
+    serializeByStatus
   } = compiled;
   const svc = services != null && Object.keys(services).length > 0 ? services : void 0;
   const ser = serialize ?? toJsonBody;
@@ -2112,6 +2174,7 @@ function compileUwsNativeHandler(handler, schema, services, compiled, scope, max
       headers,
       runServices ?? {},
       ser,
+      serializeByStatus,
       method,
       remoteAddress,
       corsHeaders,

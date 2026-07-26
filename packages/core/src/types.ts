@@ -16,6 +16,11 @@ export type InferSchema<T> = T extends z.ZodType<any>
   ? z.infer<T>
   : unknown;
 
+/** Infer the values accepted as input by a Zod schema. */
+export type InferInput<T> = T extends z.ZodType<any>
+  ? z.input<T>
+  : unknown;
+
 /**
  * Shorthand for `z.infer<typeof Schema>`.
  *

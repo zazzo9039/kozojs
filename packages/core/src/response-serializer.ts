@@ -40,6 +40,11 @@ export interface CompiledResponseSerializer {
   unsafeFallback?: { reason: string };
 }
 
+export interface CompiledResponseSerializerSet {
+  default: CompiledResponseSerializer;
+  byStatus?: Readonly<Record<number, CompiledResponseSerializer>>;
+}
+
 function dateReplacer(_key: string, value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
   return value;
@@ -64,12 +69,7 @@ export function resolveResponseZodSchema(
   return record[200] ?? record['200' as unknown as number] ?? Object.values(record)[0];
 }
 
-export function compileResponseSerializerWithMeta(
-  response: RouteSchema['response'],
-): CompiledResponseSerializer | undefined {
-  const zodSchema = resolveResponseZodSchema(response);
-  if (!zodSchema) return undefined;
-
+function compileZodResponseSerializer(zodSchema: z.ZodType): CompiledResponseSerializer {
   if (zodSchema instanceof z.ZodAny) {
     return { serialize: toJsonBody, mode: 'json-stringify' };
   }
@@ -94,6 +94,33 @@ export function compileResponseSerializerWithMeta(
       unsafeFallback: { reason: (err as Error)?.message ?? String(err) },
     };
   }
+}
+
+export function compileResponseSerializerSetWithMeta(
+  response: RouteSchema['response'],
+): CompiledResponseSerializerSet | undefined {
+  if (!response) return undefined;
+  if (isZodSchema(response)) {
+    return { default: compileZodResponseSerializer(response) };
+  }
+
+  const byStatus: Record<number, CompiledResponseSerializer> = {};
+  for (const [rawStatus, schema] of Object.entries(response)) {
+    if (!isZodSchema(schema)) continue;
+    byStatus[Number(rawStatus)] = compileZodResponseSerializer(schema);
+  }
+  const serializers = Object.values(byStatus);
+  if (serializers.length === 0) return undefined;
+  return {
+    default: byStatus[200] ?? serializers[0]!,
+    byStatus,
+  };
+}
+
+export function compileResponseSerializerWithMeta(
+  response: RouteSchema['response'],
+): CompiledResponseSerializer | undefined {
+  return compileResponseSerializerSetWithMeta(response)?.default;
 }
 
 export function compileResponseSerializer(

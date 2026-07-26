@@ -77,6 +77,15 @@ export interface UwsHttpReq {
   forEach(cb: (key: string, value: string) => void): void;
 }
 
+function decodeRouteParameter(value: string): string {
+  if (value.indexOf('%') === -1) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 // ── uWS WebSocket type surface ───────────────────────────────────────────────
 
 export interface UwsWebSocket {
@@ -876,7 +885,9 @@ function listenUwsOnPort(opts: UwsDispatchOptions, port: number): Promise<{ port
           const rawPath = uwsReq.getUrl();
           const query   = uwsReq.getQuery();
           const params: Record<string, string> = {};
-          for (let i = 0; i < names.length; i++) params[names[i]] = uwsReq.getParameter(i);
+          for (let i = 0; i < names.length; i++) {
+            params[names[i]] = decodeRouteParameter(uwsReq.getParameter(i));
+          }
           h(uwsRes, query ? `${rawPath}?${query}` : rawPath, '', params, undefined, reqHeaders, remoteAddress);
         });
 
@@ -924,7 +935,9 @@ function listenUwsOnPort(opts: UwsDispatchOptions, port: number): Promise<{ port
           const query   = uwsReq.getQuery();
           const url     = query ? `${rawPath}?${query}` : rawPath;
           const params: Record<string, string> = {};
-          for (let i = 0; i < names.length; i++) params[names[i]] = uwsReq.getParameter(i);
+          for (let i = 0; i < names.length; i++) {
+            params[names[i]] = decodeRouteParameter(uwsReq.getParameter(i));
+          }
           const maxBody = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
           let aborted = false;
           let totalBytes = 0;

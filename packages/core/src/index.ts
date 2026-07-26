@@ -48,8 +48,10 @@ export type {
   NativeKozoContext,
   NativeKozoHandler,
   InferSchema,
+  InferInput,
   InferResponse,
   Infer,
+  SchemaType,
 } from './types.js';
 export { defineRoute, createRouteFactory } from './types.js';
 

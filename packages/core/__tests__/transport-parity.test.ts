@@ -136,6 +136,10 @@ function createParityApp() {
     id: ctx.params.id,
   }));
 
+  app.get('/encoded/:value', {
+    params: z.object({ value: z.string() }),
+  }, (ctx) => ({ value: ctx.params.value }));
+
   app.post('/echo', { body: z.object({ msg: z.string() }) }, (ctx) => ({
     echo: ctx.body.msg,
   }));
@@ -143,6 +147,10 @@ function createParityApp() {
   app.get('/contract', {
     response: { 200: z.object({ id: z.string() }) },
   }, () => ({ id: '1', surpriseFromDb: 'extra' }));
+
+  app.post('/status-contract', {
+    response: { 201: z.object({ id: z.string() }) },
+  }, ({ json }) => json({ id: 'created', internal: 'strip-me' }, 201));
 
   app.get('/any-response', {
     response: { 200: z.any() },
@@ -227,6 +235,12 @@ describe.skipIf(!uwsAvailable)('transport parity: listen() vs nativeListen()', (
     expect(hono.status).toBe(400);
   });
 
+  it('2b — encoded path params are decoded identically', async () => {
+    const { hono, native } = await runParity({ path: '/encoded/a%2Fb' });
+    assertParity(hono, native, { exactBody: true });
+    expect(JSON.parse(hono.body)).toEqual({ value: 'a/b' });
+  });
+
   it('3 — POST valid body', async () => {
     const { hono, native } = await runParity({
       method: 'POST',
@@ -253,6 +267,16 @@ describe.skipIf(!uwsAvailable)('transport parity: listen() vs nativeListen()', (
     const { hono, native } = await runParity({ path: '/contract' });
     assertParity(hono, native, { exactBody: true });
     expect(hono.body).toBe('{"id":"1"}');
+  });
+
+  it('5b — explicit response status uses its own enforcing serializer', async () => {
+    const { hono, native } = await runParity({
+      method: 'POST',
+      path: '/status-contract',
+    });
+    assertParity(hono, native, { exactBody: true });
+    expect(hono.status).toBe(201);
+    expect(JSON.parse(hono.body)).toEqual({ id: 'created' });
   });
 
   it('6 — json-stringify fallback (z.any response)', async () => {
