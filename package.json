@@ -14,7 +14,7 @@
     "build": "turbo run build",
     "dev": "turbo run dev --concurrency=20",
     "test": "turbo run test",
-    "typecheck": "pnpm exec tsc --noEmit -p packages/core/tsconfig.json && pnpm exec tsc --noEmit -p packages/auth/tsconfig.json && pnpm exec tsc --noEmit -p packages/cli/tsconfig.json && pnpm exec tsc --noEmit -p packages/db/tsconfig.json && pnpm exec tsc --noEmit -p packages/queue/tsconfig.json && pnpm exec tsc --noEmit -p packages/redis/tsconfig.json && pnpm exec tsc --noEmit -p packages/testing/tsconfig.json && pnpm exec tsc --noEmit -p packages/testing/type-tests/tsconfig.json",
+    "typecheck": "pnpm exec tsc --noEmit -p packages/core/tsconfig.json && pnpm exec tsc --noEmit -p packages/auth/tsconfig.json && pnpm exec tsc --noEmit -p packages/cli/tsconfig.json && pnpm exec tsc --noEmit -p packages/db/tsconfig.json && pnpm exec tsc --noEmit -p packages/queue/tsconfig.json && pnpm exec tsc --noEmit -p packages/redis/tsconfig.json && pnpm exec tsc --noEmit -p packages/testing/tsconfig.json && pnpm exec tsc --noEmit -p packages/testing/type-tests/tsconfig.json && pnpm exec tsc --noEmit -p examples/contract-showcase/tsconfig.json",
     "lint": "turbo run lint",
     "clean": "rm -rf node_modules packages/*/node_modules packages/*/dist"
   },
