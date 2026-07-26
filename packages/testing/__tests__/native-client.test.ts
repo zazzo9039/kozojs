@@ -29,6 +29,10 @@ describe.skipIf(!uwsAvailable)('createNativeTestClient', () => {
       return { pong: true };
     });
     app.post('/echo', { body: z.object({ msg: z.string() }) }, (ctx) => ({ echo: ctx.body.msg }));
+    app.post('/raw', {}, async ({ req }) => ({
+      contentType: req.header('content-type') ?? null,
+      body: await req.text(),
+    }));
 
     const client = await createNativeTestClient(app);
     try {
@@ -47,6 +51,9 @@ describe.skipIf(!uwsAvailable)('createNativeTestClient', () => {
 
       const bad = await client.post('/echo', { msg: 123 });
       expect(bad.status).toBe(400);
+
+      const binary = await client.post('/raw', new Uint8Array([75, 111, 122, 111]));
+      expect(binary.json()).toEqual({ contentType: null, body: 'Kozo' });
     } finally {
       await client.close();
     }
