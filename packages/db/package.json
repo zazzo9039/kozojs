@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/db",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Drizzle ORM integration for Kozo — PostgreSQL & SQLite query helpers, plus MySQL connections",
   "type": "module",
   "engines": {
@@ -52,7 +52,7 @@
     "vitest": "^2.1.0"
   },
   "peerDependencies": {
-    "@kozojs/core": "^0.6.1",
+    "@kozojs/core": "^0.7.0",
     "better-sqlite3": "^11.0.0",
     "mysql2": "^3.11.0",
     "postgres": "^3.4.0",

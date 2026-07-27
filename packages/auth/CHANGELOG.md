@@ -1,5 +1,13 @@
 # @kozojs/auth
 
+## 0.7.0
+
+### Patch Changes
+
+- Align peer compatibility with @kozojs/core 0.7.
+- Updated dependencies
+  - @kozojs/core@0.7.0
+
 ## 0.6.1
 
 ### Patch Changes

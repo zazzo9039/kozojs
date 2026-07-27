@@ -1,5 +1,18 @@
 # @kozojs/testing
 
+## 0.7.0
+
+### Minor Changes
+
+- Add route-derived contract clients for in-process and native transport tests,
+  with typed path, query, header, body, and status-discriminated response
+  contracts.
+
+### Patch Changes
+
+- Updated dependencies
+  - @kozojs/core@0.7.0
+
 ## 0.6.1
 
 ### Patch Changes

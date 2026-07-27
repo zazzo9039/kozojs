@@ -1,5 +1,14 @@
 # @kozojs/core
 
+## 0.7.0
+
+### Minor Changes
+
+- Add composable static route contracts across the runtime, OpenAPI, generated
+  SDKs, and response serialization. Generated clients now expose route trees
+  with typed path, query, header, body, and status-discriminated response
+  contracts.
+
 ## 0.6.1
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # @kozojs/cli
 
+## 0.7.0
+
+### Patch Changes
+
+- Update bundled starter templates to install the Kozo 0.7 package line.
+- Updated dependencies
+  - @kozojs/core@0.7.0
+
 ## 0.6.1
 
 ### Patch Changes

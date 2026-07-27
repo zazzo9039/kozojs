@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/testing",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Route-derived contract tests, raw injection, and native transport clients for Kozo Framework",
   "type": "module",
   "main": "./lib/index.js",
@@ -46,7 +46,7 @@
     "node": ">=20.19.0"
   },
   "peerDependencies": {
-    "@kozojs/core": "^0.6.1"
+    "@kozojs/core": "^0.7.0"
   },
   "devDependencies": {
     "@kozojs/core": "workspace:*",
