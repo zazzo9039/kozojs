@@ -38,8 +38,60 @@ function generateMethodName(method, routePath) {
   return methodName;
 }
 function extractPathParams(path2) {
-  const matches = path2.match(/:(\w+)/g);
-  return matches ? matches.map((m) => m.slice(1)) : [];
+  return path2.split("/").filter((segment) => segment === "*" || segment.startsWith(":")).map((segment) => {
+    if (segment === "*") return { name: "wildcard", optional: false };
+    const optional = segment.endsWith("?");
+    return {
+      name: segment.slice(1, optional ? -1 : void 0),
+      optional
+    };
+  });
+}
+function createGeneratedRouteTreeNode() {
+  return {
+    children: /* @__PURE__ */ new Map(),
+    segmentSources: /* @__PURE__ */ new Map(),
+    operations: /* @__PURE__ */ new Map()
+  };
+}
+function normalizeClientTreeSegment(segment) {
+  if (segment === "*") return "$wildcard";
+  const dynamic = segment.startsWith(":");
+  const source = dynamic ? segment.slice(1).replace(/\?$/, "") : segment;
+  if (!/^[A-Za-z0-9._-]+$/.test(source)) {
+    throw new Error(
+      `[Kozo] Cannot generate client: route segment "${segment}" contains unsupported characters.`
+    );
+  }
+  const parts = source.split(/[._-]+/).filter(Boolean);
+  let normalized = parts.map((part, index) => index === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)).join("");
+  if (!normalized) normalized = "index";
+  if (/^\d/.test(normalized)) {
+    normalized = `route${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
+  }
+  return dynamic ? `$${normalized}` : normalized;
+}
+function isZodSchema(value) {
+  return value !== null && typeof value === "object" && ("_def" in value || "_zod" in value);
+}
+function asResponseMap(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || isZodSchema(value)) {
+    return null;
+  }
+  const entries = Object.entries(value);
+  if (entries.length === 0) return null;
+  if (entries.some(([status]) => !/^\d{3}$/.test(status))) return null;
+  return value;
+}
+function schemaAccepts(schema, value) {
+  if (schema === null || typeof schema !== "object" || !("safeParse" in schema) || typeof schema.safeParse !== "function") {
+    return false;
+  }
+  try {
+    return schema.safeParse(value).success;
+  } catch {
+    return false;
+  }
 }
 function generateTypedClient(routes, options = {}) {
   const {
@@ -52,6 +104,7 @@ function generateTypedClient(routes, options = {}) {
   const typeDefinitions = [];
   const schemaExports = [];
   const methodImplementations = [];
+  const generatedRoutes = [];
   if (includeValidation) {
     imports.push(`import { z } from 'zod';`);
   }
@@ -74,105 +127,218 @@ function generateTypedClient(routes, options = {}) {
     }
     methodNames.set(methodName, route);
     const pathParams = extractPathParams(route.path);
+    const typeName = capitalize(methodName);
     let paramsType = "void";
     let bodyType = "void";
     let queryType = "void";
     let headersType = "void";
     let responseType = "unknown";
+    let paramsSchemaName = null;
+    let bodySchemaName = null;
+    let querySchemaName = null;
+    let headersSchemaName = null;
+    let responseEntries = [];
     if (pathParams.length > 0) {
-      paramsType = `{ ${pathParams.map((p) => `${p}: string`).join("; ")} }`;
+      paramsType = `{ ${pathParams.map(
+        (param) => `${param.name}${param.optional ? "?" : ""}: string | number | boolean`
+      ).join("; ")} }`;
+    }
+    if (route.zodSchemas?.params || route.schema.params) {
+      paramsSchemaName = `${typeName}ParamsSchema`;
+      schemaVars.set(`${methodName}_params`, paramsSchemaName);
+      if (includeValidation) {
+        const src = zodToString(route.zodSchemas?.params ?? route.schema.params);
+        schemaExports.push(`export const ${paramsSchemaName} = ${src};`);
+        const schemaType = `z.input<typeof ${paramsSchemaName}>`;
+        paramsType = paramsType === "void" ? schemaType : `${schemaType} & ${paramsType}`;
+      } else if (paramsType === "void") {
+        paramsType = "unknown";
+      }
     }
     if (route.zodSchemas?.body || route.schema.body) {
-      const schemaVarName = `${capitalize(methodName)}BodySchema`;
+      const schemaVarName = `${typeName}BodySchema`;
+      bodySchemaName = schemaVarName;
       schemaVars.set(`${methodName}_body`, schemaVarName);
       if (includeValidation) {
-        bodyType = `z.infer<typeof ${schemaVarName}>`;
+        bodyType = `z.input<typeof ${schemaVarName}>`;
         const src = zodToString(route.zodSchemas?.body ?? route.schema.body);
         schemaExports.push(`export const ${schemaVarName} = ${src};`);
+      } else {
+        bodyType = "unknown";
       }
     }
     if (route.zodSchemas?.query || route.schema.query) {
-      const schemaVarName = `${capitalize(methodName)}QuerySchema`;
+      const schemaVarName = `${typeName}QuerySchema`;
+      querySchemaName = schemaVarName;
       schemaVars.set(`${methodName}_query`, schemaVarName);
       if (includeValidation) {
-        queryType = `z.infer<typeof ${schemaVarName}>`;
+        queryType = `z.input<typeof ${schemaVarName}>`;
         const src = zodToString(route.zodSchemas?.query ?? route.schema.query);
         schemaExports.push(`export const ${schemaVarName} = ${src};`);
+      } else {
+        queryType = "unknown";
       }
     }
     if (route.zodSchemas?.headers || route.schema.headers) {
-      const schemaVarName = `${capitalize(methodName)}HeadersSchema`;
+      const schemaVarName = `${typeName}HeadersSchema`;
+      headersSchemaName = schemaVarName;
       schemaVars.set(`${methodName}_headers`, schemaVarName);
       if (includeValidation) {
-        headersType = `z.infer<typeof ${schemaVarName}>`;
+        headersType = `z.input<typeof ${schemaVarName}>`;
         const src = zodToString(route.zodSchemas?.headers ?? route.schema.headers);
         schemaExports.push(`export const ${schemaVarName} = ${src};`);
+      } else {
+        headersType = "unknown";
       }
     }
     if (route.zodSchemas?.response || route.schema.response) {
-      const schemaVarName = `${capitalize(methodName)}ResponseSchema`;
-      schemaVars.set(`${methodName}_response`, schemaVarName);
-      if (includeValidation) {
-        responseType = `z.infer<typeof ${schemaVarName}>`;
-        const raw = route.zodSchemas?.response ?? route.schema.response;
-        const responseMap = raw && typeof raw === "object" && !raw._def && !raw._zod ? raw : void 0;
-        const successSchema2 = responseMap ? Object.entries(responseMap).sort(([left], [right]) => Number(left) - Number(right)).find(([status]) => Number(status) >= 200 && Number(status) < 300)?.[1] : void 0;
-        const zodSchema = responseMap?.[200] ?? successSchema2 ?? raw;
-        const src = zodToString(zodSchema);
-        schemaExports.push(`export const ${schemaVarName} = ${src};`);
+      const schemaVarName = `${typeName}ResponseSchema`;
+      const raw = route.schema.response ?? route.zodSchemas?.response;
+      const responseMap = asResponseMap(raw);
+      if (responseMap) {
+        responseEntries = Object.entries(responseMap).map(([status, schema]) => ({
+          status: Number(status),
+          schema,
+          schemaName: includeValidation ? `${typeName}Response${status}Schema` : null,
+          bodyType: includeValidation ? `z.output<typeof ${typeName}Response${status}Schema>` : "unknown"
+        })).sort((left, right) => left.status - right.status);
+        if (includeValidation) {
+          for (const entry of responseEntries) {
+            schemaExports.push(
+              `export const ${entry.schemaName} = ${zodToString(entry.schema)};`
+            );
+          }
+        }
+        const successEntry = responseEntries.find((entry) => entry.status === 200) ?? responseEntries.find((entry) => entry.status >= 200 && entry.status < 300);
+        if (successEntry) {
+          responseType = successEntry.bodyType;
+          if (includeValidation) {
+            schemaExports.push(
+              `/** @deprecated Use the status-specific response schemas. */
+export const ${schemaVarName} = ${successEntry.schemaName};`
+            );
+          }
+        }
+      } else {
+        if (includeValidation) {
+          responseType = `z.output<typeof ${schemaVarName}>`;
+          schemaExports.push(`export const ${schemaVarName} = ${zodToString(raw)};`);
+        }
       }
     }
-    if (bodyType !== "void" && !bodyType.includes("z.infer")) {
-      typeDefinitions.push(`export type ${capitalize(methodName)}Body = ${bodyType};`);
+    if (bodyType !== "void" && !bodyType.includes("z.input")) {
+      typeDefinitions.push(`export type ${typeName}Body = ${bodyType};`);
     }
-    if (queryType !== "void" && !queryType.includes("z.infer")) {
-      typeDefinitions.push(`export type ${capitalize(methodName)}Query = ${queryType};`);
+    if (queryType !== "void" && !queryType.includes("z.input")) {
+      typeDefinitions.push(`export type ${typeName}Query = ${queryType};`);
     }
-    if (headersType !== "void" && !headersType.includes("z.infer")) {
-      typeDefinitions.push(`export type ${capitalize(methodName)}Headers = ${headersType};`);
+    if (headersType !== "void" && !headersType.includes("z.input")) {
+      typeDefinitions.push(`export type ${typeName}Headers = ${headersType};`);
     }
-    if (!responseType.includes("z.infer")) {
-      typeDefinitions.push(`export type ${capitalize(methodName)}Response = ${responseType};`);
+    if (!responseType.includes("z.output")) {
+      typeDefinitions.push(`export type ${typeName}Response = ${responseType};`);
     }
+    const inputFields = [];
+    let inputRequired = false;
+    if (paramsType !== "void") {
+      inputFields.push(`  params: ${paramsType};`);
+      inputRequired = true;
+    }
+    if (bodyType !== "void") {
+      const bodySchema = route.zodSchemas?.body ?? route.schema.body;
+      const optional = schemaAccepts(bodySchema, void 0);
+      inputFields.push(`  body${optional ? "?" : ""}: ${bodyType};`);
+      inputRequired ||= !optional;
+    }
+    if (queryType !== "void") {
+      const querySchema = route.zodSchemas?.query ?? route.schema.query;
+      const optional = schemaAccepts(querySchema, void 0) || schemaAccepts(querySchema, {});
+      inputFields.push(`  query${optional ? "?" : ""}: ${queryType};`);
+      inputRequired ||= !optional;
+    }
+    if (headersType !== "void") {
+      const headersSchema = route.zodSchemas?.headers ?? route.schema.headers;
+      const optional = schemaAccepts(headersSchema, void 0) || schemaAccepts(headersSchema, {});
+      inputFields.push(`  headers${optional ? "?" : ""}: ${headersType};`);
+      inputRequired ||= !optional;
+    }
+    inputFields.push("  init?: KozoRequestInit;");
+    const inputType = `${typeName}Input`;
+    typeDefinitions.push(
+      `export interface ${inputType} {
+${inputFields.join("\n")}
+}`
+    );
+    const resultType = `${typeName}Result`;
+    const resultDefinition = responseEntries.length > 0 ? responseEntries.map(
+      (entry) => `KozoClientResponse<${entry.status}, ${entry.bodyType}>`
+    ).join(" | ") : `KozoClientResponse<number, ${responseType}>`;
+    typeDefinitions.push(`export type ${resultType} = ${resultDefinition};`);
+    generatedRoutes.push({
+      route,
+      inputType,
+      inputRequired,
+      paramsType: paramsType === "void" ? null : paramsType,
+      bodyType: bodyType === "void" ? null : bodyType,
+      queryType: queryType === "void" ? null : queryType,
+      headersType: headersType === "void" ? null : headersType,
+      paramsSchemaName,
+      bodySchemaName,
+      querySchemaName,
+      headersSchemaName,
+      resultType,
+      declaredStatuses: responseEntries.map((entry) => entry.status)
+    });
     const args = [];
     if (paramsType !== "void") args.push(`params: ${paramsType}`);
     if (bodyType !== "void") args.push(`body: ${bodyType}`);
-    if (queryType !== "void") args.push(`query?: ${queryType}`);
+    if (queryType !== "void") {
+      args.push(headersType !== "void" ? `query: ${queryType} | undefined` : `query?: ${queryType}`);
+    }
     if (headersType !== "void") args.push(`headers: ${headersType}`);
     args.push("init?: KozoRequestInit");
     const argsStr = args.join(", ");
     const returnType = `Promise<${responseType}>`;
-    let methodBody = `  async ${methodName}(${argsStr}): ${returnType} {
+    const routeSegments = route.path.split("/").filter(Boolean).map(normalizeClientTreeSegment);
+    const routeTreePath = [
+      "api",
+      ...routeSegments,
+      route.method.toLowerCase()
+    ].join(".");
+    let methodBody = `  /** @deprecated Use ${routeTreePath}({ ... }) from createKozoClient(). */
+  async ${methodName}(${argsStr}): ${returnType} {
 `;
+    if (includeValidation && paramsType !== "void") {
+      const schemaVar = schemaVars.get(`${methodName}_params`);
+      if (schemaVar) {
+        methodBody += `    if (this.validateRequests) ${schemaVar}.parse(params);
+`;
+      }
+    }
     if (includeValidation && bodyType !== "void") {
       const schemaVar = schemaVars.get(`${methodName}_body`);
       if (schemaVar) {
-        methodBody += `    if (this.validateRequests && ${schemaVar}) {
+        methodBody += `    if (this.validateRequests) ${schemaVar}.parse(body);
 `;
-        methodBody += `      ${schemaVar}.parse(body);
-`;
-        methodBody += `    }
+      }
+    }
+    if (includeValidation && queryType !== "void") {
+      const schemaVar = schemaVars.get(`${methodName}_query`);
+      if (schemaVar) {
+        methodBody += `    if (this.validateRequests) ${schemaVar}.parse(query ?? {});
 `;
       }
     }
     if (includeValidation && headersType !== "void") {
       const schemaVar = schemaVars.get(`${methodName}_headers`);
       if (schemaVar) {
-        methodBody += `    if (this.validateRequests && ${schemaVar}) {
-`;
-        methodBody += `      ${schemaVar}.parse(headers);
-`;
-        methodBody += `    }
+        methodBody += `    if (this.validateRequests) ${schemaVar}.parse(headers ?? {});
 `;
       }
     }
     let urlExpression = `\`\${this.baseUrl}${route.path}\``;
     if (pathParams.length > 0) {
-      const pathWithParams = route.path.replace(
-        /:(\w+)/g,
-        "${encodeURIComponent(String(params.$1))}"
-      );
-      urlExpression = `\`\${this.baseUrl}${pathWithParams}\``;
+      urlExpression = `this.baseUrl + materializePath(${JSON.stringify(route.path)}, params)`;
     }
     methodBody += `    let url = ${urlExpression};
 `;
@@ -210,7 +376,7 @@ function generateTypedClient(routes, options = {}) {
     if (bodyType !== "void") requestArgs.push("body");
     requestArgs.push(
       "signal: init?.signal",
-      headersType !== "void" ? "headers: { ...headers, ...init?.headers }" : "headers: init?.headers"
+      headersType !== "void" ? "headers: mergeHeaders(headers, init?.headers)" : "headers: init?.headers"
     );
     methodBody += `    return this.request(url, { ${requestArgs.join(", ")} });
 `;
@@ -218,6 +384,107 @@ function generateTypedClient(routes, options = {}) {
 `;
     methodImplementations.push(methodBody);
   }
+  const routeTree = createGeneratedRouteTreeNode();
+  for (const generated of generatedRoutes) {
+    const pathSegments = generated.route.path.split("/").filter(Boolean);
+    let node = routeTree;
+    for (const source of pathSegments) {
+      const key = normalizeClientTreeSegment(source);
+      const previousSource = node.segmentSources.get(key);
+      if (previousSource !== void 0 && previousSource !== source) {
+        throw new Error(
+          `[Kozo] Cannot generate client: route segments "${previousSource}" and "${source}" both normalize to "${key}".`
+        );
+      }
+      node.segmentSources.set(key, source);
+      let child = node.children.get(key);
+      if (!child) {
+        child = createGeneratedRouteTreeNode();
+        node.children.set(key, child);
+      }
+      node = child;
+    }
+    const method = generated.route.method.toLowerCase();
+    const existing = node.operations.get(method);
+    if (existing) {
+      throw new Error(
+        `[Kozo] Cannot generate client: duplicate operation ${generated.route.method.toUpperCase()} ${generated.route.path}.`
+      );
+    }
+    node.operations.set(method, generated);
+  }
+  const renderOperation = (generated, indent) => {
+    const { route } = generated;
+    const inputDefault = generated.inputRequired ? "" : " = {}";
+    let source = `async (input: ${generated.inputType}${inputDefault}): Promise<${generated.resultType}> => {
+`;
+    if (includeValidation) {
+      if (generated.paramsSchemaName) {
+        source += `${indent}  transport._kozoValidate(${generated.paramsSchemaName}, input.params);
+`;
+      }
+      if (generated.bodySchemaName) {
+        source += `${indent}  transport._kozoValidate(${generated.bodySchemaName}, input.body);
+`;
+      }
+      if (generated.querySchemaName) {
+        source += `${indent}  transport._kozoValidate(${generated.querySchemaName}, input.query ?? {});
+`;
+      }
+      if (generated.headersSchemaName) {
+        source += `${indent}  transport._kozoValidate(${generated.headersSchemaName}, input.headers ?? {});
+`;
+      }
+    }
+    source += `${indent}  let path = materializePath(${JSON.stringify(route.path)}, ${generated.paramsType ? "input.params" : "undefined"});
+`;
+    if (generated.queryType) {
+      source += `${indent}  path = appendQuery(path, input.query);
+`;
+    }
+    const requestArgs = [`method: '${route.method.toUpperCase()}'`];
+    if (generated.bodyType) requestArgs.push("body: input.body");
+    requestArgs.push(
+      "signal: input.init?.signal",
+      generated.headersType ? "headers: mergeHeaders(input.headers, input.init?.headers)" : "headers: input.init?.headers"
+    );
+    source += `${indent}  return transport._kozoRequestContract<${generated.resultType}>(
+${indent}    path,
+${indent}    { ${requestArgs.join(", ")} },
+${indent}    ${JSON.stringify(generated.declaredStatuses)},
+${indent}  );
+${indent}}`;
+    return source;
+  };
+  const renderTreeNode = (node, indent) => {
+    const keys = [
+      .../* @__PURE__ */ new Set([
+        ...node.children.keys(),
+        ...node.operations.keys()
+      ])
+    ];
+    if (keys.length === 0) return "{}";
+    const properties = keys.map((key) => {
+      const child = node.children.get(key);
+      const operation = node.operations.get(key);
+      let value;
+      if (operation && child) {
+        value = `Object.assign(
+${indent}  ${renderOperation(operation, `${indent}  `)},
+${indent}  ${renderTreeNode(child, `${indent}  `)},
+${indent})`;
+      } else if (operation) {
+        value = renderOperation(operation, indent);
+      } else {
+        value = renderTreeNode(child, `${indent}  `);
+      }
+      return `${indent}${JSON.stringify(key)}: ${value}`;
+    });
+    return `{
+${properties.join(",\n")}
+${indent.slice(2)}}`;
+  };
+  const routeTreeSource = renderTreeNode(routeTree, "    ");
   if (imports.length > 0) {
     code += imports.join("\n") + "\n\n";
   }
@@ -236,6 +503,127 @@ function generateTypedClient(routes, options = {}) {
   code += `  signal?: AbortSignal;
 `;
   code += `  headers?: Record<string, string>;
+`;
+  code += `}
+
+`;
+  code += `export type KozoResponseOk<TStatus extends number> =
+`;
+  code += `  number extends TStatus ? boolean :
+`;
+  code += `  \`\${TStatus}\` extends \`2\${string}\` ? true : false;
+
+`;
+  code += `/** A status-discriminated response returned by the route-tree client. */
+`;
+  code += `export interface KozoClientResponse<TStatus extends number, TBody> {
+`;
+  code += `  status: TStatus;
+`;
+  code += `  headers: Headers;
+`;
+  code += `  body: TBody;
+`;
+  code += `  ok: KozoResponseOk<TStatus>;
+`;
+  code += `}
+
+`;
+  code += `function mergeHeaders(value: unknown, extra?: Record<string, string>): Record<string, string> {
+`;
+  code += `  const headers: Record<string, string> = {};
+`;
+  code += `  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+`;
+  code += `    for (const [key, item] of Object.entries(value)) {
+`;
+  code += `      if (item !== undefined && item !== null) headers[key] = String(item);
+`;
+  code += `    }
+`;
+  code += `  }
+`;
+  code += `  return { ...headers, ...extra };
+`;
+  code += `}
+
+`;
+  code += `function materializePath(routePath: string, value: unknown): string {
+`;
+  code += `  const params = value !== null && typeof value === 'object'
+`;
+  code += `    ? value as Record<string, unknown>
+`;
+  code += `    : {};
+`;
+  code += `  const output: string[] = [];
+`;
+  code += `  for (const segment of routePath.split('/').filter(Boolean)) {
+`;
+  code += `    if (segment.startsWith(':')) {
+`;
+  code += `      const optional = segment.endsWith('?');
+`;
+  code += `      const name = segment.slice(1, optional ? -1 : undefined);
+`;
+  code += `      const item = params[name];
+`;
+  code += `      if (item === undefined || item === null) {
+`;
+  code += `        if (optional) continue;
+`;
+  code += `        throw new TypeError('Missing path parameter "' + name + '" for route ' + routePath + '.');
+`;
+  code += `      }
+`;
+  code += `      output.push(encodeURIComponent(String(item)));
+`;
+  code += `    } else if (segment === '*') {
+`;
+  code += `      const item = params.wildcard;
+`;
+  code += `      if (item === undefined || item === null) {
+`;
+  code += `        throw new TypeError('Missing path parameter "wildcard" for route ' + routePath + '.');
+`;
+  code += `      }
+`;
+  code += `      output.push(...String(item).split('/').map(part => encodeURIComponent(part)));
+`;
+  code += `    } else {
+`;
+  code += `      output.push(segment);
+`;
+  code += `    }
+`;
+  code += `  }
+`;
+  code += `  return output.length > 0 ? '/' + output.join('/') : '/';
+`;
+  code += `}
+
+`;
+  code += `function appendQuery(path: string, value: unknown): string {
+`;
+  code += `  if (value === null || typeof value !== 'object' || Array.isArray(value)) return path;
+`;
+  code += `  const query = new URLSearchParams();
+`;
+  code += `  for (const [key, item] of Object.entries(value)) {
+`;
+  code += `    const values = Array.isArray(item) ? item : [item];
+`;
+  code += `    for (const entry of values) {
+`;
+  code += `      if (entry !== undefined && entry !== null) query.append(key, String(entry));
+`;
+  code += `    }
+`;
+  code += `  }
+`;
+  code += `  const serialized = query.toString();
+`;
+  code += `  return serialized ? path + '?' + serialized : path;
 `;
   code += `}
 
@@ -301,6 +689,28 @@ function generateTypedClient(routes, options = {}) {
   code += `}
 
 `;
+  code += `/** Thrown when the server returns a status outside the generated contract. */
+`;
+  code += `export class KozoUnexpectedResponseError extends KozoApiError {
+`;
+  code += `  readonly declaredStatuses: readonly number[];
+
+`;
+  code += `  constructor(status: number, body: unknown, declaredStatuses: readonly number[]) {
+`;
+  code += `    super(status, body);
+`;
+  code += `    this.name = 'KozoUnexpectedResponseError';
+`;
+  code += `    this.declaredStatuses = declaredStatuses;
+`;
+  code += `    this.message = 'Unexpected API status ' + status + '; declared statuses: ' + declaredStatuses.join(', ');
+`;
+  code += `  }
+`;
+  code += `}
+
+`;
   code += `export interface KozoClientOptions {
 `;
   code += `  baseUrl?: string;
@@ -321,7 +731,7 @@ function generateTypedClient(routes, options = {}) {
 `;
   code += `  onUnauthorized?: (error: KozoApiError) => void | Promise<void>;
 `;
-  code += `  /** Called for every non-2xx response, before the KozoApiError is thrown. */
+  code += `  /** Called before an HTTP or contract response error is thrown. */
 `;
   code += `  onError?: (error: KozoApiError) => void | Promise<void>;
 `;
@@ -439,8 +849,118 @@ function generateTypedClient(routes, options = {}) {
   code += `  }
 
 `;
+  code += `  /** @internal Used by the generated route-tree factory. */
+`;
+  code += `  _kozoValidate(schema: { parse(value: unknown): unknown }, value: unknown): void {
+`;
+  code += `    if (this.validateRequests) schema.parse(value);
+`;
+  code += `  }
+
+`;
+  code += `  /** @internal Used by the generated route-tree factory. */
+`;
+  code += `  async _kozoRequestContract<T>(
+`;
+  code += `    path: string,
+`;
+  code += `    { method, body, signal, headers: extraHeaders }: { method: string; body?: unknown; signal?: AbortSignal; headers?: Record<string, string> },
+`;
+  code += `    declaredStatuses: readonly number[],
+`;
+  code += `  ): Promise<T> {
+`;
+  code += `    const base = this.baseUrl.endsWith('/') ? this.baseUrl.slice(0, -1) : this.baseUrl;
+`;
+  code += `    const headers: Record<string, string> = { ...this.defaultHeaders, ...extraHeaders };
+`;
+  code += `    if (body !== undefined && headers['Content-Type'] === undefined) {
+`;
+  code += `      headers['Content-Type'] = 'application/json';
+`;
+  code += `    }
+`;
+  code += `    const token = this.getToken ? await this.getToken() : null;
+`;
+  code += `    if (token) headers['Authorization'] = 'Bearer ' + token;
+`;
+  code += `    const req = { url: base + path, method, headers };
+`;
+  code += `    if (this.onRequest) await this.onRequest(req);
+`;
+  code += `    const response = await this.fetchImpl(req.url, {
+`;
+  code += `      method,
+`;
+  code += `      headers: req.headers,
+`;
+  code += `      body: body !== undefined ? JSON.stringify(body) : undefined,
+`;
+  code += `      signal,
+`;
+  code += `    });
+`;
+  code += `    const contentType = response.headers.get('content-type') ?? '';
+`;
+  code += `    const data = response.status === 204
+`;
+  code += `      ? null
+`;
+  code += `      : contentType.includes('json')
+`;
+  code += `        ? await response.json().catch(() => null)
+`;
+  code += `        : await response.text();
+`;
+  code += `    const unexpected = declaredStatuses.length > 0
+`;
+  code += `      ? !declaredStatuses.includes(response.status)
+`;
+  code += `      : !response.ok;
+`;
+  code += `    if (unexpected) {
+`;
+  code += `      const error = new KozoUnexpectedResponseError(response.status, data, declaredStatuses);
+`;
+  code += `      if (response.status === 401 && this.onUnauthorized) await this.onUnauthorized(error);
+`;
+  code += `      if (this.onError) await this.onError(error);
+`;
+  code += `      throw error;
+`;
+  code += `    }
+`;
+  code += `    return {
+`;
+  code += `      status: response.status,
+`;
+  code += `      headers: response.headers,
+`;
+  code += `      body: data,
+`;
+  code += `      ok: response.ok,
+`;
+  code += `    } as T;
+`;
+  code += `  }
+
+`;
   code += methodImplementations.join("\n");
   code += `}
+
+`;
+  code += `/** Create the preferred route-tree client from the generated contract. */
+`;
+  code += `export function createKozoClient(options: KozoClientOptions = {}) {
+`;
+  code += `  const transport = new KozoClient(options);
+`;
+  code += `  return ${routeTreeSource};
+`;
+  code += `}
+
+`;
+  code += `export type KozoRouteClient = ReturnType<typeof createKozoClient>;
 
 `;
   code += `export default KozoClient;
@@ -1657,7 +2177,7 @@ function toJsonBody(result) {
   if (typeof result === "string") return result;
   return JSON.stringify(result, dateReplacer);
 }
-function isZodSchema(schema) {
+function isZodSchema2(schema) {
   return typeof schema === "object" && schema !== null && "safeParse" in schema;
 }
 function compileZodResponseSerializer(zodSchema) {
@@ -1684,12 +2204,12 @@ function compileZodResponseSerializer(zodSchema) {
 }
 function compileResponseSerializerSetWithMeta(response) {
   if (!response) return void 0;
-  if (isZodSchema(response)) {
+  if (isZodSchema2(response)) {
     return { default: compileZodResponseSerializer(response) };
   }
   const byStatus = {};
   for (const [rawStatus, schema] of Object.entries(response)) {
-    if (!isZodSchema(schema)) continue;
+    if (!isZodSchema2(schema)) continue;
     byStatus[Number(rawStatus)] = compileZodResponseSerializer(schema);
   }
   const serializers = Object.values(byStatus);
@@ -2020,7 +2540,7 @@ function compileScopedRouteHandler(handler, compiled, scope, errorHook) {
     }
   };
 }
-function isZodSchema2(schema) {
+function isZodSchema3(schema) {
   return typeof schema === "object" && schema !== null && "safeParse" in schema;
 }
 function jsonResponse200(body) {
@@ -2042,16 +2562,16 @@ Refusing to start: fix the response schema, or pass dangerouslyAllowUnenforcedRe
 var SchemaCompiler = class {
   static compile(schema, opts = {}) {
     const compiled = {};
-    if (schema.body && isZodSchema2(schema.body)) {
+    if (schema.body && isZodSchema3(schema.body)) {
       compiled.validateBody = makeZValidator(schema.body);
     }
-    if (schema.query && isZodSchema2(schema.query)) {
+    if (schema.query && isZodSchema3(schema.query)) {
       compiled.validateQuery = makeZValidator(schema.query);
     }
-    if (schema.params && isZodSchema2(schema.params)) {
+    if (schema.params && isZodSchema3(schema.params)) {
       compiled.validateParams = makeZValidator(schema.params);
     }
-    if (schema.headers && isZodSchema2(schema.headers)) {
+    if (schema.headers && isZodSchema3(schema.headers)) {
       compiled.validateHeaders = makeZValidator(schema.headers);
     }
     if (schema.response) {

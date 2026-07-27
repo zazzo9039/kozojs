@@ -95,9 +95,9 @@ console.log('✅ Type-safe client generated at ./client/api.ts');
  * Usage Example (in your frontend):
  * 
  * ```typescript
- * import { KozoClient } from './client/api';
+ * import { createKozoClient } from './client/api';
  * 
- * const api = new KozoClient({
+ * const api = createKozoClient({
  *   baseUrl: 'https://api.example.com',
  *   validateRequests: true, // Enable client-side validation
  *   defaultHeaders: {
@@ -106,27 +106,31 @@ console.log('✅ Type-safe client generated at ./client/api.ts');
  * });
  * 
  * // Fully typed! IDE autocomplete + type checking
- * const users = await api.users({ page: 1, limit: 10 });
- * //    ^? User[]
- * 
- * const user = await api.usersById({ id: 'uuid-here' });
- * //    ^? User
- * 
- * const newUser = await api.postUsers({
- *   email: 'test@example.com',
- *   name: 'John Doe'
- * });
- * //    ^? User
- * 
- * // ❌ Type error: invalid email
- * await api.postUsers({
- *   email: 'not-an-email',  // Caught by TypeScript!
- *   name: 'John'
+ * const users = await api.users.get({
+ *   query: { page: 1, limit: 10 },
  * });
  * 
- * // ✅ Runtime validation (if enabled)
+ * const user = await api.users.$id.get({
+ *   params: { id: 'uuid-here' },
+ * });
+ * 
+ * const newUser = await api.users.post({
+ *   body: {
+ *     email: 'test@example.com',
+ *     name: 'John Doe',
+ *   },
+ * });
+ * 
+ * // Type error: a required field is missing.
+ * await api.users.post({
+ *   body: { name: 'John' },
+ * });
+ * 
+ * // Runtime Zod validation catches value-level constraints when enabled.
  * try {
- *   await api.postUsers({ email: 'bad', name: 'X' });
+ *   await api.users.post({
+ *     body: { email: 'bad', name: 'X' },
+ *   });
  * } catch (err) {
  *   // Zod validation error before request
  * }

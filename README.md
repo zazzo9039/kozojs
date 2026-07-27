@@ -111,7 +111,7 @@ That route definition provides:
 1. Runtime validation for the request body.
 2. A public response contract; undeclared object fields are omitted when a compilable response schema is used.
 3. An OpenAPI 3.1 operation.
-4. A generated client method such as `api.postUsers(body)`.
+4. A generated route-tree operation such as `api.users.post({ body })`.
 5. A type-safe test operation such as `client.users.post({ body })`.
 
 Generate a client from the routes registered in your app:
@@ -124,6 +124,29 @@ await writeFile(
   app.generateClient({ baseUrl: 'https://api.example.com' }),
 );
 ```
+
+Consume the generated contract with the same route shape used in tests:
+
+```typescript
+import { createKozoClient } from './src/generated/api.js';
+
+const api = createKozoClient({
+  baseUrl: 'https://api.example.com',
+});
+
+const result = await api.users.post({
+  body: { name: 'Ada', email: 'ada@example.com' },
+});
+
+if (result.status === 200) {
+  console.log(result.body.id);
+}
+```
+
+Declared error statuses are returned as typed results rather than thrown.
+Statuses outside the generated contract still fail with
+`KozoUnexpectedResponseError`. The generated `KozoClient` class keeps the old
+flat methods as deprecated migration aliases.
 
 Test the same static route contract without duplicating paths or request types:
 

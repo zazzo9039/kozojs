@@ -35,8 +35,12 @@ describe('generateTypedClient', () => {
     ];
     const code = generateTypedClient(routes);
     expect(code).toContain('async usersById(');
-    expect(code).toContain('params: { id: string }');
-    expect(code).toContain('${encodeURIComponent(String(params.id))}');
+    expect(code).toContain('params: { id: string | number | boolean }');
+    expect(code).toContain(
+      'this.baseUrl + materializePath("/users/:id", params)',
+    );
+    expect(code).toContain('"$id": {');
+    expect(code).toContain('"get": async (input: UsersByIdInput)');
   });
 
   it('generates readable camelCase names for nested and dashed routes', () => {
@@ -46,6 +50,9 @@ describe('generateTypedClient', () => {
     const code = generateTypedClient(routes);
     expect(code).toContain('async patchUserProfilesByUserId(');
     expect(code).not.toContain('patchUser_Profiles');
+    expect(code).toContain('"userProfiles": {');
+    expect(code).toContain('"$userId": {');
+    expect(code).toContain('"patch": async');
   });
 
   it('protects generated client internals from GET route name collisions', () => {
@@ -101,9 +108,80 @@ describe('generateTypedClient', () => {
 
     const code = generateTypedClient(routes);
     expect(code).toContain(
-      'export const PostUsersResponseSchema = z.object({ id: z.string() });',
+      'export const PostUsersResponse201Schema = z.object({ id: z.string() });',
+    );
+    expect(code).toContain(
+      'export const PostUsersResponseSchema = PostUsersResponse201Schema;',
+    );
+    expect(code).toContain(
+      'PostUsersResult = KozoClientResponse<201, z.output<typeof PostUsersResponse201Schema>>',
     );
     expect(code).not.toContain('export const PostUsersResponseSchema = z.any()');
+  });
+
+  it('generates a route tree with status-discriminated response unions', () => {
+    const okSchema = z.object({ id: z.string(), name: z.string() });
+    const missingSchema = z.object({ message: z.string() });
+    const routes: RouteInfo[] = [
+      {
+        method: 'get',
+        path: '/users/:id',
+        schema: {
+          params: z.object({ id: z.string() }),
+          response: {
+            200: okSchema,
+            404: missingSchema,
+          },
+        },
+      },
+    ];
+
+    const code = generateTypedClient(routes);
+    expect(code).toContain('export function createKozoClient(');
+    expect(code).toContain('"users": {');
+    expect(code).toContain('"$id": {');
+    expect(code).toContain('"get": async (input: UsersByIdInput)');
+    expect(code).toContain('KozoClientResponse<200, z.output<typeof UsersByIdResponse200Schema>>');
+    expect(code).toContain('KozoClientResponse<404, z.output<typeof UsersByIdResponse404Schema>>');
+    expect(code).toContain('[200,404]');
+  });
+
+  it('fails clearly when route-tree segments normalize to the same key', () => {
+    const routes: RouteInfo[] = [
+      { method: 'get', path: '/user-profiles', schema: {} },
+      { method: 'post', path: '/user_profiles', schema: {} },
+    ];
+
+    expect(() => generateTypedClient(routes)).toThrow(
+      'route segments "user-profiles" and "user_profiles" both normalize to "userProfiles"',
+    );
+  });
+
+  it('supports optional and wildcard path parameters in both client APIs', () => {
+    const routes: RouteInfo[] = [
+      { method: 'get', path: '/assets/:folder?/*', schema: {} },
+    ];
+
+    const code = generateTypedClient(routes);
+    expect(code).toContain(
+      'params: { folder?: string | number | boolean; wildcard: string | number | boolean }',
+    );
+    expect(code).toContain('"$folder": {');
+    expect(code).toContain('"$wildcard": {');
+    expect(code).toContain(
+      'this.baseUrl + materializePath("/assets/:folder?/*", params)',
+    );
+  });
+
+  it('preserves a route operation when an HTTP verb is also a path segment', () => {
+    const routes: RouteInfo[] = [
+      { method: 'get', path: '/users', schema: {} },
+      { method: 'get', path: '/users/get/details', schema: {} },
+    ];
+
+    const code = generateTypedClient(routes);
+    expect(code).toContain('"get": Object.assign(');
+    expect(code).toContain('"details": {');
   });
 
   it('uses custom baseUrl', () => {

@@ -5,10 +5,20 @@
 
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import ts from 'typescript';
+import { z } from 'zod';
 import { generateTypedClient, type RouteInfo } from '../src/client-generator.js';
 
 const routes: RouteInfo[] = [
-  { method: 'get', path: '/users/:id', schema: {} },
+  {
+    method: 'get',
+    path: '/users/:id',
+    schema: {
+      response: {
+        200: z.object({ id: z.string() }),
+        404: z.object({ message: z.string() }),
+      },
+    },
+  },
   { method: 'post', path: '/login', schema: {} },
   { method: 'get', path: '/items', schema: {} },
 ];
@@ -36,6 +46,61 @@ function jsonResponse(body: unknown, status = 200, contentType = 'application/js
 }
 
 describe('generated KozoClient runtime', () => {
+  it('returns declared statuses from the preferred route-tree client', async () => {
+    const responses = [
+      jsonResponse({ id: 'team/user 1' }, 200),
+      jsonResponse({ message: 'missing' }, 404),
+    ];
+    const calls: string[] = [];
+    const api = mod.createKozoClient({
+      baseUrl: 'http://api.test/',
+      fetch: async (url: string) => {
+        calls.push(url);
+        return responses.shift()!;
+      },
+    });
+
+    const found = await api.users.$id.get({
+      params: { id: 'team/user 1' },
+    });
+    expect(found).toMatchObject({
+      status: 200,
+      ok: true,
+      body: { id: 'team/user 1' },
+    });
+
+    const missing = await api.users.$id.get({
+      params: { id: 'missing' },
+    });
+    expect(missing).toMatchObject({
+      status: 404,
+      ok: false,
+      body: { message: 'missing' },
+    });
+    expect(calls).toEqual([
+      'http://api.test/users/team%2Fuser%201',
+      'http://api.test/users/missing',
+    ]);
+  });
+
+  it('throws when the server returns a status outside the generated contract', async () => {
+    const onError = vi.fn();
+    const api = mod.createKozoClient({
+      onError,
+      fetch: async () => jsonResponse({ message: 'unexpected' }, 500),
+    });
+
+    const error = await api.users.$id.get({
+      params: { id: '7' },
+    }).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(mod.KozoUnexpectedResponseError);
+    expect(error).toMatchObject({
+      status: 500,
+      declaredStatuses: [200, 404],
+    });
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
   it('attaches the bearer token from getToken (async supported)', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = new mod.KozoClient({

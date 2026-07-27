@@ -110,7 +110,7 @@ describe('validated request headers', () => {
 
     const client = app.generateClient();
     expect(client).toContain('TraceHeadersSchema');
-    expect(client).toContain('headers: z.infer<typeof TraceHeadersSchema>');
-    expect(client).toContain('headers: { ...headers, ...init?.headers }');
+    expect(client).toContain('headers: z.input<typeof TraceHeadersSchema>');
+    expect(client).toContain('headers: mergeHeaders(headers, init?.headers)');
   });
 });

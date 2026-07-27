@@ -156,6 +156,27 @@ const clientCode = app.generateClient('http://localhost:3000');
 // Writes a fully-typed TypeScript client with fetch wrappers
 ```
 
+The generated module exposes a route-tree factory:
+
+```typescript
+import { createKozoClient } from './generated/api.js';
+
+const api = createKozoClient();
+const result = await api.users.$id.get({
+  params: { id: 'user-1' },
+});
+
+if (result.status === 200) {
+  result.body.name;
+} else if (result.status === 404) {
+  result.body.message;
+}
+```
+
+Declared statuses are returned as discriminated results. Unexpected statuses
+throw `KozoUnexpectedResponseError`. The generated `KozoClient` class retains
+deprecated flat methods for migration from earlier SDKs.
+
 ### OpenAPI / Swagger
 
 ```typescript

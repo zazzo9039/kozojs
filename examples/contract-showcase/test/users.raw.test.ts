@@ -36,6 +36,8 @@ describe('raw client', () => {
       baseUrl: 'http://localhost:3000',
     });
     expect(generated).toContain('export class KozoClient');
+    expect(generated).toContain('export function createKozoClient');
+    expect(generated).toContain('"$id": {');
     expect(generated).toContain('async usersById');
     expect(generated).toContain('authorization');
   });

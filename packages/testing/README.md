@@ -70,6 +70,10 @@ The route tree uses readable segments:
 - `/user-profiles` becomes `client.userProfiles`.
 - HTTP methods are terminal lowercase functions such as `.get()` and `.post()`.
 
+Generated SDKs use the same shape through `createKozoClient()`, so a contract
+test written against `client.users.$id.get(...)` maps directly to
+`api.users.$id.get(...)` in application code.
+
 Inputs use Zod's input type, so coercible values remain valid at the call site.
 Responses use Zod's output type. A numeric response map produces a
 status-discriminated union.

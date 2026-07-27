@@ -13,12 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Route-derived in-process and native test clients in `@kozojs/testing`.
 - Typed and validated request header schemas across both transports.
 - A complete contract testing showcase with OpenAPI and generated SDK output.
+- Generated SDK route trees through `createKozoClient()`, aligned with the
+  contract test client and typed as status-discriminated response unions.
 
 ### Changed
 
 - Status-specific response contracts now drive both typing and serialization.
 - Generated clients encode path parameters, repeat array query keys, support
   Zod 4 enums, and select declared non-200 success schemas.
+- Existing flat generated methods remain available as deprecated compatibility
+  aliases; declared non-2xx statuses are regular results in the route-tree API,
+  while statuses outside the contract throw `KozoUnexpectedResponseError`.
 
 ### Fixed
 

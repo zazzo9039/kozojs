@@ -12,7 +12,7 @@ Define a route once with a Zod schema — runtime validation, an OpenAPI 3.1 spe
 
 - **Runtime validation** — RFC 7807 errors on bad input, zero boilerplate
 - **OpenAPI 3.1** — generated from the same schema
-- **A route-derived client SDK** — `app.generateClient()` → `api.postUsers(body)`
+- **A route-derived client SDK** — `app.generateClient()` → `api.users.post({ body })`
 - **A static testing contract** — `createContractTestClient(app)` derives paths, inputs, statuses, and outputs
 - **Native-speed routing** — an optional uWebSockets.js transport registers routes straight into a C++ radix trie
 
@@ -449,19 +449,40 @@ const code = app.generateClient({
 writeFileSync('./client/api.ts', code);
 ```
 
-**Generated client usage:**
+**Generated route-tree usage:**
 
 ```typescript
-import { KozoClient } from './client/api';
+import { createKozoClient } from './client/api';
 
-const api = new KozoClient({ baseUrl: 'https://api.example.com' });
+const api = createKozoClient({ baseUrl: 'https://api.example.com' });
 
-const users = await api.users({ page: 1 });
-//    ^? User[]
+const users = await api.users.get({
+  query: { page: 1 },
+});
 
-const user = await api.postUsers({ name: 'Jane', email: 'jane@example.com' });
-//    ^? { id: string, name: string }
+const created = await api.users.post({
+  body: { name: 'Jane', email: 'jane@example.com' },
+});
+
+if (created.status === 201) {
+  created.body.id; // string
+}
+
+const detail = await api.users.$id.get({
+  params: { id: created.status === 201 ? created.body.id : 'missing' },
+});
+
+if (detail.status === 404) {
+  detail.body.message; // narrowed to the declared 404 schema
+}
 ```
+
+`createKozoClient()` is the preferred API. It returns declared HTTP statuses as
+the union `{ status, headers, body, ok }`; an undeclared status throws
+`KozoUnexpectedResponseError`. The generated `KozoClient` class retains flat
+methods such as `usersById()` as deprecated compatibility aliases. Those
+legacy methods preserve their historical behavior and throw `KozoApiError` for
+every non-2xx response.
 
 Options:
 

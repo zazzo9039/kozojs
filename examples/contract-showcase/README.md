@@ -55,6 +55,31 @@ const response = await client.users.$id.get({
 TypeScript checks the path parameters before the test runs and narrows
 `response.json()` from `response.status`.
 
+The checked-in generated SDK exposes the same route shape:
+
+```ts
+import { createKozoClient } from './generated/api.js';
+
+const api = createKozoClient({
+  baseUrl: 'http://localhost:3000',
+});
+
+const result = await api.users.$id.get({
+  params: { id: 'user-1' },
+});
+
+if (result.status === 200) {
+  result.body.email; // string
+} else {
+  result.body.message; // string from the declared 404 schema
+}
+```
+
+The generated route tree returns every declared status as data. A status not
+present in the route contract throws `KozoUnexpectedResponseError`. Flat
+methods such as `usersById()` remain in the generated `KozoClient` class as
+deprecated migration aliases.
+
 ## Why there are two test clients
 
 `createContractTestClient()` is the default for positive contract tests. It
