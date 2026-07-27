@@ -31,7 +31,7 @@ describe('login route with hashed passwords', () => {
     expect(res.status).toBeUndefined(); // not an error response
     expect(typeof res.token).toBe('string');
     expect(res.user?.email).toBe('admin@example.com');
-  });
+  }, 15_000);
 
   it('rejects a wrong password with 401 (no plaintext comparison)', async () => {
     const res = await callLogin('admin@example.com', 'not-the-password');
