@@ -281,10 +281,61 @@ See also [§1 middleware vs guards](#1-security-middleware-doesnt-run-under-nati
 
 ---
 
+## Static clients only see static contracts
+
+Imperative route calls whose returned app type is ignored, `app.group()`, and routes
+loaded from the file system remain valid at runtime but cannot extend a compile-time
+route union after discovery. When OpenAPI, generated SDKs, or contract test clients
+must see a route, define it with `createRouter()`, capture the returned chain, and
+mount it with `app.mount()`.
+
+Declared response statuses are not automatically exhaustive. Validation, guards,
+body limits, rate limits, and internal failures can return additional statuses. Until
+the automatic error sources share one verified schema, generated clients correctly
+raise `KozoUnexpectedResponseError` for a status outside the route contract. Use raw
+tests for malformed input and native smoke tests for transport-sensitive policy.
+
+---
+
+## OpenAPI fails on `z.date()` in response contracts
+
+**Symptom:** Docs/OpenAPI generation throws `Date cannot be represented in JSON Schema`
+(or similar) when a `*.contract.ts` uses `z.date()` / Date unions.
+
+**Fix:** Wire dates as ISO strings (`z.string().datetime()`). If runtime values are
+still `Date` (Prisma), preprocess to string before the contract boundary. See
+[Contracts and errors](./contracts-and-errors.md). `kozo check` warns with
+`KOZO_ARCH104`.
+
+---
+
+## Contract tests reject `success: true` with `z.literal(true)`
+
+**Symptom:** Service returns `{ success: true }` typed as `{ success: boolean }` and
+contract validation or typed clients fail against `z.literal(true)`.
+
+**Fix:** Prefer `z.boolean()` in the response schema, or return `true as const` from
+the service so the literal type is preserved.
+
+---
+
+## Mixing Nest `{ statusCode, message, error }` with RFC 7807
+
+**Symptom:** Some routes document Problem Details while legacy handlers still emit
+Nest-style bodies; clients and OpenAPI disagree.
+
+**Fix:** Golden Path = RFC 7807. During migration, declare the legacy shape explicitly
+in that route's response map instead of pretending it is a Problem. Do not claim a
+single error union until every status shares one schema.
+
+---
+
 ## See also
 
 - [Getting Started](./getting-started.md)
 - [Developer Guide](./developer-guide.md)
 - [Auth Middleware](./auth-middleware.md)
+- [Contracts and errors](./contracts-and-errors.md)
+- [Feature modules](./feature-modules.md)
 - [kozo-docs](https://kozo-docs.vercel.app) — sito pubblico (templates, CLI, Common Pitfalls)
 - Runnable example: `examples/file-routing/`

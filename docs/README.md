@@ -14,6 +14,10 @@ This folder contains the long-form documentation for Kozo. For a quick overview,
 | [Common Pitfalls](./common-pitfalls.md) | Auth order, DI scoping, WS, 413, CLI — troubleshooting |
 | [Developer Guide](./developer-guide.md) | Full API reference across all packages |
 | [Architecture Deep Dive](./architecture.md) | Compiler internals, request lifecycle, performance design |
+| [Feature Modules](./feature-modules.md) | Production Golden Path and dependency rules |
+| [Contracts and Errors](./contracts-and-errors.md) | Response schemas, Problem Details and status boundaries |
+| [Architecture Check](./architecture-check.md) | `kozo check` rules and CI output |
+| [Migration Guide](./migrating-to-feature-modules.md) | Incremental adoption from 0.7.0 |
 | [Authentication Middleware](./auth-middleware.md) | JWT middleware configuration |
 | [Graceful Shutdown](./graceful-shutdown.md) | Shutdown lifecycle and database cleanup |
 | [Development History](./development-history.md) | How the project evolved (internal, Italian) |

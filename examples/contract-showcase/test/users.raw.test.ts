@@ -20,7 +20,10 @@ describe('raw client', () => {
 
     expect(response.status).toBe(401);
     expect(response.json()).toEqual({
-      message: 'Missing or invalid bearer token',
+      type: 'about:blank',
+      title: 'Unauthorized',
+      status: 401,
+      detail: 'Missing or invalid bearer token',
     });
   });
 

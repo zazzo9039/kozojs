@@ -1,5 +1,5 @@
 import { glob } from 'glob';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 
 // HTTP methods that can be used as filenames

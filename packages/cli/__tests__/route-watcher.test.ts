@@ -20,7 +20,7 @@ import os from 'node:os';
 import type { FSWatcher } from 'chokidar';
 
 import { startRouteWatcher, resolveRoutesDir, resolveEntry } from '../src/commands/dev.js';
-import { generateManifest, type RoutesManifest } from '../src/routing/manifest.js';
+import { generateManifest } from '../src/routing/manifest.js';
 
 // ---------------------------------------------------------------------------
 // resolveEntry — no hardcoded src/index.ts
@@ -72,13 +72,8 @@ function wait(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function readManifest(manifestPath: string): Promise<RoutesManifest | null> {
-  if (!(await fs.pathExists(manifestPath))) return null;
-  return fs.readJson(manifestPath);
-}
-
 /** Write a minimal valid route file */
-async function writeRouteFile(filePath: string, method = 'GET'): Promise<void> {
+async function writeRouteFile(filePath: string): Promise<void> {
   await fs.ensureDir(path.dirname(filePath));
   await fs.writeFile(
     filePath,

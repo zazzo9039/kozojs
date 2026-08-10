@@ -19,7 +19,7 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "echo \"No linting configured\" && exit 0"
+    "lint": "eslint src __tests__ --max-warnings=0"
   },
   "keywords": [
     "kozo",
@@ -52,13 +52,16 @@
     "execa": "^9.5.0",
     "fs-extra": "^11.2.0",
     "glob": "^11.0.0",
-    "chokidar": "^3.6.0"
+    "chokidar": "^3.6.0",
+    "typescript": "^5.6.0"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",
+    "@eslint/js": "^9.39.0",
     "@types/node": "^22.0.0",
+    "eslint": "^9.39.0",
     "tsup": "^8.3.0",
-    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.46.0",
     "vitest": "^2.1.0"
   }
 }

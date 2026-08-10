@@ -30,4 +30,18 @@ describe.skipIf(!hasNativeTransport)('native contract client', () => {
       await client.close();
     }
   });
+
+  it('applies guards on the native transport', async () => {
+    const client = await createNativeContractTestClient(createContractShowcaseApp());
+    try {
+      const denied = await client.admin.stats.get({
+        headers: { authorization: 'Bearer invalid' },
+      });
+      expect(denied.status).toBe(401);
+      if (denied.status !== 401) throw new Error('Expected a guard denial');
+      expect(denied.json().detail).toContain('invalid bearer token');
+    } finally {
+      await client.close();
+    }
+  });
 });

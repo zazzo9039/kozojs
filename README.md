@@ -33,11 +33,12 @@ Start with the standard Node.js server, opt into the uWebSockets.js transport wh
 
 Requirements: Node.js 20.19 or newer.
 
-Create and start a minimal project:
+Create a production-oriented contract API:
 
 ```bash
-npx @kozojs/cli my-api --template minimal
+npx @kozojs/cli my-api --template api-contract
 cd my-api
+pnpm verify
 pnpm dev
 ```
 
@@ -48,7 +49,18 @@ curl http://localhost:3000/health
 curl http://localhost:3000/hello/Kozo
 ```
 
-The starter includes a development script, TypeScript configuration, Zod, and the optional native transport. See the [installation guide](https://kozo-docs.vercel.app/docs/getting-started/installation) for npm and manual setup.
+The recommended starter includes feature modules, static contracts, service injection,
+RFC 7807 errors, OpenAPI, contract/raw/native tests, lint, typecheck, `kozo check`, and
+CI. Use `minimal` for a playground or `file-routing` when runtime discovery is an
+intentional architectural choice. See the [feature module guide](./docs/feature-modules.md).
+
+Add a deterministic feature skeleton:
+
+```bash
+kozo generate feature projects --crud --dry-run
+kozo generate feature projects --crud
+kozo check
+```
 
 ### Build an API by hand
 

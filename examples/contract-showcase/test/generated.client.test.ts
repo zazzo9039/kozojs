@@ -50,7 +50,10 @@ describe('generated SDK transport', () => {
 
   it('returns declared error statuses and keeps legacy aliases working', async () => {
     const response = () => new Response(JSON.stringify({
-      message: 'User not found',
+      type: 'about:blank',
+      title: 'Not Found',
+      status: 404,
+      detail: 'User not found',
     }), {
       status: 404,
       headers: { 'content-type': 'application/json' },
@@ -61,7 +64,7 @@ describe('generated SDK transport', () => {
 
     expect(result.status).toBe(404);
     if (result.status === 404) {
-      expect(result.body.message).toBe('User not found');
+      expect(result.body.detail).toBe('User not found');
     }
 
     const legacy = new KozoClient({ fetch: async () => response() });

@@ -1,7 +1,7 @@
 import fs from 'fs-extra';
 import path from 'node:path';
 
-export const TEMPLATE_NAMES = ['minimal', 'file-routing', 'fullstack-ssr'] as const;
+export const TEMPLATE_NAMES = ['api-contract', 'minimal', 'file-routing', 'fullstack-ssr'] as const;
 export type TemplateName = (typeof TEMPLATE_NAMES)[number];
 
 export function isTemplateName(value: string): value is TemplateName {

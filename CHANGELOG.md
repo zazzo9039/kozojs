@@ -5,7 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.1] — 2026-08-10 (draft)
+
+> Release candidate. Not tagged or published yet.
+>
+> **Version policy:** `.changeset/config.json` keeps all `@kozojs/*` packages in a
+> `fixed` lockstep group. Publishing 0.7.1 therefore bumps every public package to
+> `0.7.1` even though this patch only changes `@kozojs/cli` (templates, generators,
+> `kozo check`, docs). Runtime APIs of `@kozojs/core` and `@kozojs/testing` are
+> unchanged from 0.7.0.
+
+### Added
+
+- Recommended `api-contract` production template with feature modules, service
+  injection, contract/raw/native tests, lint, architecture checks, and CI.
+- `kozo generate feature` (`kozo g f`) with CRUD, repository, auth, dry-run,
+  deterministic output, barrel updates, and overwrite protection.
+- `kozo check` architecture and contract findings with stable codes and JSON output,
+  including `KOZO_ARCH104` warning for `z.date()` in public contracts.
+- Golden Path ADR, feature/error guides, migration notes, and a feature-first
+  `contract-showcase`.
+- CLI path-compat tests covering Windows `\` and POSIX `/` for feature scaffold and
+  architecture discovery.
+
+### Changed
+
+- `@kozojs/cli` now runs a real zero-warning TypeScript ESLint gate.
+- CI verifies lint, canonical architecture checks, and template encoding/placeholders.
+- Production template health contract uses `z.boolean()` instead of `z.literal(true)`.
+- Docs incorporate pilot feedback: ISO date wire format, boolean vs literal responses,
+  Nest-style error compat during migration, and query/mutate service splits.
+
+### Compatibility
+
+- Existing templates and generators remain available and unchanged.
+- Router-level automatic response unions are not widened in 0.7.1; the opt-in
+  `defaultResponses` design is deferred until runtime error shapes have proven parity.
+- No breaking changes to `@kozojs/core` / `@kozojs/testing` public APIs.
 
 ## [0.7.0] — 2026-07-27
 

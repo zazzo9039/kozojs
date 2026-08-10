@@ -168,7 +168,7 @@ export async function newCommand(projectName?: string): Promise<void> {
           stdio: 'pipe'
         });
         s.stop('Dependencies installed!');
-      } catch (err) {
+      } catch {
         s.stop('Failed to install dependencies');
         p.log.warn('Run `pnpm install` or `npm install` manually');
       }

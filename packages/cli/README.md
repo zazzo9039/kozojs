@@ -15,6 +15,7 @@
 npx @kozojs/cli my-app
 
 # Bundled starter (no prompts)
+npx @kozojs/cli my-app --template api-contract
 npx @kozojs/cli my-app --template minimal
 npx @kozojs/cli my-app --template file-routing
 npx @kozojs/cli my-app --template fullstack-ssr
@@ -31,6 +32,7 @@ kozo my-app
 
 | Template | Description |
 |---|---|
+| `api-contract` | Recommended production API: feature modules, contracts, tests and CI |
 | `minimal` | Smallest Kozo app — single entry, `nativeListen()` |
 | `file-routing` | File-system routes under `src/routes/` |
 | `fullstack-ssr` | React + Vite frontend with SSR and API backend |
@@ -43,12 +45,33 @@ These ship inside the CLI package (`packages/cli/templates/`) and are copied as-
 kozo [project-name]              # scaffold (interactive or --template)
 kozo dev                         # dev server with hot reload + route watcher
 kozo build                       # tsup build + optional routes manifest
-kozo generate <type> <name>      # scaffold route or middleware
-kozo g <type> <name>             # alias for generate
+kozo generate feature <name>     # recommended production feature skeleton
+kozo g f <name>                  # short alias
+kozo generate <type> <name>      # legacy file-routing scaffold
 kozo routes                      # list discovered file-system routes
 kozo types                       # generate .kozo/types.d.ts from kozo.config.ts
+kozo check                       # architecture and contract conventions
 kozo gen:client                  # typed API client from registered routes
 ```
+
+### `kozo generate feature`
+
+```bash
+kozo generate feature users
+kozo g f users --crud
+kozo g f trips --repository
+kozo g f admin --auth --dry-run
+```
+
+The generator emits contract, service, static routes, tests, and a public barrel.
+`--crud`, `--repository`, and `--auth` add only the requested layers. Existing files
+are never overwritten without confirmation or explicit `--force`; `--dry-run` prints
+the deterministic output without writing.
+
+### `kozo check`
+
+Use `--architecture`, `--contracts`, or `--json` to select rules or integrate findings
+with CI. Blocking findings make the command exit non-zero.
 
 ### `kozo build` flags
 

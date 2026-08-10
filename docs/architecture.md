@@ -1,5 +1,9 @@
 # Architecture Deep Dive
 
+> For application structure, dependency rules, and the production Golden Path, see
+> [ADR 0001](./adr/0001-feature-first-static-contracts.md) and
+> [Feature modules](./feature-modules.md). This document describes framework internals.
+
 How Kozo processes requests, compiles routes, and achieves high performance.
 
 ---

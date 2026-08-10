@@ -8,7 +8,8 @@
     "start": "tsx src/index.ts",
     "generate": "tsx src/generate.ts",
     "test": "vitest run",
-    "test:types": "tsc --noEmit -p tsconfig.json"
+    "test:types": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@kozojs/core": "workspace:*",
