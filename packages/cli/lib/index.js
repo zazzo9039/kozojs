@@ -5319,6 +5319,16 @@ function inspectSource(source, options) {
         ));
       }
     }
+    if (contracts && CONTRACT_FILE.test(relative) && import_typescript.default.isCallExpression(node) && import_typescript.default.isPropertyAccessExpression(node.expression) && node.expression.name.text === "date" && import_typescript.default.isIdentifier(node.expression.expression) && node.expression.expression.text === "z") {
+      out.push(finding(
+        source,
+        node,
+        "KOZO_ARCH104",
+        "warning",
+        "Public contract uses z.date().",
+        "Represent wire dates as ISO 8601 z.string(); preprocess Date values before validation if needed."
+      ));
+    }
     import_typescript.default.forEachChild(node, visit);
   };
   visit(source);

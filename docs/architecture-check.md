@@ -22,7 +22,9 @@ Blocking codes:
 | `KOZO_ARCH006` | static route contract is not exported |
 | `KOZO_ARCH007` | project lacks typecheck or test scripts |
 
-Warnings cover oversized route/service files, routes without response maps, and
-unexplained `z.unknown()` boundaries. Findings include a stable code, severity, file,
-line, suggested correction, and documentation link. `--json` is suitable for CI and
-editor integrations. A non-zero error count makes the CLI exit non-zero.
+Warnings cover oversized route/service files, routes without response maps,
+unexplained `z.unknown()` boundaries, and `z.date()` in public contracts
+(`KOZO_ARCH104` — use ISO strings on the wire). Findings include a stable code,
+severity, file, line, suggested correction, and documentation link. `--json` is
+suitable for CI and editor integrations. A non-zero error count makes the CLI exit
+non-zero.

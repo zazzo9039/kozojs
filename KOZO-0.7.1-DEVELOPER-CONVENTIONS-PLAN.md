@@ -667,7 +667,7 @@ typecheck e test native.
 - [x] C3. Aggiungere config, services, errors e bootstrap.
 - [x] C4. Aggiungere test e CI.
 - [x] C5. Aggiungere README con percorso “aggiungi una feature”.
-- [ ] C6. Verificare npm/pnpm e Windows/POSIX.
+- [x] C6. Verificare npm/pnpm e Windows/POSIX.
 
 **Done quando:** un progetto appena generato passa `install`, `verify`, build e
 native smoke senza modifiche manuali.
@@ -818,7 +818,7 @@ Una feature generata o sviluppata manualmente è completa quando:
 - [x] type test `@kozojs/testing`;
 - [x] example `contract-showcase`;
 - [x] native tests eseguiti, non saltati silenziosamente;
-- [ ] test CLI su Windows path e POSIX path.
+- [x] test CLI su Windows path e POSIX path.
 
 ### Tarball-first
 

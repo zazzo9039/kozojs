@@ -4,8 +4,8 @@ import { usersRoutes } from './modules/index.js';
 import { createServices, type AppServices } from './services.js';
 
 const adminRoutes = createRouter<AppServices>()
-  .get('/health', { response: { 200: z.object({ ok: z.literal(true) }), 401: ProblemSchema } },
-    ({ json }) => json({ ok: true as const }, 200));
+  .get('/health', { response: { 200: z.object({ ok: z.boolean() }), 401: ProblemSchema } },
+    ({ json }) => json({ ok: true }, 200));
 
 export function createApp() {
   const app = createKozo<AppServices>({ logger: false, services: createServices() });

@@ -48,4 +48,13 @@ describe('kozo check', () => {
     expect(report.findings).toHaveLength(1);
     expect(() => JSON.stringify(report)).not.toThrow();
   });
+
+  it('warns when a public contract uses z.date()', async () => {
+    const root = await fixture({
+      'src/modules/users/users.contract.ts':
+        "import { z } from '@kozojs/core';\nexport const User = z.object({ createdAt: z.date() });\n",
+    });
+    const report = await checkArchitecture({ cwd: root, architecture: false, contracts: true });
+    expect(report.findings).toEqual([expect.objectContaining({ code: 'KOZO_ARCH104', severity: 'warning' })]);
+  });
 });
