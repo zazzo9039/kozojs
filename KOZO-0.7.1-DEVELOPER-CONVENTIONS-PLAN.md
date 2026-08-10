@@ -639,22 +639,22 @@ Legenda: `[ ]` non iniziato, `[~]` in corso, `[x]` completato.
 
 ### Track A — ADR e standard
 
-- [ ] A1. Aggiungere ADR che sceglie feature-first + static contracts come
+- [x] A1. Aggiungere ADR che sceglie feature-first + static contracts come
   Golden Path production.
-- [ ] A2. Definire struttura, naming e dependency rules.
-- [ ] A3. Definire policy contract/error/status.
-- [ ] A4. Definire complessità progressiva e soglie warning.
-- [ ] A5. Definire Definition of Done per feature.
+- [x] A2. Definire struttura, naming e dependency rules.
+- [x] A3. Definire policy contract/error/status.
+- [x] A4. Definire complessità progressiva e soglie warning.
+- [x] A5. Definire Definition of Done per feature.
 
 **Done quando:** non esistono decisioni aperte su struttura, naming, routing
 default o formato errori.
 
 ### Track B — Esempio canonico
 
-- [ ] B1. Rifattorizzare `contract-showcase` in feature modules.
-- [ ] B2. Aggiungere contract response ed errori standard.
-- [ ] B3. Aggiungere contract/raw/native tests.
-- [ ] B4. Verificare OpenAPI e client generato.
+- [x] B1. Rifattorizzare `contract-showcase` in feature modules.
+- [x] B2. Aggiungere contract response ed errori standard.
+- [x] B3. Aggiungere contract/raw/native tests.
+- [x] B4. Verificare OpenAPI e client generato.
 - [ ] B5. Usare l'esempio come fixture dei generatori.
 
 **Done quando:** l'esempio dimostra l'intero Golden Path e passa build,
@@ -662,11 +662,11 @@ typecheck e test native.
 
 ### Track C — Template `api-contract`
 
-- [ ] C1. Creare template sorgente unico.
-- [ ] C2. Aggiungere feature dimostrativa.
-- [ ] C3. Aggiungere config, services, errors e bootstrap.
-- [ ] C4. Aggiungere test e CI.
-- [ ] C5. Aggiungere README con percorso “aggiungi una feature”.
+- [x] C1. Creare template sorgente unico.
+- [x] C2. Aggiungere feature dimostrativa.
+- [x] C3. Aggiungere config, services, errors e bootstrap.
+- [x] C4. Aggiungere test e CI.
+- [x] C5. Aggiungere README con percorso “aggiungi una feature”.
 - [ ] C6. Verificare npm/pnpm e Windows/POSIX.
 
 **Done quando:** un progetto appena generato passa `install`, `verify`, build e
@@ -674,64 +674,64 @@ native smoke senza modifiche manuali.
 
 ### Track D — `generate feature`
 
-- [ ] D1. Definire parser opzioni e naming.
-- [ ] D2. Generare i cinque file base.
-- [ ] D3. Implementare `--crud`.
-- [ ] D4. Implementare `--repository`.
-- [ ] D5. Implementare `--auth`.
-- [ ] D6. Implementare `--dry-run`.
-- [ ] D7. Proteggere da overwrite.
-- [ ] D8. Aggiungere test snapshot e filesystem.
-- [ ] D9. Aggiornare CLI help e README.
+- [x] D1. Definire parser opzioni e naming.
+- [x] D2. Generare i cinque file base.
+- [x] D3. Implementare `--crud`.
+- [x] D4. Implementare `--repository`.
+- [x] D5. Implementare `--auth`.
+- [x] D6. Implementare `--dry-run`.
+- [x] D7. Proteggere da overwrite.
+- [x] D8. Aggiungere test snapshot e filesystem.
+- [x] D9. Aggiornare CLI help e README.
 
 **Done quando:** due run con gli stessi argomenti producono output deterministico
 e il secondo non sovrascrive senza consenso.
 
 ### Track E — `kozo check`
 
-- [ ] E1. Definire codici finding stabili.
-- [ ] E2. Implementare scanner TypeScript.
-- [ ] E3. Implementare regole dependency boundary.
-- [ ] E4. Implementare regole contract.
-- [ ] E5. Implementare threshold warning.
-- [ ] E6. Implementare output human e JSON.
-- [ ] E7. Aggiungere fixture valide/non valide.
-- [ ] E8. Integrare nel template e nella CI.
+- [x] E1. Definire codici finding stabili.
+- [x] E2. Implementare scanner TypeScript.
+- [x] E3. Implementare regole dependency boundary.
+- [x] E4. Implementare regole contract.
+- [x] E5. Implementare threshold warning.
+- [x] E6. Implementare output human e JSON.
+- [x] E7. Aggiungere fixture valide/non valide.
+- [x] E8. Integrare nel template e nella CI.
 
 **Done quando:** almeno i cinque anti-pattern critici vengono rilevati con file,
 linea e suggerimento corretto.
 
 ### Track F — Status e error contracts
 
-- [ ] F1. Scrivere design tecnico `defaultResponses`.
-- [ ] F2. Verificare compatibilità semver e type inference.
+- [x] F1. Scrivere design tecnico `defaultResponses`.
+- [x] F2. Verificare compatibilità semver e type inference.
 - [ ] F3. Implementare solo se interamente opt-in e additivo.
 - [ ] F4. Allineare OpenAPI, generated client e testing client.
 - [ ] F5. Aggiungere test Hono/native per 400/401/403/413/429/500.
-- [ ] F6. Documentare il comportamento anche se l'API viene rinviata.
+- [x] F6. Documentare il comportamento anche se l'API viene rinviata.
 
 **Done quando:** nessun claim di status completeness supera ciò che runtime,
 OpenAPI e client dimostrano realmente.
 
 ### Track G — Lint e quality gates
 
-- [ ] G1. Sostituire lint no-op del CLI.
-- [ ] G2. Aggiungere lint template/generated fixtures.
-- [ ] G3. Aggiungere `pnpm check`/`pnpm verify` root.
-- [ ] G4. Inserire architecture check nel publish gate.
-- [ ] G5. Aggiungere scan mojibake e placeholder template.
+- [x] G1. Sostituire lint no-op del CLI.
+- [x] G2. Aggiungere lint template/generated fixtures.
+- [x] G3. Aggiungere `pnpm check`/`pnpm verify` root.
+- [x] G4. Inserire architecture check nel publish gate.
+- [x] G5. Aggiungere scan mojibake e placeholder template.
 
 **Done quando:** CI e publish gate rifiutano template non compilabili o non
 conformi.
 
 ### Track H — Documentazione e migrazione
 
-- [ ] H1. Scrivere architecture guide.
-- [ ] H2. Scrivere feature tutorial end-to-end.
-- [ ] H3. Scrivere migration guide per app 0.7.0.
-- [ ] H4. Aggiornare README e Getting Started.
-- [ ] H5. Aggiornare common pitfalls con static typing boundary.
-- [ ] H6. Documentare minimal/file-routing come percorsi alternativi.
+- [x] H1. Scrivere architecture guide.
+- [x] H2. Scrivere feature tutorial end-to-end.
+- [x] H3. Scrivere migration guide per app 0.7.0.
+- [x] H4. Aggiornare README e Getting Started.
+- [x] H5. Aggiornare common pitfalls con static typing boundary.
+- [x] H6. Documentare minimal/file-routing come percorsi alternativi.
 
 **Done quando:** docs, CLI help, template ed esempio mostrano lo stesso stile.
 

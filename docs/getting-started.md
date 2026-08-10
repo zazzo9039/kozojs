@@ -5,9 +5,9 @@ End-to-end path from zero to a running API — copy-paste friendly.
 ## 1. Create a project
 
 ```bash
-npx @kozojs/cli my-app --template file-routing
+npx @kozojs/cli my-app --template api-contract
 cd my-app
-cp .env.example .env
+pnpm verify
 pnpm dev
 ```
 
@@ -15,6 +15,7 @@ Templates:
 
 | Template | Use case |
 |----------|----------|
+| `api-contract` | Recommended production API with feature modules and static contracts |
 | `minimal` | Two manual routes, smallest footprint |
 | `file-routing` | `_middleware.ts`, JWT, `[id]` params, admin guards |
 | `fullstack-ssr` | `listenSsr()` — API + React on one port |
@@ -25,7 +26,20 @@ Interactive wizard (legacy scaffolds):
 npx @kozojs/cli my-app
 ```
 
-## 2. First route (file routing)
+## 2. First feature (recommended)
+
+```bash
+kozo generate feature projects --crud --dry-run
+kozo generate feature projects --crud
+```
+
+The generated feature keeps contracts, services, routes, tests, and its public API in
+one module. Register its service in `src/services.ts`, mount the exported static router
+from `src/app.ts`, then run `pnpm verify`.
+
+See [Feature modules](./feature-modules.md) and [Architecture check](./architecture-check.md).
+
+## 3. First route (file routing alternative)
 
 Create `src/routes/hello/get.ts`:
 
@@ -46,7 +60,7 @@ export default (ctx) => ({
 
 Run `kozo routes` to list discovered routes.
 
-## 3. Dependency injection
+## 4. Dependency injection
 
 **Singletons** — stateless services shared across requests:
 
@@ -72,7 +86,7 @@ const app = createKozo({
 
 Use singletons for pools/clients; use `scopedServices` when state must not leak between concurrent requests.
 
-## 4. Authentication
+## 5. Authentication
 
 Security is **guard-based** (0.5.16+): the same checks run on `listen()` and `nativeListen()` at native speed. Register guards **before** `loadRoutes()`:
 
@@ -90,7 +104,7 @@ await app.loadRoutes();
 
 Mark public routes with `export const meta = { auth: false }`.
 
-## 5. OpenAPI + typed client
+## 6. OpenAPI + typed client
 
 After routes are registered:
 

@@ -281,6 +281,22 @@ See also [§1 middleware vs guards](#1-security-middleware-doesnt-run-under-nati
 
 ---
 
+## Static clients only see static contracts
+
+Imperative route calls whose returned app type is ignored, `app.group()`, and routes
+loaded from the file system remain valid at runtime but cannot extend a compile-time
+route union after discovery. When OpenAPI, generated SDKs, or contract test clients
+must see a route, define it with `createRouter()`, capture the returned chain, and
+mount it with `app.mount()`.
+
+Declared response statuses are not automatically exhaustive. Validation, guards,
+body limits, rate limits, and internal failures can return additional statuses. Until
+the automatic error sources share one verified schema, generated clients correctly
+raise `KozoUnexpectedResponseError` for a status outside the route contract. Use raw
+tests for malformed input and native smoke tests for transport-sensitive policy.
+
+---
+
 ## See also
 
 - [Getting Started](./getting-started.md)

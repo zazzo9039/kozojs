@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Recommended `api-contract` production template with feature modules, service
+  injection, contract/raw/native tests, lint, architecture checks, and CI.
+- `kozo generate feature` (`kozo g f`) with CRUD, repository, auth, dry-run,
+  deterministic output, barrel updates, and overwrite protection.
+- `kozo check` architecture and contract findings with stable codes and JSON output.
+- Golden Path ADR, feature/error guides, migration notes, and a feature-first
+  `contract-showcase`.
+
+### Changed
+
+- `@kozojs/cli` now runs a real zero-warning TypeScript ESLint gate.
+- CI verifies lint, canonical architecture checks, and template encoding/placeholders.
+
+### Compatibility
+
+- Existing templates and generators remain available and unchanged.
+- Router-level automatic response unions are not widened in 0.7.1; the opt-in
+  `defaultResponses` design is deferred until runtime error shapes have proven parity.
+
 ## [0.7.0] — 2026-07-27
 
 ### Added
