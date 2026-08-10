@@ -167,6 +167,14 @@ export const ${key}Routes = createRouter<AppServices>()
 
 function testTemplate(name: string, key: string, typeName: string, options: FeatureGeneratorOptions): string {
   const headers = options.auth ? `, headers: { authorization: 'Bearer test-token' }` : '';
+  const rawOptions = options.auth ? `, { headers: { authorization: 'Bearer test-token' } }` : '';
+  const crud = options.crud ? `
+    const updated = await client.${key}.$id.patch({
+      params: { id: created.json().id }, body: { name: 'Updated' }${headers},
+    });
+    expect(updated.status).toBe(200);
+    const deleted = await client.${key}.$id.delete({ params: { id: created.json().id }${headers} });
+    expect(deleted.status).toBe(204);` : '';
   return `import { describe, expect, it } from 'vitest';
 import { createContractTestClient, createTestClient } from '@kozojs/testing';
 import { createApp } from '../../app.js';
@@ -178,10 +186,11 @@ describe('${name} feature', () => {
     expect(created.status).toBe(201);
     const detail = await client.${key}.$id.get({ params: { id: created.json().id }${headers} });
     expect(detail.status).toBe(200);
+${crud}
   });
 
   it('rejects malformed raw input', async () => {
-    const response = await createTestClient(createApp()).post('/${name}', { name: '' });
+    const response = await createTestClient(createApp()).post('/${name}', { name: '' }${rawOptions});
     expect(response.status).toBe(400);
   });
 });

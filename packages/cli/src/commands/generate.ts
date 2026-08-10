@@ -123,6 +123,9 @@ async function generateFeature(featureName: string | undefined, options: Feature
   const preview = generateFeatureFiles(name, options);
   if (options.dryRun) {
     for (const file of preview) console.log(`--- ${file.path}\n${file.content}`);
+    if (options.barrel !== false) {
+      console.log(`--- src/modules/index.ts (append)\nexport * from './${name}/index.js';`);
+    }
     return;
   }
 
@@ -141,7 +144,9 @@ async function generateFeature(featureName: string | undefined, options: Feature
 
   const written = await writeFeatureFiles(name, options);
   for (const file of written) p.log.success(`Created ${pc.cyan(file.path)}`);
-  p.log.info(`Mount with: app.mount('/${name}', ${name}Routes)`);
+  const routeIdentifier = name.replace(/-([a-z0-9])/g, (_match, char: string) => char.toUpperCase());
+  p.log.info(`Mount with: app.mount('/${name}', ${routeIdentifier}Routes)`);
+  if (options.auth) p.log.info(`Register an app.guard('/${name}/*', ...) policy before mounting.`);
 }
 
 async function generateRoute(routePath?: string): Promise<void> {

@@ -4731,6 +4731,14 @@ export const ${key}Routes = createRouter<AppServices>()
 }
 function testTemplate(name, key, typeName, options) {
   const headers = options.auth ? `, headers: { authorization: 'Bearer test-token' }` : "";
+  const rawOptions = options.auth ? `, { headers: { authorization: 'Bearer test-token' } }` : "";
+  const crud = options.crud ? `
+    const updated = await client.${key}.$id.patch({
+      params: { id: created.json().id }, body: { name: 'Updated' }${headers},
+    });
+    expect(updated.status).toBe(200);
+    const deleted = await client.${key}.$id.delete({ params: { id: created.json().id }${headers} });
+    expect(deleted.status).toBe(204);` : "";
   return `import { describe, expect, it } from 'vitest';
 import { createContractTestClient, createTestClient } from '@kozojs/testing';
 import { createApp } from '../../app.js';
@@ -4742,10 +4750,11 @@ describe('${name} feature', () => {
     expect(created.status).toBe(201);
     const detail = await client.${key}.$id.get({ params: { id: created.json().id }${headers} });
     expect(detail.status).toBe(200);
+${crud}
   });
 
   it('rejects malformed raw input', async () => {
-    const response = await createTestClient(createApp()).post('/${name}', { name: '' });
+    const response = await createTestClient(createApp()).post('/${name}', { name: '' }${rawOptions});
     expect(response.status).toBe(400);
   });
 });
@@ -4912,6 +4921,10 @@ async function generateFeature(featureName, options) {
   if (options.dryRun) {
     for (const file of preview) console.log(`--- ${file.path}
 ${file.content}`);
+    if (options.barrel !== false) {
+      console.log(`--- src/modules/index.ts (append)
+export * from './${name}/index.js';`);
+    }
     return;
   }
   const existing = [];
@@ -4928,7 +4941,9 @@ ${file.content}`);
   }
   const written = await writeFeatureFiles(name, options);
   for (const file of written) p2.log.success(`Created ${import_picocolors5.default.cyan(file.path)}`);
-  p2.log.info(`Mount with: app.mount('/${name}', ${name}Routes)`);
+  const routeIdentifier = name.replace(/-([a-z0-9])/g, (_match, char) => char.toUpperCase());
+  p2.log.info(`Mount with: app.mount('/${name}', ${routeIdentifier}Routes)`);
+  if (options.auth) p2.log.info(`Register an app.guard('/${name}/*', ...) policy before mounting.`);
 }
 async function generateRoute(routePath) {
   let targetPath = routePath;
