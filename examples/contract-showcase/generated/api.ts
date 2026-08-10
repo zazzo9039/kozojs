@@ -1,5 +1,5 @@
 // Auto-generated Kozo Client
-// Generated at 2026-07-27T07:39:19.978Z
+// Generated at 2026-08-10T13:45:38.804Z
 // DO NOT EDIT - Changes will be overwritten
 
 import { z } from 'zod';
@@ -53,7 +53,7 @@ export const PostUsersResponse201Schema = z.object({ id: z.string(), name: z.str
 export const PostUsersResponseSchema = PostUsersResponse201Schema;
 export const UsersByIdParamsSchema = z.object({ id: z.string() });
 export const UsersByIdResponse200Schema = z.object({ id: z.string(), name: z.string(), email: z.string(), active: z.boolean(), tags: z.array(z.string()) });
-export const UsersByIdResponse404Schema = z.object({ message: z.string() });
+export const UsersByIdResponse404Schema = z.object({ type: z.string(), title: z.string(), status: z.number(), detail: z.string(), instance: z.string().optional() });
 /** @deprecated Use the status-specific response schemas. */
 export const UsersByIdResponseSchema = UsersByIdResponse200Schema;
 export const UsersQuerySchema = z.object({ page: z.number().default(1), active: z.enum(["true","false"]).optional(), tag: z.union([z.string(), z.array(z.string())]).optional() });
@@ -66,12 +66,12 @@ export const PostProjectsResponse201Schema = z.object({ id: z.string(), name: z.
 export const PostProjectsResponseSchema = PostProjectsResponse201Schema;
 export const ProjectsByIdParamsSchema = z.object({ id: z.string() });
 export const ProjectsByIdResponse200Schema = z.object({ id: z.string(), name: z.string(), ownerId: z.string() });
-export const ProjectsByIdResponse404Schema = z.object({ message: z.string() });
+export const ProjectsByIdResponse404Schema = z.object({ type: z.string(), title: z.string(), status: z.number(), detail: z.string(), instance: z.string().optional() });
 /** @deprecated Use the status-specific response schemas. */
 export const ProjectsByIdResponseSchema = ProjectsByIdResponse200Schema;
 export const AdminStatsHeadersSchema = z.object({ authorization: z.string() });
 export const AdminStatsResponse200Schema = z.object({ users: z.number(), projects: z.number() });
-export const AdminStatsResponse401Schema = z.object({ message: z.string() });
+export const AdminStatsResponse401Schema = z.object({ type: z.string(), title: z.string(), status: z.number(), detail: z.string(), instance: z.string().optional() });
 /** @deprecated Use the status-specific response schemas. */
 export const AdminStatsResponseSchema = AdminStatsResponse200Schema;
 
