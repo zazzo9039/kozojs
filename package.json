@@ -15,7 +15,10 @@
     "dev": "turbo run dev --concurrency=20",
     "test": "turbo run test",
     "typecheck": "pnpm exec tsc --noEmit -p packages/core/tsconfig.json && pnpm exec tsc --noEmit -p packages/auth/tsconfig.json && pnpm exec tsc --noEmit -p packages/cli/tsconfig.json && pnpm exec tsc --noEmit -p packages/db/tsconfig.json && pnpm exec tsc --noEmit -p packages/queue/tsconfig.json && pnpm exec tsc --noEmit -p packages/redis/tsconfig.json && pnpm exec tsc --noEmit -p packages/testing/tsconfig.json && pnpm exec tsc --noEmit -p packages/testing/type-tests/tsconfig.json && pnpm exec tsc --noEmit -p examples/contract-showcase/tsconfig.json",
-    "lint": "turbo run lint",
+    "lint": "turbo run lint && pnpm lint:templates",
+    "lint:templates": "eslint templates/api-contract --config templates/api-contract/eslint.config.js --max-warnings=0",
+    "check": "pnpm --filter @kozojs/cli build && node packages/cli/lib/index.js check --root examples/contract-showcase && node packages/cli/lib/index.js check --root templates/api-contract && node scripts/check-template-quality.mjs",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm check",
     "clean": "rm -rf node_modules packages/*/node_modules packages/*/dist"
   },
   "devDependencies": {

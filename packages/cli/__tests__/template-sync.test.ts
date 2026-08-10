@@ -27,6 +27,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs-extra';
 import path from 'node:path';
 import os from 'node:os';
+import ts from 'typescript';
 
 import { repoRoot } from './helpers/repo-root.js';
 import { copyTemplate, kozoDependencyRange, TEMPLATE_NAMES } from '../src/utils/copy-template.js';
@@ -149,4 +150,32 @@ describe('published starter versions', () => {
       await fs.remove(tmp);
     }
   });
+});
+
+describe('api-contract production fixture', () => {
+  it('typechecks against the workspace packages', async () => {
+    const root = path.join(SOURCE, 'api-contract');
+    const roots = (await listFiles(root))
+      .filter((file) => file.endsWith('.ts'))
+      .map((file) => path.join(root, file));
+    const program = ts.createProgram({
+      rootNames: roots,
+      options: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        strict: true,
+        noEmit: true,
+        skipLibCheck: true,
+        baseUrl: ROOT,
+        paths: {
+          '@kozojs/core': ['packages/core/src/index.ts'],
+          '@kozojs/testing': ['packages/testing/src/index.ts'],
+        },
+        types: ['node', 'vitest/globals'],
+      },
+    });
+    const diagnostics = ts.getPreEmitDiagnostics(program);
+    expect(diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))).toEqual([]);
+  }, 30_000);
 });

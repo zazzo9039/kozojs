@@ -1,6 +1,5 @@
 import fs from 'fs-extra';
 import path from 'node:path';
-import type { ScaffoldOptions } from './types.js';
 import { getDatabaseSchema, getDatabaseIndex, getSQLiteSeed } from './template-complete.js';
 import { createDockerCompose, createDockerfile, createGitHubActions } from './template-api-only.js';
 import { scaffoldFullstackWeb, scaffoldFullstackReadme } from './fullstack-web.js';

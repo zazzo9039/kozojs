@@ -318,7 +318,7 @@ export function Skeleton({ className }: SkeletonProps) {
 `;
 }
 
-export function generateEntryClient(projectName: string, auth: boolean): string {
+export function generateEntryClient(_projectName: string, _auth: boolean): string {
   return `import React from 'react';
 import { hydrateRoot, createRoot } from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -353,7 +353,7 @@ revealRoot();
 `;
 }
 
-export function generateSpaEntryClient(projectName: string, auth: boolean): string {
+export function generateSpaEntryClient(_projectName: string, _auth: boolean): string {
   return `import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';

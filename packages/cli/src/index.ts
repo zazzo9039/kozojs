@@ -6,6 +6,7 @@ import { generateCommand } from './commands/generate.js';
 import { routesCommand } from './commands/routes.js';
 import { genClientCommand } from './commands/gen-client.js';
 import { typesCommand } from './commands/types.js';
+import { checkCommand } from './commands/check.js';
 import { initFromTemplate, isTemplateName } from './commands/init-template.js';
 import pkg from '../package.json';
 
@@ -19,7 +20,7 @@ program
 // Main command - create new project (interactive or --template)
 program
   .argument('[project-name]', 'Name of the project')
-  .option('-t, --template <name>', `Starter template: ${['minimal', 'file-routing', 'fullstack-ssr'].join(', ')}`)
+  .option('-t, --template <name>', `Starter template: ${['api-contract', 'minimal', 'file-routing', 'fullstack-ssr'].join(', ')}`)
   .option('--no-install', 'Skip pnpm install after scaffolding')
   .action(async (projectName?: string, opts?: { template?: string; install?: boolean }) => {
     if (opts?.template) {
@@ -28,7 +29,7 @@ program
         process.exit(1);
       }
       if (!isTemplateName(opts.template)) {
-        console.error(`Unknown template "${opts.template}". Use: minimal, file-routing, fullstack-ssr`);
+        console.error(`Unknown template "${opts.template}". Use: api-contract, minimal, file-routing, fullstack-ssr`);
         process.exit(1);
       }
       await initFromTemplate(projectName, opts.template, opts.install !== false);
@@ -70,9 +71,15 @@ program
 program
   .command('generate [type] [name]')
   .alias('g')
-  .description('Generate scaffolding: route, middleware')
-  .action(async (type?: string, name?: string) => {
-    await generateCommand(type ?? '', name);
+  .description('Generate a production feature (recommended) or file-routing scaffold')
+  .option('--crud', 'Include update and delete operations')
+  .option('--repository', 'Add an injectable repository boundary')
+  .option('--auth', 'Require an Authorization header in public contracts')
+  .option('--dry-run', 'Print deterministic file contents without writing')
+  .option('--force', 'Overwrite existing generated feature files')
+  .option('--no-barrel', 'Do not update src/modules/index.ts')
+  .action(async (type?: string, name?: string, opts?: { crud?: boolean; repository?: boolean; auth?: boolean; dryRun?: boolean; force?: boolean; barrel?: boolean }) => {
+    await generateCommand(type ?? '', name, opts);
   });
 
 // List discovered file-system routes
@@ -93,6 +100,24 @@ program
   });
 
 // Generate typed API client from registered routes
+program
+  .command('check')
+  .description('Check Kozo application architecture and public contracts')
+  .option('--architecture', 'Run architecture dependency rules')
+  .option('--contracts', 'Run public contract rules')
+  .option('--json', 'Emit machine-readable findings')
+  .option('--root <path>', 'Project root to inspect', '.')
+  .action(async (opts: { architecture?: boolean; contracts?: boolean; json?: boolean; root?: string }) => {
+    const selected = opts.architecture || opts.contracts;
+    const report = await checkCommand({
+      architecture: selected ? Boolean(opts.architecture) : true,
+      contracts: selected ? Boolean(opts.contracts) : true,
+      json: opts.json,
+      cwd: opts.root,
+    });
+    if (report.errors > 0) process.exitCode = 1;
+  });
+
 program
   .command('gen:client')
   .description('Generate a typed API client (kozo.config.ts or src/app.ts with buildApp)')

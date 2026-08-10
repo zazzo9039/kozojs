@@ -84,6 +84,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Lint
+        run: pnpm lint
+
+      - name: Architecture and template quality
+        run: pnpm check
+
       - name: Test
         run: pnpm test
 

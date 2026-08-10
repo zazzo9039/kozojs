@@ -1,6 +1,5 @@
 import fs from 'fs-extra';
 import path from 'node:path';
-import type { ScaffoldOptions } from './types.js';
 
 export async function scaffoldApiOnlyTemplate(
   projectDir: string,

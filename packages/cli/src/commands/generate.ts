@@ -2,6 +2,7 @@ import * as p from '@clack/prompts';
 import pc from 'picocolors';
 import fs from 'fs-extra';
 import path from 'node:path';
+import { generateFeatureFiles, writeFeatureFiles, type FeatureGeneratorOptions } from '../utils/scaffold/generators/feature.js';
 
 const ROUTE_TEMPLATE = `import { z } from 'zod';
 import type { KozoContext } from '@kozojs/core';
@@ -77,13 +78,17 @@ export function create{{Name}}Service(): {{Name}}Service {
 export const {{name}}Service = create{{Name}}Service();
 `;
 
-export async function generateCommand(type: string, name?: string): Promise<void> {
+export async function generateCommand(type: string, name?: string, options: FeatureGeneratorOptions = {}): Promise<void> {
   if (!type) {
-    p.log.error('Please specify what to generate: route, middleware, dir-middleware, service');
+    p.log.error('Please specify what to generate: feature, route, middleware, dir-middleware, service');
     process.exit(1);
   }
 
   switch (type.toLowerCase()) {
+    case 'feature':
+    case 'f':
+      await generateFeature(name, options);
+      break;
     case 'route':
     case 'r':
       await generateRoute(name);
@@ -102,9 +107,41 @@ export async function generateCommand(type: string, name?: string): Promise<void
       break;
     default:
       p.log.error(`Unknown generator: ${type}`);
-      p.log.info('Available: route, middleware, dir-middleware, service');
+      p.log.info('Available: feature, route, middleware, dir-middleware, service');
       process.exit(1);
   }
+}
+
+async function generateFeature(featureName: string | undefined, options: FeatureGeneratorOptions): Promise<void> {
+  let name = featureName;
+  if (!name) {
+    const result = await p.text({ message: 'Feature name', placeholder: 'users' });
+    if (p.isCancel(result)) return;
+    name = result;
+  }
+
+  const preview = generateFeatureFiles(name, options);
+  if (options.dryRun) {
+    for (const file of preview) console.log(`--- ${file.path}\n${file.content}`);
+    return;
+  }
+
+  const existing = [];
+  for (const file of preview) {
+    if (await fs.pathExists(path.join(process.cwd(), ...file.path.split('/')))) existing.push(file.path);
+  }
+  if (existing.length > 0 && !options.force) {
+    const overwrite = await p.confirm({
+      message: `Overwrite ${existing.length} existing feature file(s)?`,
+      initialValue: false,
+    });
+    if (p.isCancel(overwrite) || !overwrite) return;
+    options = { ...options, force: true };
+  }
+
+  const written = await writeFeatureFiles(name, options);
+  for (const file of written) p.log.success(`Created ${pc.cyan(file.path)}`);
+  p.log.info(`Mount with: app.mount('/${name}', ${name}Routes)`);
 }
 
 async function generateRoute(routePath?: string): Promise<void> {

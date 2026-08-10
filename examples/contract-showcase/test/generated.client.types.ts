@@ -10,7 +10,7 @@ async function checkGeneratedContract(): Promise<void> {
   if (detail.status === 200) {
     detail.body.email satisfies string;
   } else {
-    detail.body.message satisfies string;
+    detail.body.detail satisfies string;
   }
 
   await api.users.post({

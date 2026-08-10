@@ -254,7 +254,7 @@ pnpm db:push      # Push schema to database
 pnpm db:studio    # Open Drizzle Studio
 \`\`\`
 
-${database === 'sqlite' ? '## SQLite Notes\n\nThe database is automatically initialized with example data on first run.\nDatabase file: \`./data.db\`\n' : ''}
+${database === 'sqlite' ? '## SQLite Notes\n\nThe database is automatically initialized with example data on first run.\nDatabase file: `./data.db`\n' : ''}
 ## Documentation
 
 - [Kozo Docs](https://kozo-docs.vercel.app)
