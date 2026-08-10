@@ -737,14 +737,14 @@ conformi.
 
 ### Track I — Consumer pilot e release gate
 
-- [ ] I1. Usare `kozo-api-tracking` come consumer read-only/pilot del check.
-- [ ] I2. Verificare finding utili e falsi positivi.
-- [ ] I3. Generare tarball di tutti i package interessati.
-- [ ] I4. Installare tarball in directory temporanee pulite.
-- [ ] I5. Eseguire build, typecheck, test e native smoke.
-- [ ] I6. Aggiungere changeset patch per package realmente modificati.
-- [ ] I7. Aggiornare CHANGELOG con migration/non-breaking note.
-- [ ] I8. Eseguire publish gate senza publish come validazione finale.
+- [x] I1. Usare `kozo-api-tracking` come consumer read-only/pilot del check.
+- [x] I2. Verificare finding utili e falsi positivi.
+- [x] I3. Generare tarball di tutti i package interessati.
+- [x] I4. Installare tarball in directory temporanee pulite.
+- [x] I5. Eseguire build, typecheck, test e native smoke.
+- [x] I6. Aggiungere changeset patch per package realmente modificati.
+- [x] I7. Aggiornare CHANGELOG con migration/non-breaking note.
+- [x] I8. Eseguire publish gate senza publish come validazione finale.
 - [ ] I9. Pubblicare solo dopo approvazione esplicita separata.
 
 **Done quando:** tutti i gate locali e tarball-first sono verdi e non rimangono
@@ -803,31 +803,31 @@ Una feature generata o sviluppata manualmente è completa quando:
 
 ### Compatibilità
 
-- [ ] nessuna API 0.7.0 rimossa o rinominata;
-- [ ] nessun template esistente rimosso;
-- [ ] nessun cambiamento implicito alle route union esistenti;
-- [ ] nuove API core esclusivamente opt-in;
-- [ ] migration note per ogni differenza osservabile.
+- [x] nessuna API 0.7.0 rimossa o rinominata;
+- [x] nessun template esistente rimosso;
+- [x] nessun cambiamento implicito alle route union esistenti;
+- [x] nuove API core esclusivamente opt-in;
+- [x] migration note per ogni differenza osservabile.
 
 ### Verifica monorepo
 
-- [ ] `pnpm build`;
-- [ ] `pnpm typecheck`;
-- [ ] `pnpm lint` reale;
-- [ ] `pnpm test`;
-- [ ] type test `@kozojs/testing`;
-- [ ] example `contract-showcase`;
-- [ ] native tests eseguiti, non saltati silenziosamente;
+- [x] `pnpm build`;
+- [x] `pnpm typecheck`;
+- [x] `pnpm lint` reale;
+- [x] `pnpm test`;
+- [x] type test `@kozojs/testing`;
+- [x] example `contract-showcase`;
+- [x] native tests eseguiti, non saltati silenziosamente;
 - [ ] test CLI su Windows path e POSIX path.
 
 ### Tarball-first
 
-- [ ] `pnpm pack` per i package modificati;
-- [ ] nessun protocollo `workspace:`, `file:`, `link:` o `portal:` nei tarball;
-- [ ] `publint` e `attw` verdi dove applicabili;
-- [ ] clean install npm e pnpm;
-- [ ] progetto `api-contract` generato dal tarball;
-- [ ] build/test/native smoke del progetto generato.
+- [x] `pnpm pack` per i package modificati;
+- [x] nessun protocollo `workspace:`, `file:`, `link:` o `portal:` nei tarball;
+- [x] `publint` e `attw` verdi dove applicabili;
+- [x] clean install npm e pnpm;
+- [x] progetto `api-contract` generato dal tarball;
+- [x] build/test/native smoke del progetto generato.
 
 ### Pubblicazione
 
