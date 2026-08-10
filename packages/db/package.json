@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/db",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Drizzle ORM integration for Kozo — PostgreSQL & SQLite query helpers, plus MySQL connections",
   "type": "module",
   "engines": {

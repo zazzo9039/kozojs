@@ -1,6 +1,6 @@
 {
   "name": "@kozojs/testing",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Route-derived contract tests, raw injection, and native transport clients for Kozo Framework",
   "type": "module",
   "main": "./lib/index.js",

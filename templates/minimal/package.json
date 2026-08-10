@@ -9,7 +9,7 @@
     "build": "tsup src/index.ts --format esm --dts --clean"
   },
   "dependencies": {
-    "@kozojs/core": "^0.7.0",
+    "@kozojs/core": "^0.7.1",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.66.0",
     "zod": "^4.3.6"
   },
