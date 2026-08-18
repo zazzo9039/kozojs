@@ -1,8 +1,8 @@
 name: CI
 
-# Every push to main runs tests, integration, package gates, smoke installs, and
-# publishes versions that are not already on npm. Manual publish remains available:
-# gh workflow run ci.yml -f publish=true
+# Every push to main runs tests, integration, package gates, and smoke installs.
+# Publish waits on GitHub environment `npm-production` (required reviewer).
+# Manual publish: gh workflow run ci.yml -f publish=true (same environment; main only).
 # npm trusted publishing (OIDC) is preferred; NPM_TOKEN remains available as a
 # fallback until every package trusts this workflow.
 
@@ -20,7 +20,7 @@ on:
 
 concurrency:
   # Pull-request verification is replaceable. Main and manual release runs are
-  # queued so a later push cannot cancel a publish halfway through the package set.
+  # queued so a later push cannot cancel a publish waiting for approval.
   group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -270,11 +270,19 @@ jobs:
 
   publish:
     name: Publish to npm (gate-validated tarballs)
+    # Custom `if` disables GitHub's default "skip if a needed job was
+    # skipped/failed". Require pack+smoke success or a skipped pack would still
+    # queue Review deployments (and then fail on missing tarballs).
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish)
+      needs.pack.result == 'success' &&
+      needs.smoke.result == 'success' &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish)
+      )
     needs: [pack, smoke]
     runs-on: ubuntu-latest
+    environment: npm-production
     permissions:
       contents: read
       id-token: write # OIDC provenance
